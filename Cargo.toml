@@ -1,0 +1,30 @@
+[package]
+name = "redis-protocol"
+version = "0.1.0"
+authors = ["Alec Embke <aembke@gmail.com>"]
+readme = "README.md"
+repository = "https://github.com/aembke/redis-protocol.rs"
+homepage = "https://github.com/aembke/redis-protocol.rs"
+keywords = ["redis", "protocol", "nom", "encode", "decode"]
+license = "MIT"
+
+[badges]
+travis-ci = { repository = "aembke/redis-protocol.rs", branch = "master" }
+maintenance = { status = "actively-developed" }
+
+[dependencies]
+log = "0.4"
+pretty_env_logger = "0.2"
+bytes = "0.4"
+nom = "4.0"
+crc16 = "0.3"
+cookie-factory = "=0.2.4"
+
+[dev-dependencies]
+lazy_static = "1.1"
+
+[lib]
+doc = true
+doctest = true
+name = "redis_protocol"
+test = true
