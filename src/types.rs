@@ -12,7 +12,8 @@ use cookie_factory::GenError;
 
 use nom::{
   Context,
-  Err as NomError
+  Err as NomError,
+  Needed
 };
 
 const PUBSUB_PREFIX: &'static str = "message";
@@ -120,16 +121,24 @@ impl<'a> From<GenError> for RedisProtocolError<'a> {
 
 impl<'a> From<NomError<&'a [u8]>> for RedisProtocolError<'a> {
   fn from(e: NomError<&'a [u8]>) -> Self {
-    let context = match e {
-      NomError::Failure(Context::Code(i, _)) => Some(i),
-      NomError::Error(Context::Code(i, _)) => Some(i),
-      _ => None
-    };
+    if let NomError::Incomplete(Needed::Size(ref s)) = e {
+      RedisProtocolError {
+        kind: RedisProtocolErrorKind::BufferTooSmall(*s),
+        desc: Cow::Owned(format!("{:?}", e)),
+        context: None
+      }
+    }else{
+      let context = match e {
+        NomError::Failure(Context::Code(i, _)) => Some(i),
+        NomError::Error(Context::Code(i, _)) => Some(i),
+        _ => None
+      };
 
-    RedisProtocolError {
-      kind: RedisProtocolErrorKind::Unknown,
-      desc: Cow::Owned(format!("{:?}", e)),
-      context
+      RedisProtocolError {
+        kind: RedisProtocolErrorKind::Unknown,
+        desc: Cow::Owned(format!("{:?}", e)),
+        context
+      }
     }
   }
 }
@@ -176,12 +185,6 @@ impl FrameKind {
 
 }
 
-impl From<FrameKind> for u8 {
-  fn from(d: FrameKind) -> u8 {
-    d.to_byte()
-  }
-}
-
 /// An enum representing a Frame of data. Frames are recursively defined to account for arrays.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Frame {
@@ -200,8 +203,10 @@ impl Frame {
   /// Whether or not the frame is an error.
   pub fn is_error(&self) -> bool {
     match self.kind() {
-      FrameKind::Error => true,
-      _                => false
+      FrameKind::Error
+        | FrameKind::Moved
+        | FrameKind::Ask   => true,
+      _                    => false
     }
   }
 
@@ -235,6 +240,7 @@ impl Frame {
     match *self {
       Frame::BulkString(ref b)   => str::from_utf8(b).ok(),
       Frame::SimpleString(ref s) => Some(s),
+      Frame::Error(ref s)        => Some(s),
       _                          => None
     }
   }
@@ -252,6 +258,30 @@ impl Frame {
     match *self {
       Frame::Null => true,
       _           => false
+    }
+  }
+
+  /// Whether or not the frame is an array of frames.
+  pub fn is_array(&self) -> bool {
+    match *self {
+      Frame::Array(_) => true,
+      _               => false
+    }
+  }
+
+  /// Whether or not the frame is an integer.
+  pub fn is_integer(&self) -> bool {
+    match *self {
+      Frame::Integer(_) => true,
+      _                 => false
+    }
+  }
+
+  /// Whether or not the framed is a a Moved or Ask error.
+  pub fn is_moved_or_ask_error(&self) -> bool {
+    match *self {
+      Frame::Moved(_) | Frame::Ask(_) => true,
+      _                               => false
     }
   }
 
@@ -293,6 +323,10 @@ impl Frame {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use ::utils::ZEROED_KB;
+
+  use nom::ErrorKind as NomErrorKind;
+
 
   #[test]
   fn should_parse_pubsub_message() {
@@ -317,6 +351,183 @@ mod tests {
     ]);
 
     frame.parse_as_pubsub().expect("Expected non pubsub frames");
+  }
+
+  // gotta pad those coveralls stats...
+  #[test]
+  fn should_create_empty_error() {
+    let e = RedisProtocolError::new_empty();
+    let s = e.to_string();
+
+    assert_eq!(e.description(), "");
+    assert_eq!(e.kind(), &RedisProtocolErrorKind::Unknown);
+    assert_eq!(e.context(), None);
+  }
+
+  #[test]
+  fn should_create_encode_error() {
+    let e = RedisProtocolError::new(RedisProtocolErrorKind::EncodeError, "foo");
+    let s = e.to_string();
+
+    assert_eq!(e.description(), "foo");
+    assert_eq!(e.kind(), &RedisProtocolErrorKind::EncodeError);
+    assert_eq!(e.context(), None);
+  }
+
+  #[test]
+  fn should_create_decode_error() {
+    let e = RedisProtocolError::new(RedisProtocolErrorKind::DecodeError, "foo");
+    let s = e.to_string();
+
+    assert_eq!(e.description(), "foo");
+    assert_eq!(e.kind(), &RedisProtocolErrorKind::DecodeError);
+    assert_eq!(e.context(), None);
+  }
+
+  #[test]
+  fn should_create_buf_too_small_error() {
+    let e = RedisProtocolError::new(RedisProtocolErrorKind::BufferTooSmall(10), "foo");
+    let s = e.to_string();
+
+    assert_eq!(e.description(), "foo");
+    assert_eq!(e.kind(), &RedisProtocolErrorKind::BufferTooSmall(10));
+    assert_eq!(e.context(), None);
+  }
+
+  #[test]
+  fn should_cast_from_nom_failure() {
+    let n = NomError::Failure(Context::Code(&ZEROED_KB[0..10], NomErrorKind::Custom(1)));
+    let e = RedisProtocolError::from(n);
+
+    assert_eq!(e.context(), Some(&ZEROED_KB[0..10]))
+  }
+
+  #[test]
+  fn should_cast_from_nom_error() {
+    let n = NomError::Error(Context::Code(&ZEROED_KB[0..10], NomErrorKind::Custom(1)));
+    let e = RedisProtocolError::from(n);
+
+    assert_eq!(e.context(), Some(&ZEROED_KB[0..10]))
+  }
+
+  #[test]
+  fn should_cast_from_nom_incomplete() {
+    let n = NomError::Incomplete(Needed::Size(10));
+    let e = RedisProtocolError::from(n);
+
+    assert_eq!(e.kind(), &RedisProtocolErrorKind::BufferTooSmall(10));
+  }
+
+  #[test]
+  fn should_check_frame_types() {
+    let f = Frame::Null;
+    assert!(f.is_null());
+    assert!(!f.is_string());
+    assert!(!f.is_error());
+    assert!(!f.is_array());
+    assert!(!f.is_integer());
+    assert!(!f.is_moved_or_ask_error());
+
+    let f = Frame::BulkString("foo".as_bytes().to_vec());
+    assert!(!f.is_null());
+    assert!(f.is_string());
+    assert!(!f.is_error());
+    assert!(!f.is_array());
+    assert!(!f.is_integer());
+    assert!(!f.is_moved_or_ask_error());
+
+    let f = Frame::SimpleString("foo".into());
+    assert!(!f.is_null());
+    assert!(f.is_string());
+    assert!(!f.is_error());
+    assert!(!f.is_array());
+    assert!(!f.is_integer());
+    assert!(!f.is_moved_or_ask_error());
+
+    let f = Frame::Error("foo".into());
+    assert!(!f.is_null());
+    assert!(!f.is_string());
+    assert!(f.is_error());
+    assert!(!f.is_array());
+    assert!(!f.is_integer());
+    assert!(!f.is_moved_or_ask_error());
+
+    let f = Frame::Array(vec![Frame::SimpleString("foo".into())]);
+    assert!(!f.is_null());
+    assert!(!f.is_string());
+    assert!(!f.is_error());
+    assert!(f.is_array());
+    assert!(!f.is_integer());
+    assert!(!f.is_moved_or_ask_error());
+
+    let f = Frame::Integer(10);
+    assert!(!f.is_null());
+    assert!(!f.is_string());
+    assert!(!f.is_error());
+    assert!(!f.is_array());
+    assert!(f.is_integer());
+    assert!(!f.is_moved_or_ask_error());
+
+    let f = Frame::Moved("foo".into());
+    assert!(!f.is_null());
+    assert!(!f.is_string());
+    assert!(f.is_error());
+    assert!(!f.is_array());
+    assert!(!f.is_integer());
+    assert!(f.is_moved_or_ask_error());
+
+    let f = Frame::Ask("foo".into());
+    assert!(!f.is_null());
+    assert!(!f.is_string());
+    assert!(f.is_error());
+    assert!(!f.is_array());
+    assert!(!f.is_integer());
+    assert!(f.is_moved_or_ask_error());
+  }
+
+  #[test]
+  fn should_decode_frame_kind_byte() {
+    assert_eq!(FrameKind::from_byte(SIMPLESTRING_BYTE), Some(FrameKind::SimpleString));
+    assert_eq!(FrameKind::from_byte(ERROR_BYTE), Some(FrameKind::Error));
+    assert_eq!(FrameKind::from_byte(BULKSTRING_BYTE), Some(FrameKind::BulkString));
+    assert_eq!(FrameKind::from_byte(INTEGER_BYTE), Some(FrameKind::Integer));
+    assert_eq!(FrameKind::from_byte(ARRAY_BYTE), Some(FrameKind::Array));
+  }
+
+  #[test]
+  fn should_encode_frame_kind_byte() {
+    assert_eq!(FrameKind::SimpleString.to_byte(), SIMPLESTRING_BYTE);
+    assert_eq!(FrameKind::Error.to_byte(), ERROR_BYTE);
+    assert_eq!(FrameKind::BulkString.to_byte(), BULKSTRING_BYTE);
+    assert_eq!(FrameKind::Integer.to_byte(), INTEGER_BYTE);
+    assert_eq!(FrameKind::Array.to_byte(), ARRAY_BYTE);
+  }
+
+  #[test]
+  fn should_cast_from_gen_error() {
+    let g = GenError::CustomError(0);
+    let e = RedisProtocolError::new_empty();
+    assert_eq!(e, RedisProtocolError::from(g));
+
+    let g = GenError::CustomError(1);
+    let e = RedisProtocolError::new(RedisProtocolErrorKind::EncodeError, "Invalid frame kind.");
+    assert_eq!(e, RedisProtocolError::from(g));
+
+    let g = GenError::BufferTooSmall(10);
+    let e = RedisProtocolError::from(g);
+    assert_eq!(e.kind(), &RedisProtocolErrorKind::BufferTooSmall(10));
+
+    let g = GenError::InvalidOffset;
+    let e = RedisProtocolError::new(RedisProtocolErrorKind::Unknown, "Invalid offset.");
+    assert_eq!(e, RedisProtocolError::from(g));
+  }
+
+  #[test]
+  fn should_print_error_kinds() {
+    assert_eq!(RedisProtocolErrorKind::EncodeError.to_str(), "Encode Error");
+    assert_eq!(RedisProtocolErrorKind::DecodeError.to_str(), "Decode Error");
+    assert_eq!(RedisProtocolErrorKind::Unknown.to_str(), "Unknown Error");
+    assert_eq!(RedisProtocolErrorKind::BufferTooSmall(10).to_str(), "Buffer too small");
   }
 
 }

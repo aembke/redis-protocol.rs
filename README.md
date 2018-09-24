@@ -1,10 +1,11 @@
 Redis Protocol
 ==============
 
+[![LICENSE](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Build Status](https://travis-ci.org/aembke/redis-protocol.rs.svg?branch=master)](https://travis-ci.org/aembke/redis-protocol.rs)
 [![Crates.io](https://img.shields.io/crates/v/redis-protocol.svg)](https://crates.io/crates/redis-protocol)
-
-[Documentation](https://docs.rs/redis-protocol/*/redis-protocol/)
+[![Coverage Status](https://coveralls.io/repos/github/aembke/redis-protocol.rs/badge.svg?branch=master)](https://coveralls.io/github/aembke/redis-protocol.rs?branch=master)
+[![API docs](https://docs.rs/redis-protocol/badge.svg)](https://docs.rs/redis-protocol)
 
 Structs and functions for implementing the [Redis protocol](https://redis.io/topics/protocol), built on [nom](https://github.com/Geal/nom) and designed to work easily with [Tokio](https://github.com/tokio-rs/tokio).
 
