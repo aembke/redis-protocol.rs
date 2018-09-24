@@ -30,8 +30,10 @@ before_cache: |
   fi
 
 script:
-- eval cargo test
-- eval cargo test --release
+- cargo clean
+- cargo build
+- cargo test
+- cargo test --release
 branches:
   only:
   - master
