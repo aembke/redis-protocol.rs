@@ -163,11 +163,11 @@ impl FrameKind {
 
     match d {
       SIMPLESTRING_BYTE => Some(SimpleString),
-      ERROR_BYTE => Some(Error),
-      INTEGER_BYTE => Some(Integer),
-      BULKSTRING_BYTE => Some(BulkString),
-      ARRAY_BYTE => Some(Array),
-      _   => None
+      ERROR_BYTE        => Some(Error),
+      INTEGER_BYTE      => Some(Integer),
+      BULKSTRING_BYTE   => Some(BulkString),
+      ARRAY_BYTE        => Some(Array),
+      _                 => None
     }
   }
 

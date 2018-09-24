@@ -1,34 +1,34 @@
 language: rust
 # sudo is required to enable kcov to use the personality syscall
 sudo: required
+dist: trusty
 
 matrix:
+  allow_failures:
+  - rust: nightly
   fast_finish: true
   include:
   - rust: nightly
     env: FEATURES="--features nightly"
-    before_script:
-    - export PATH=$HOME/.cargo/bin:$PATH
-    - cargo install cargo-update   || echo "cargo-update already installed"
-    - cargo install cargo-travis   || echo "cargo-travis already installed"
-    - cargo install cargo-benchcmp || echo "cargo-benchcmp already installed"
-    - cargo install-update -a
   - rust: stable
 addons:
   apt:
     packages:
     - libcurl4-openssl-dev
+    - libssl-dev
     - libelf-dev
     - libdw-dev
     - binutils-dev
     - cmake
     sources:
     - kalakris-cmake
-cache:
-  apt: true
-  directories:
-  - target/debug/deps
-  - target/debug/build
+
+cache: cargo
+before_cache: |
+  if [[ "$TRAVIS_RUST_VERSION" == stable ]]; then
+    RUSTFLAGS="--cfg procmacro2_semver_exempt" cargo install cargo-tarpaulin
+  fi
+
 script:
 - eval cargo test
 - eval cargo test --release
@@ -39,17 +39,8 @@ branches:
 env:
   global:
   - RUST_BACKTRACE=1
-  - TRAVIS_CARGO_NIGHTLY_FEATURE=""
 
 after_success: |
-  case "$TRAVIS_RUST_VERSION" in
-    nightly)
-      if [ "$TRAVIS_BRANCH" == "master" ]; then
-        cargo coveralls --verbose
-        cargo bench --verbose
-      fi
-      ;;
-    *)
-      echo "Skipping coveralls and benchmarks"
-      ;;
-  esac
+  if [[ "$TRAVIS_RUST_VERSION" == stable ]] && [[ "$TRAVIS_BRANCH" == "master" ]]; then
+    cargo tarpaulin --ciserver travis-ci --coveralls $TRAVIS_JOB_ID
+  fi

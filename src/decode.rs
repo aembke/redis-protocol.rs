@@ -122,9 +122,9 @@ pub fn decode(buf: &[u8]) -> Result<(Option<Frame>, usize), RedisProtocolError> 
   let len = buf.len();
 
   match parse_frame(buf) {
-    Ok((remaining, frame)) => Ok((Some(frame), len - remaining.len())),
+    Ok((remaining, frame))       => Ok((Some(frame), len - remaining.len())),
     Err(NomError::Incomplete(_)) => Ok((None, 0)),
-    Err(e) => Err(e.into())
+    Err(e)                       => Err(e.into())
   }
 }
 
