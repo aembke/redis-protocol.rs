@@ -22,27 +22,27 @@ addons:
     - cmake
     sources:
     - kalakris-cmake
+branches:
+  only:
+  - master
+  - develop
 
-cache: cargo
-before_cache: |
+before_script: |
   if [[ "$TRAVIS_RUST_VERSION" == stable ]]; then
     RUSTFLAGS="--cfg procmacro2_semver_exempt" cargo install cargo-tarpaulin
   fi
 
 script:
-- sudo cargo clean
+- cargo clean
 - cargo build
 - cargo test
 - cargo test --release
-branches:
-  only:
-  - master
-  - develop
-env:
-  global:
-  - RUST_BACKTRACE=1
 
 after_success: |
   if [[ "$TRAVIS_RUST_VERSION" == stable ]] && [[ "$TRAVIS_BRANCH" == "master" ]]; then
     cargo tarpaulin --ciserver travis-ci --coveralls $TRAVIS_JOB_ID
   fi
+
+env:
+  global:
+  - RUST_BACKTRACE=1
