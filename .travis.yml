@@ -28,7 +28,7 @@ branches:
   - develop
 
 before_script: |
-  if [[ "$TRAVIS_RUST_VERSION" != stable ]]; then
+  if [[ "$TRAVIS_RUST_VERSION" != stable ]] && [[ "$TRAVIS_BRANCH" == "master" ]]; then
     RUSTFLAGS="--cfg procmacro2_semver_exempt" cargo install cargo-tarpaulin
   fi
 
