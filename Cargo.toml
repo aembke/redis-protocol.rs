@@ -7,6 +7,7 @@ repository = "https://github.com/aembke/redis-protocol.rs"
 homepage = "https://github.com/aembke/redis-protocol.rs"
 keywords = ["redis", "protocol", "nom", "encode", "decode"]
 license = "MIT"
+description = "Structs and functions to implement the Redis protocol."
 
 [badges]
 travis-ci = { repository = "aembke/redis-protocol.rs", branch = "master" }
