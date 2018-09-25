@@ -68,16 +68,12 @@ pub mod prelude {
   pub use types::*;
   pub use encode::*;
   pub use decode::*;
-
-  pub use utils::redis_keyslot;
 }
 
 pub use utils::{
   redis_keyslot,
+  digits_in_number,
   ZEROED_KB,
   CRLF,
   NULL
 };
-
-#[doc(hidden)]
-pub use utils::digits_in_number;
