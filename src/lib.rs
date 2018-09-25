@@ -74,10 +74,8 @@ pub mod prelude {
 
 pub use utils::{
   redis_keyslot,
+  digits_in_number,
   ZEROED_KB,
   CRLF,
   NULL
 };
-
-#[doc(hidden)]
-pub use utils::digits_in_number;
