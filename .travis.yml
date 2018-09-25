@@ -10,6 +10,8 @@ matrix:
   include:
   - rust: nightly
     env: FEATURES="--features nightly"
+    before_script:
+    - export PATH=$HOME/.cargo/bin:$PATH
   - rust: stable
 addons:
   apt:
@@ -30,6 +32,8 @@ branches:
 before_script: |
   if [[ "$TRAVIS_RUST_VERSION" != stable ]] && [[ "$TRAVIS_BRANCH" == "master" ]]; then
     RUSTFLAGS="--cfg procmacro2_semver_exempt" cargo install cargo-tarpaulin
+    cargo install cargo-benchcmp || echo "cargo-benchcmp already installed"
+    cargo install-update -a
   fi
 
 script:
@@ -41,6 +45,11 @@ script:
 after_success: |
   if [[ "$TRAVIS_RUST_VERSION" != stable ]] && [[ "$TRAVIS_BRANCH" == "master" ]]; then
     cargo tarpaulin --ciserver travis-ci --coveralls $TRAVIS_JOB_ID
+    cargo bench > benches-variable
+    git fetch
+    git revert --no-commit `git rev-parse HEAD~1`
+    cargo bench > benches-control
+    cargo benchcmp benches-control benches-variable
   fi
 
 env:

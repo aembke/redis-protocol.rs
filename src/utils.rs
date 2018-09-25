@@ -10,10 +10,14 @@ use bytes::BytesMut;
 
 use cookie_factory::GenError;
 
+/// Terminating bytes between frames.
 pub const CRLF: &'static str = "\r\n";
+/// Byte representation of a `null` value.
 pub const NULL: &'static str = "$-1\r\n";
 
 pub const KB: usize = 1024;
+
+/// A pre-defined zeroed out KB of data, used to speed up extending buffers while encoding.
 pub const ZEROED_KB: &'static [u8; 1024] = &[0; 1024];
 const REDIS_CLUSTER_SLOTS: u16 = 16384;
 

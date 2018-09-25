@@ -55,10 +55,15 @@ extern crate cookie_factory;
 extern crate nom;
 
 mod utils;
+
+/// Error and Frame types.
 pub mod types;
+/// Encoding functions for BytesMut and slices.
 pub mod encode;
+/// Decoding functions for BytesMut and slices.
 pub mod decode;
 
+/// Shorthand for `use`'ing `types`, `encode`, `decode`, etc.
 pub mod prelude {
   pub use types::*;
   pub use encode::*;
@@ -67,4 +72,12 @@ pub mod prelude {
   pub use utils::redis_keyslot;
 }
 
-pub use utils::redis_keyslot;
+pub use utils::{
+  redis_keyslot,
+  ZEROED_KB,
+  CRLF,
+  NULL
+};
+
+#[doc(hidden)]
+pub use utils::digits_in_number;
