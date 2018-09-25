@@ -1,31 +1,46 @@
 [package]
-name = "redis-protocol"
-version = "0.1.0"
 authors = ["Alec Embke <aembke@gmail.com>"]
-readme = "README.md"
-repository = "https://github.com/aembke/redis-protocol.rs"
+description = "Structs and functions to implement the Redis protocol."
 homepage = "https://github.com/aembke/redis-protocol.rs"
 keywords = ["redis", "protocol", "nom", "encode", "decode"]
 license = "MIT"
-description = "Structs and functions to implement the Redis protocol."
+name = "redis-protocol"
+readme = "README.md"
+repository = "https://github.com/aembke/redis-protocol.rs"
+version = "0.1.0"
 
 [badges]
-travis-ci = { repository = "aembke/redis-protocol.rs", branch = "master" }
-maintenance = { status = "actively-developed" }
+
+[badges.maintenance]
+status = "actively-developed"
+
+[badges.travis-ci]
+branch = "master"
+repository = "aembke/redis-protocol.rs"
 
 [dependencies]
-log = "0.4"
-pretty_env_logger = "0.2"
 bytes = "0.4"
-nom = "4.0"
-crc16 = "0.3"
 cookie-factory = "=0.2.4"
+crc16 = "0.3"
+log = "0.4"
+nom = "4.0"
+pretty_env_logger = "0.2"
 
 [dev-dependencies]
 lazy_static = "1.1"
+rand = "0.5"
 
 [lib]
 doc = true
 doctest = true
 name = "redis_protocol"
 test = true
+
+[profile.bench]
+opt-level = 3
+debug = false
+rpath = false
+debug-assertions = false
+codegen-units = 16
+incremental = false
+overflow-checks = false
