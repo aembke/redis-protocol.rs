@@ -136,27 +136,12 @@ pub fn decode_bytes(buf: &BytesMut) -> Result<(Option<Frame>, usize), RedisProto
 #[cfg(test)]
 mod tests {
     use super::*;
-    use types::*;
-    use utils;
-
-    use std::fmt;
     use std::str;
-
-    use nom::simple_errors::Context;
-    use nom::Err as NomError;
 
     const PADDING: &'static str = "FOOBARBAZ";
 
     fn str_to_bytes(s: &str) -> Vec<u8> {
         s.as_bytes().to_vec()
-    }
-
-    fn to_bytes(s: &str) -> BytesMut {
-        BytesMut::from(str_to_bytes(s))
-    }
-
-    fn empty_bytes() -> BytesMut {
-        BytesMut::new()
     }
 
     fn pretty_print_panic(e: RedisProtocolError) {
@@ -305,7 +290,7 @@ mod tests {
     #[test]
     #[should_panic]
     fn should_error_on_junk() {
-        let mut bytes: BytesMut = "foobarbazwibblewobble".into();
+        let bytes: BytesMut = "foobarbazwibblewobble".into();
         let _ = decode_bytes(&bytes).map_err(|e| pretty_print_panic(e));
     }
 

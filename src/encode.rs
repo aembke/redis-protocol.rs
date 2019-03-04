@@ -114,17 +114,12 @@ pub fn encode_bytes<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use types::*;
     use utils::*;
 
     const PADDING: &'static str = "foobar";
 
     fn str_to_bytes(s: &str) -> Vec<u8> {
         s.as_bytes().to_vec()
-    }
-
-    fn to_bytes(s: &str) -> BytesMut {
-        BytesMut::from(str_to_bytes(s))
     }
 
     fn empty_bytes() -> BytesMut {

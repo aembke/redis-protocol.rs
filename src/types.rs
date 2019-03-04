@@ -359,7 +359,7 @@ mod tests {
     #[test]
     fn should_create_empty_error() {
         let e = RedisProtocolError::new_empty();
-        let s = e.to_string();
+        let _s = e.to_string();
 
         assert_eq!(e.description(), "");
         assert_eq!(e.kind(), &RedisProtocolErrorKind::Unknown);
@@ -369,7 +369,7 @@ mod tests {
     #[test]
     fn should_create_encode_error() {
         let e = RedisProtocolError::new(RedisProtocolErrorKind::EncodeError, "foo");
-        let s = e.to_string();
+        let _s = e.to_string();
 
         assert_eq!(e.description(), "foo");
         assert_eq!(e.kind(), &RedisProtocolErrorKind::EncodeError);
@@ -379,7 +379,7 @@ mod tests {
     #[test]
     fn should_create_decode_error() {
         let e = RedisProtocolError::new(RedisProtocolErrorKind::DecodeError, "foo");
-        let s = e.to_string();
+        let _s = e.to_string();
 
         assert_eq!(e.description(), "foo");
         assert_eq!(e.kind(), &RedisProtocolErrorKind::DecodeError);
@@ -389,7 +389,7 @@ mod tests {
     #[test]
     fn should_create_buf_too_small_error() {
         let e = RedisProtocolError::new(RedisProtocolErrorKind::BufferTooSmall(10), "foo");
-        let s = e.to_string();
+        let _s = e.to_string();
 
         assert_eq!(e.description(), "foo");
         assert_eq!(e.kind(), &RedisProtocolErrorKind::BufferTooSmall(10));
