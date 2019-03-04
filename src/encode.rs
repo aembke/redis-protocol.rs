@@ -10,7 +10,7 @@ fn gen_bulkstring<'a>(
     x: (&'a mut [u8], usize),
     data: &[u8],
 ) -> Result<(&'a mut [u8], usize), GenError> {
-    let _ = utils::check_offset(&x)?;
+    utils::check_offset(&x)?;
 
     let required = utils::bulkstring_encode_len(data);
     let remaining = x.0.len() - x.1;
@@ -30,7 +30,7 @@ fn gen_bulkstring<'a>(
 }
 
 fn gen_null(x: (&mut [u8], usize)) -> Result<(&mut [u8], usize), GenError> {
-    let _ = utils::check_offset(&x)?;
+    utils::check_offset(&x)?;
 
     let required = NULL.as_bytes().len();
     let remaining = x.0.len() - x.1;
@@ -44,9 +44,9 @@ fn gen_null(x: (&mut [u8], usize)) -> Result<(&mut [u8], usize), GenError> {
 
 fn gen_array<'a>(
     x: (&'a mut [u8], usize),
-    data: &Vec<Frame>,
+    data: &[Frame],
 ) -> Result<(&'a mut [u8], usize), GenError> {
-    let _ = utils::check_offset(&x)?;
+    utils::check_offset(&x)?;
 
     let required = utils::array_encode_len(data)?;
     let remaining = x.0.len() - x.1;

@@ -11,7 +11,7 @@ use cookie_factory::GenError;
 
 use nom::{Context, Err as NomError, Needed};
 
-const PUBSUB_PREFIX: &'static str = "message";
+const PUBSUB_PREFIX: &str = "message";
 
 pub const SIMPLESTRING_BYTE: u8 = b'+';
 pub const ERROR_BYTE: u8 = b'-';
@@ -79,7 +79,7 @@ impl<'a> RedisProtocolError<'a> {
     /// Attempt to read the underlying data on which the encoding or decoding error occurred.
     pub fn context(&self) -> Option<&[u8]> {
         match self.context {
-            Some(ref c) => Some(c),
+            Some(c) => Some(c),
             None => None,
         }
     }

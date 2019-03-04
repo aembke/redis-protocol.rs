@@ -7,14 +7,14 @@ use bytes::BytesMut;
 use cookie_factory::GenError;
 
 /// Terminating bytes between frames.
-pub const CRLF: &'static str = "\r\n";
+pub const CRLF: &str = "\r\n";
 /// Byte representation of a `null` value.
-pub const NULL: &'static str = "$-1\r\n";
+pub const NULL: &str = "$-1\r\n";
 
 pub const KB: usize = 1024;
 
 /// A pre-defined zeroed out KB of data, used to speed up extending buffers while encoding.
-pub const ZEROED_KB: &'static [u8; 1024] = &[0; 1024];
+pub const ZEROED_KB: &[u8; 1024] = &[0; 1024];
 
 const REDIS_CLUSTER_SLOTS: u16 = 16384;
 
@@ -41,7 +41,7 @@ pub fn bulkstring_encode_len(b: &[u8]) -> usize {
     1 + digits_in_number(b.len()) + 2 + b.len() + 2
 }
 
-pub fn array_encode_len(frames: &Vec<Frame>) -> Result<usize, GenError> {
+pub fn array_encode_len(frames: &[Frame]) -> Result<usize, GenError> {
     let padding = 1 + digits_in_number(frames.len()) + 2;
 
     frames.iter().fold(Ok(padding), |m, f| {
@@ -109,7 +109,7 @@ pub fn redis_keyslot(key: &str) -> u16 {
     let out = if i + j == key.len() || j == 0 {
         crc16_xmodem(key)
     } else {
-        crc16_xmodem(&key[i + 1..i + j + 1])
+        crc16_xmodem(&key[i + 1..=i + j])
     };
 
     trace!("mapped {} to redis slot {}", key, out);
@@ -118,10 +118,10 @@ pub fn redis_keyslot(key: &str) -> u16 {
 
 pub fn read_cluster_error(payload: &str) -> Option<Frame> {
     if payload.starts_with("MOVED") {
-        let parts: Vec<&str> = payload.split(" ").collect();
+        let parts: Vec<&str> = payload.split(' ').collect();
         Some(Frame::Moved(parts[1..].join(" ").to_owned()))
     } else if payload.starts_with("ASK") {
-        let parts: Vec<&str> = payload.split(" ").collect();
+        let parts: Vec<&str> = payload.split(' ').collect();
         Some(Frame::Ask(parts[1..].join(" ").to_owned()))
     } else {
         None
