@@ -56,26 +56,20 @@ extern crate nom;
 
 mod utils;
 
-/// Error and Frame types.
-pub mod types;
-/// Encoding functions for BytesMut and slices.
-pub mod encode;
 /// Decoding functions for BytesMut and slices.
 pub mod decode;
+/// Encoding functions for BytesMut and slices.
+pub mod encode;
+/// Error and Frame types.
+pub mod types;
 
 /// Shorthand for `use`'ing `types`, `encode`, `decode`, etc.
 pub mod prelude {
-  pub use types::*;
-  pub use encode::*;
-  pub use decode::*;
+    pub use decode::*;
+    pub use encode::*;
+    pub use types::*;
 
-  pub use utils::redis_keyslot;
+    pub use utils::redis_keyslot;
 }
 
-pub use utils::{
-  redis_keyslot,
-  digits_in_number,
-  ZEROED_KB,
-  CRLF,
-  NULL
-};
+pub use utils::{digits_in_number, redis_keyslot, CRLF, NULL, ZEROED_KB};

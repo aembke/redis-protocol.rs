@@ -1,85 +1,82 @@
 #![feature(test)]
 
-extern crate test;
+extern crate bytes;
 extern crate rand;
 extern crate redis_protocol;
-extern crate bytes;
+extern crate test;
 
 #[macro_use]
 extern crate lazy_static;
 
 use rand::Rng;
 
-use redis_protocol::prelude::*;
-use bytes::BytesMut;
 use bytes::BufMut;
+use bytes::BytesMut;
+use redis_protocol::prelude::*;
 
 pub fn rand_chars(len: usize) -> String {
-  rand::thread_rng()
-    .gen_ascii_chars()
-    .take(len)
-    .collect()
+    rand::thread_rng().gen_ascii_chars().take(len).collect()
 }
 
 #[cfg(test)]
 mod tests {
-  use super::*;
-  use test::{Bencher, black_box};
+    use super::*;
+    use test::{black_box, Bencher};
 
-  use redis_protocol::redis_keyslot;
+    use redis_protocol::redis_keyslot;
 
-  #[bench]
-  fn bench_redis_keyslot_random_32b(b: &mut Bencher) {
-    let k = rand_chars(32);
+    #[bench]
+    fn bench_redis_keyslot_random_32b(b: &mut Bencher) {
+        let k = rand_chars(32);
 
-    b.iter(|| {
-      black_box(redis_keyslot(&k));
-    });
-  }
+        b.iter(|| {
+            black_box(redis_keyslot(&k));
+        });
+    }
 
-  #[bench]
-  fn bench_redis_keyslot_random_64b(b: &mut Bencher) {
-    let k = rand_chars(64);
+    #[bench]
+    fn bench_redis_keyslot_random_64b(b: &mut Bencher) {
+        let k = rand_chars(64);
 
-    b.iter(|| {
-      black_box(redis_keyslot(&k));
-    });
-  }
+        b.iter(|| {
+            black_box(redis_keyslot(&k));
+        });
+    }
 
-  #[bench]
-  fn bench_redis_keyslot_random_128b(b: &mut Bencher) {
-    let k = rand_chars(128);
+    #[bench]
+    fn bench_redis_keyslot_random_128b(b: &mut Bencher) {
+        let k = rand_chars(128);
 
-    b.iter(|| {
-      black_box(redis_keyslot(&k));
-    });
-  }
+        b.iter(|| {
+            black_box(redis_keyslot(&k));
+        });
+    }
 
-  #[bench]
-  fn bench_redis_keyslot_random_256b(b: &mut Bencher) {
-    let k = rand_chars(256);
+    #[bench]
+    fn bench_redis_keyslot_random_256b(b: &mut Bencher) {
+        let k = rand_chars(256);
 
-    b.iter(|| {
-      black_box(redis_keyslot(&k));
-    });
-  }
+        b.iter(|| {
+            black_box(redis_keyslot(&k));
+        });
+    }
 
-  #[bench]
-  fn bench_redis_keyslot_random_512b(b: &mut Bencher) {
-    let k = rand_chars(512);
+    #[bench]
+    fn bench_redis_keyslot_random_512b(b: &mut Bencher) {
+        let k = rand_chars(512);
 
-    b.iter(|| {
-      black_box(redis_keyslot(&k));
-    });
-  }
+        b.iter(|| {
+            black_box(redis_keyslot(&k));
+        });
+    }
 
-  #[bench]
-  fn bench_redis_keyslot_random_1kb(b: &mut Bencher) {
-    let k = rand_chars(1024);
+    #[bench]
+    fn bench_redis_keyslot_random_1kb(b: &mut Bencher) {
+        let k = rand_chars(1024);
 
-    b.iter(|| {
-      black_box(redis_keyslot(&k));
-    });
-  }
+        b.iter(|| {
+            black_box(redis_keyslot(&k));
+        });
+    }
 
 }
