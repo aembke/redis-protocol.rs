@@ -22,6 +22,9 @@ pub const ZEROED_KB: &'static [u8; 1024] = &[0; 1024];
 
 const REDIS_CLUSTER_SLOTS: u16 = 16384;
 
+const PUBSUB_PREFIX: &'static str = "message";
+const PATTERN_PUBSUB_PREFIX: &'static str = "pmessage";
+
 #[inline]
 pub fn check_offset(x: &(&mut [u8], usize)) -> Result<(), GenError> {
   if x.1 > x.0.len() {
@@ -63,7 +66,7 @@ pub fn encode_len(data: &Frame) -> Result<usize, GenError> {
   }
 }
 
-// currently this is ~10x faster than repeat(0).take(amt) at the cost of some memory
+// this is faster than repeat(0).take(amt) at the cost of some memory
 pub fn zero_extend(buf: &mut BytesMut, mut amt: usize) {
   trace!("allocating more, len: {}, amt: {}", buf.len(), amt);
 
@@ -135,6 +138,18 @@ pub fn read_cluster_error(payload: &str) -> Option<Frame> {
 
 pub fn opt_frame_to_string_panic(f: Option<Frame>, msg: &str) -> String {
   f.expect(msg).to_string().expect(msg)
+}
+
+pub fn is_normal_pubsub(frames: &Vec<Frame>) -> bool {
+  frames.len() == 3
+    && frames[0].kind() == FrameKind::BulkString
+    && frames[0].as_str().map(|s| s == PUBSUB_PREFIX).unwrap_or(false)
+}
+
+pub fn is_pattern_pubsub(frames: &Vec<Frame>) -> bool {
+  frames.len() == 4
+    && frames[0].kind() == FrameKind::BulkString
+    && frames[0].as_str().map(|s| s == PATTERN_PUBSUB_PREFIX).unwrap_or(false)
 }
 
 #[cfg(test)]

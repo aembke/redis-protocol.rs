@@ -16,8 +16,6 @@ use nom::{
   Needed
 };
 
-const PUBSUB_PREFIX: &'static str = "message";
-
 pub const SIMPLESTRING_BYTE: u8 = b'+';
 pub const ERROR_BYTE: u8        = b'-';
 pub const INTEGER_BYTE: u8      = b':';
@@ -213,9 +211,16 @@ impl Frame {
   /// Whether or not the frame represents a message on a publish-subscribe channel.
   pub fn is_pubsub_message(&self) -> bool {
     if let Frame::Array(ref frames) = *self {
-      frames.len() == 3
-        && frames[0].kind() == FrameKind::BulkString
-        && frames[0].as_str().map(|s| s == PUBSUB_PREFIX).unwrap_or(false)
+      utils::is_normal_pubsub(frames) || utils::is_pattern_pubsub(frames)
+    }else{
+      false
+    }
+  }
+
+  /// Whether or not the frame represents a message on a publish-subscribe channel matched against a pattern subscription.
+  pub fn is_pattern_pubsub_message(&self) -> bool {
+    if let Frame::Array(ref frames) = *self {
+      utils::is_pattern_pubsub(frames)
     }else{
       false
     }
@@ -327,14 +332,32 @@ mod tests {
 
   use nom::ErrorKind as NomErrorKind;
 
+  #[test]
+  fn should_parse_pattern_pubsub_message() {
+    let frames = vec![
+      Frame::BulkString("pmessage".into()),
+      Frame::BulkString("fo*".into()),
+      Frame::BulkString("foo".into()),
+      Frame::BulkString("bar".into())
+    ];
+    assert!(utils::is_pattern_pubsub(&frames));
+    let frame = Frame::Array(frames);
+
+    let (channel, message) = frame.parse_as_pubsub().expect("Expected pubsub frames");
+
+    assert_eq!(channel, "foo");
+    assert_eq!(message, "bar");
+  }
 
   #[test]
   fn should_parse_pubsub_message() {
-    let frame = Frame::Array(vec![
+    let frames = vec![
       Frame::BulkString("message".into()),
       Frame::BulkString("foo".into()),
       Frame::BulkString("bar".into())
-    ]);
+    ];
+    assert!(!utils::is_pattern_pubsub(&frames));
+    let frame = Frame::Array(frames);
 
     let (channel, message) = frame.parse_as_pubsub().expect("Expected pubsub frames");
 
