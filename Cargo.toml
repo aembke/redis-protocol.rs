@@ -7,7 +7,7 @@ license = "MIT"
 name = "redis-protocol"
 readme = "README.md"
 repository = "https://github.com/aembke/redis-protocol.rs"
-version = "0.1.1"
+version = "0.1.2"
 
 [badges]
 
