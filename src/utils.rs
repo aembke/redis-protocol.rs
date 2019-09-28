@@ -44,10 +44,12 @@ pub fn digits_in_number(d: usize) -> usize {
   ((d as f64).log10()).floor() as usize + 1
 }
 
+#[inline]
 pub fn bulkstring_encode_len(b: &[u8]) -> usize {
   1 + digits_in_number(b.len()) + 2 + b.len() + 2
 }
 
+#[inline]
 pub fn array_encode_len(frames: &Vec<Frame>) -> Result<usize, GenError> {
   let padding = 1 + digits_in_number(frames.len()) + 2;
 
@@ -56,13 +58,43 @@ pub fn array_encode_len(frames: &Vec<Frame>) -> Result<usize, GenError> {
   })
 }
 
+#[inline]
+pub fn simplestring_encode_len(s: &str) -> usize {
+  1 + s.len() + 2
+}
+
+#[inline]
+pub fn error_encode_len(s: &str) -> usize {
+  1 + s.len() + 2
+}
+
+#[inline]
+pub fn integer_encode_len(i: &i64) -> usize {
+  let prefix = if *i < 0 {
+    1
+  }else{
+    0
+  };
+  let as_usize = if *i < 0 {
+    (*i * -1) as usize
+  }else{
+    *i as usize
+  };
+
+  1 + digits_in_number(as_usize) + 2 + prefix
+}
+
 /// Returns the number of bytes necessary to represent the frame.
 pub fn encode_len(data: &Frame) -> Result<usize, GenError> {
   match *data {
-    Frame::BulkString(ref b) => Ok(bulkstring_encode_len(&b)),
-    Frame::Array(ref frames) => array_encode_len(frames),
-    Frame::Null              => Ok(NULL.as_bytes().len()),
-    _                        => Err(GenError::CustomError(1))
+    Frame::BulkString(ref b)   => Ok(bulkstring_encode_len(&b)),
+    Frame::Array(ref frames)   => array_encode_len(frames),
+    Frame::Null                => Ok(NULL.as_bytes().len()),
+    Frame::SimpleString(ref s) => Ok(simplestring_encode_len(s)),
+    Frame::Error(ref s)        => Ok(error_encode_len(s)),
+    Frame::Integer(ref i)      => Ok(integer_encode_len(i)),
+    Frame::Moved(ref s)        => Ok(error_encode_len(s)),
+    Frame::Ask(ref s)          => Ok(error_encode_len(s))
   }
 }
 
@@ -80,8 +112,49 @@ pub fn zero_extend(buf: &mut BytesMut, mut amt: usize) {
   }
 }
 
+#[inline]
+pub fn redirection_to_frame(prefix: &'static str, slot: u16, host: &str, port: u16) -> String {
+  format!("{} {} {}:{}", prefix, slot, host, port)
+}
+
+pub fn string_to_redirection(s: &str) -> Result<Redirection, RedisProtocolError> {
+  let parts: Vec<&str> = s.split(" ").collect();
+
+  if parts.len() != 3 {
+    return Err(RedisProtocolError::new(RedisProtocolErrorKind::Unknown, "Invalid redirection."));
+  }
+
+  let is_moved = match parts[0].as_ref() {
+    "MOVED" => true,
+    "ASK"   => false,
+    _ => return Err(RedisProtocolError::new(RedisProtocolErrorKind::Unknown, "Invalid redirection kind."))
+  };
+
+  let slot = match parts[1].parse::<u16>() {
+    Ok(s) => s,
+    Err(_) => return Err(RedisProtocolError::new(RedisProtocolErrorKind::Unknown, "Invalid hash slot redirection."))
+  };
+
+  let address_parts: Vec<&str> = parts[2].split(":").collect();
+  if address_parts.len() != 2 {
+    return Err(RedisProtocolError::new(RedisProtocolErrorKind::Unknown, "Invalid redirection address."));
+  }
+
+  let host = address_parts[0].to_owned();
+  let port = match address_parts[1].parse::<u16>() {
+    Ok(p) => p,
+    Err(_) => return Err(RedisProtocolError::new(RedisProtocolErrorKind::Unknown, "Invalid redirection address port."))
+  };
+
+  if is_moved {
+    Ok(Redirection::Moved {slot, host, port})
+  }else{
+    Ok(Redirection::Ask {slot, host, port})
+  }
+}
 
 /// Perform a crc16 XMODEM operation against a string slice.
+#[inline]
 fn crc16_xmodem(key: &str) -> u16 {
   State::<XMODEM>::calculate(key.as_bytes()) % REDIS_CLUSTER_SLOTS
 }
@@ -155,6 +228,37 @@ pub fn is_pattern_pubsub(frames: &Vec<Frame>) -> bool {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn should_get_encode_len_simplestring() {
+    let ss1 = "Ok";
+    let ss2 = "FooBarBaz";
+    let ss3 = "-&#$@9232";
+
+    assert_eq!(simplestring_encode_len(ss1), 5);
+    assert_eq!(simplestring_encode_len(ss2), 12);
+    assert_eq!(simplestring_encode_len(ss3), 12);
+  }
+
+  #[test]
+  fn should_get_encode_len_error() {
+    let e1 = "MOVED 3999 127.0.0.1:6381";
+    let e2 = "ERR unknown command 'foobar'";
+    let e3 = "WRONGTYPE Operation against a key holding the wrong kind of value";
+
+    assert_eq!(error_encode_len(e1), 28);
+    assert_eq!(error_encode_len(e2), 31);
+    assert_eq!(error_encode_len(e3), 68);
+  }
+
+  #[test]
+  fn should_get_encode_len_integer() {
+    let i1: i64 = 38473;
+    let i2: i64 = -74834;
+
+    assert_eq!(integer_encode_len(&i1), 8);
+    assert_eq!(integer_encode_len(&i2), 9);
+  }
 
   #[test]
   fn should_crc16_123456789() {

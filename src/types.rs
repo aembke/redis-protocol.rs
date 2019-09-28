@@ -141,6 +141,23 @@ impl<'a> From<NomError<&'a [u8]>> for RedisProtocolError<'a> {
   }
 }
 
+/// A cluster redirection message.
+///
+/// <https://redis.io/topics/cluster-spec#redirection-and-resharding>
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Redirection {
+  Moved {
+    slot: u16,
+    host: String,
+    port: u16
+  },
+  Ask {
+    slot: u16,
+    host: String,
+    port: u16
+  }
+}
+
 /// An enum representing the kind of a Frame without references to any inner data.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FrameKind {
@@ -322,6 +339,34 @@ impl Frame {
     }
   }
 
+  /// Attempt to parse the frame as a cluster redirection.
+  pub fn to_redirection(&self) -> Result<Redirection, RedisProtocolError> {
+    match *self {
+      Frame::Moved(ref s) => utils::string_to_redirection(s),
+      Frame::Ask(ref s)   => utils::string_to_redirection(s),
+      Frame::Error(ref s) => utils::string_to_redirection(s),
+      _ => Err(RedisProtocolError::new(RedisProtocolErrorKind::Unknown, "Invalid frame kind. Expected Moved, Ask, or Error."))
+    }
+  }
+
+}
+
+impl From<Redirection> for Frame {
+  fn from(redirection: Redirection) -> Self {
+    match redirection {
+      Redirection::Moved {slot, host, port} => Frame::Moved(utils::redirection_to_frame("MOVED", slot, &host, port)),
+      Redirection::Ask {slot, host, port}   => Frame::Ask(utils::redirection_to_frame("ASK", slot, &host, port))
+    }
+  }
+}
+
+impl<'a> From<&'a Redirection> for Frame {
+  fn from(redirection: &'a Redirection) -> Self {
+    match *redirection {
+      Redirection::Moved {ref slot, ref host, ref port} => Frame::Moved(utils::redirection_to_frame("MOVED", *slot, host, *port)),
+      Redirection::Ask {ref slot, ref host, ref port}   => Frame::Ask(utils::redirection_to_frame("ASK", *slot, host, *port))
+    }
+  }
 }
 
 
@@ -331,6 +376,102 @@ mod tests {
   use ::utils::ZEROED_KB;
 
   use nom::ErrorKind as NomErrorKind;
+
+  #[test]
+  fn should_convert_ask_redirection_to_frame() {
+    let redirection = Redirection::Ask {
+      slot: 3999,
+      host: "127.0.0.1".into(),
+      port: 6381
+    };
+    let frame = Frame::Ask("ASK 3999 127.0.0.1:6381".into());
+
+    assert_eq!(Frame::from(redirection), frame);
+  }
+
+  #[test]
+  fn should_convert_moved_redirection_to_frame() {
+    let redirection = Redirection::Moved {
+      slot: 3999,
+      host: "127.0.0.1".into(),
+      port: 6381
+    };
+    let frame = Frame::Moved("MOVED 3999 127.0.0.1:6381".into());
+
+    assert_eq!(Frame::from(redirection), frame);
+  }
+
+  #[test]
+  fn should_convert_frame_to_redirection_moved() {
+    let redirection = Redirection::Moved {
+      slot: 3999,
+      host: "127.0.0.1".into(),
+      port: 6381
+    };
+    let frame = Frame::Ask("MOVED 3999 127.0.0.1:6381".into());
+
+    assert_eq!(frame.to_redirection().unwrap(), redirection);
+  }
+
+  #[test]
+  fn should_convert_frame_to_redirection_ask() {
+    let redirection = Redirection::Ask {
+      slot: 3999,
+      host: "127.0.0.1".into(),
+      port: 6381
+    };
+    let frame = Frame::Ask("ASK 3999 127.0.0.1:6381".into());
+
+    assert_eq!(frame.to_redirection().unwrap(), redirection);
+  }
+
+  #[test]
+  #[should_panic]
+  fn should_convert_frame_to_redirection_error() {
+    let redirection = Redirection::Ask {
+      slot: 3999,
+      host: "127.0.0.1".into(),
+      port: 6381
+    };
+    let frame = Frame::BulkString("ASK 3999 127.0.0.1:6381".into());
+
+    assert_eq!(frame.to_redirection().unwrap(), redirection);
+  }
+
+  #[test]
+  #[should_panic]
+  fn should_convert_frame_to_redirection_error_invalid_1() {
+    let f1 = Frame::Moved("abc def".into());
+    let _ = f1.to_redirection().unwrap();
+  }
+
+  #[test]
+  #[should_panic]
+  fn should_convert_frame_to_redirection_error_invalid_2() {
+    let f2 = Frame::Moved("abc def ghi".into());
+    let _ = f2.to_redirection().unwrap();
+  }
+
+  #[test]
+  #[should_panic]
+  fn should_convert_frame_to_redirection_error_invalid_3() {
+    let f3 = Frame::Moved("MOVED abc def".into());
+    let _ = f3.to_redirection().unwrap();
+  }
+
+  #[test]
+  #[should_panic]
+  fn should_convert_frame_to_redirection_error_invalid_4() {
+    let f4 = Frame::Moved("MOVED 3999 abc".into());
+    let _ = f4.to_redirection().unwrap();
+  }
+
+  #[test]
+  #[should_panic]
+  fn should_convert_frame_to_redirection_error_invalid_5() {
+    let f5 = Frame::Moved("MOVED 3999 abc:def".into());
+    let _ = f5.to_redirection().unwrap();
+  }
 
   #[test]
   fn should_parse_pattern_pubsub_message() {

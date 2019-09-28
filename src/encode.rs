@@ -10,6 +10,57 @@ use utils::{
 use cookie_factory::GenError;
 use bytes::BytesMut;
 
+fn gen_simplestring<'a>(x: (&'a mut [u8], usize), data: &str) -> Result<(&'a mut [u8], usize), GenError> {
+  let _ = utils::check_offset(&x);
+
+  let required = utils::simplestring_encode_len(data);
+  let remaining = x.0.len() - x.1;
+
+  if remaining < required {
+    return Err(GenError::BufferTooSmall(required - remaining));
+  }
+
+  do_gen!(x,
+    gen_be_u8!(FrameKind::SimpleString.to_byte()) >>
+    gen_slice!(data.as_bytes()) >>
+    gen_slice!(CRLF.as_bytes())
+  )
+}
+
+fn gen_error<'a>(x: (&'a mut [u8], usize), data: &str) -> Result<(&'a mut [u8], usize), GenError> {
+  let _ = utils::check_offset(&x);
+
+  let required = utils::error_encode_len(data);
+  let remaining = x.0.len() - x.1;
+
+  if remaining < required {
+    return Err(GenError::BufferTooSmall(required - remaining));
+  }
+
+  do_gen!(x,
+    gen_be_u8!(FrameKind::Error.to_byte()) >>
+    gen_slice!(data.as_bytes()) >>
+    gen_slice!(CRLF.as_bytes())
+  )
+}
+
+fn gen_integer<'a>(x: (&'a mut [u8], usize), data: &i64) -> Result<(&'a mut [u8], usize), GenError> {
+  let _ = utils::check_offset(&x);
+
+  let required = utils::integer_encode_len(data);
+  let remaining = x.0.len() - x.1;
+
+  if remaining < required {
+    return Err(GenError::BufferTooSmall(required - remaining));
+  }
+
+  do_gen!(x,
+    gen_be_u8!(FrameKind::Integer.to_byte()) >>
+    gen_slice!(data.to_string().as_bytes()) >>
+    gen_slice!(CRLF.as_bytes())
+  )
+}
+
 fn gen_bulkstring<'a>(x: (&'a mut [u8], usize), data: &[u8]) -> Result<(&'a mut [u8], usize), GenError> {
   let _ = utils::check_offset(&x)?;
 
@@ -73,10 +124,14 @@ fn gen_array<'a>(x: (&'a mut [u8], usize), data: &Vec<Frame>) -> Result<(&'a mut
 
 fn attempt_encoding(buf: &mut [u8], offset: usize, frame: &Frame) -> Result<usize, GenError> {
   match *frame {
-    Frame::BulkString(ref b) => gen_bulkstring((buf, offset), b).map(|(_, l)| l),
-    Frame::Null              => gen_null((buf, offset)).map(|(_, l)| l),
-    Frame::Array(ref frames) => gen_array((buf, offset), frames).map(|(_, l)| l),
-    _                        => Err(GenError::CustomError(1))
+    Frame::BulkString(ref b)   => gen_bulkstring((buf, offset), b).map(|(_, l)| l),
+    Frame::Null                => gen_null((buf, offset)).map(|(_, l)| l),
+    Frame::Array(ref frames)   => gen_array((buf, offset), frames).map(|(_, l)| l),
+    Frame::Error(ref s)        => gen_error((buf, offset), s).map(|(_, l)| l),
+    Frame::Moved(ref s)        => gen_error((buf, offset), s).map(|(_, l)| l),
+    Frame::Ask(ref s)          => gen_error((buf, offset), s).map(|(_, l)| l),
+    Frame::SimpleString(ref s) => gen_simplestring((buf, offset), s).map(|(_, l)| l),
+    Frame::Integer(ref i)      => gen_integer((buf, offset), i).map(|(_, l)| l)
   }
 }
 
@@ -279,6 +334,60 @@ mod tests {
     ]);
 
     encode_raw_and_verify_empty(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_moved_error() {
+    let expected = "-MOVED 3999 127.0.0.1:6381\r\n";
+    let input = Frame::Moved("MOVED 3999 127.0.0.1:6381".into());
+
+    encode_and_verify_empty(&input, expected);
+    encode_and_verify_non_empty(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_ask_error() {
+    let expected = "-ASK 3999 127.0.0.1:6381\r\n";
+    let input = Frame::Ask("ASK 3999 127.0.0.1:6381".into());
+
+    encode_and_verify_empty(&input, expected);
+    encode_and_verify_non_empty(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_error() {
+    let expected = "-WRONGTYPE Operation against a key holding the wrong kind of value\r\n";
+    let input = Frame::Error("WRONGTYPE Operation against a key holding the wrong kind of value".into());
+
+    encode_and_verify_empty(&input, expected);
+    encode_and_verify_non_empty(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_simplestring() {
+    let expected = "+OK\r\n";
+    let input = Frame::SimpleString("OK".into());
+
+    encode_and_verify_empty(&input, expected);
+    encode_and_verify_non_empty(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_integer() {
+    let i1_expected = ":1000\r\n";
+    let i1_input = Frame::Integer(1000);
+
+    encode_and_verify_empty(&i1_input, i1_expected);
+    encode_and_verify_non_empty(&i1_input, i1_expected);
+  }
+
+  #[test]
+  fn should_encode_negative_integer() {
+    let i2_expected = ":-1000\r\n";
+    let i2_input = Frame::Integer(-1000);
+
+    encode_and_verify_empty(&i2_input, i2_expected);
+    encode_and_verify_non_empty(&i2_input, i2_expected);
   }
 
 }
