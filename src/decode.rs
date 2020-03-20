@@ -156,7 +156,7 @@ mod tests {
   }
 
   fn to_bytes(s: &str) -> BytesMut {
-    BytesMut::from(str_to_bytes(s))
+    BytesMut::from(&s[..])
   }
 
   fn empty_bytes() -> BytesMut {

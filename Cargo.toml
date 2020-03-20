@@ -19,7 +19,7 @@ branch = "master"
 repository = "aembke/redis-protocol.rs"
 
 [dependencies]
-bytes = "0.4"
+bytes = "0.5"
 cookie-factory = "=0.2.4"
 crc16 = "0.3"
 log = "0.4"
