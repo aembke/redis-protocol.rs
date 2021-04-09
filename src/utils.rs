@@ -1,14 +1,7 @@
-
-use ::types::*;
-
-use crc16::{
-  State,
-  XMODEM
-};
-
 use bytes::BytesMut;
-
 use cookie_factory::GenError;
+use crc16::{State, XMODEM};
+use types::*;
 
 /// Terminating bytes between frames.
 pub const CRLF: &'static str = "\r\n";
@@ -29,7 +22,7 @@ const PATTERN_PUBSUB_PREFIX: &'static str = "pmessage";
 pub fn check_offset(x: &(&mut [u8], usize)) -> Result<(), GenError> {
   if x.1 > x.0.len() {
     Err(GenError::InvalidOffset)
-  }else{
+  } else {
     Ok(())
   }
 }
@@ -70,14 +63,10 @@ pub fn error_encode_len(s: &str) -> usize {
 
 #[inline]
 pub fn integer_encode_len(i: &i64) -> usize {
-  let prefix = if *i < 0 {
-    1
-  }else{
-    0
-  };
+  let prefix = if *i < 0 { 1 } else { 0 };
   let as_usize = if *i < 0 {
     (*i * -1) as usize
-  }else{
+  } else {
     *i as usize
   };
 
@@ -87,14 +76,14 @@ pub fn integer_encode_len(i: &i64) -> usize {
 /// Returns the number of bytes necessary to represent the frame.
 pub fn encode_len(data: &Frame) -> Result<usize, GenError> {
   match *data {
-    Frame::BulkString(ref b)   => Ok(bulkstring_encode_len(&b)),
-    Frame::Array(ref frames)   => array_encode_len(frames),
-    Frame::Null                => Ok(NULL.as_bytes().len()),
+    Frame::BulkString(ref b) => Ok(bulkstring_encode_len(&b)),
+    Frame::Array(ref frames) => array_encode_len(frames),
+    Frame::Null => Ok(NULL.as_bytes().len()),
     Frame::SimpleString(ref s) => Ok(simplestring_encode_len(s)),
-    Frame::Error(ref s)        => Ok(error_encode_len(s)),
-    Frame::Integer(ref i)      => Ok(integer_encode_len(i)),
-    Frame::Moved(ref s)        => Ok(error_encode_len(s)),
-    Frame::Ask(ref s)          => Ok(error_encode_len(s))
+    Frame::Error(ref s) => Ok(error_encode_len(s)),
+    Frame::Integer(ref i) => Ok(integer_encode_len(i)),
+    Frame::Moved(ref s) => Ok(error_encode_len(s)),
+    Frame::Ask(ref s) => Ok(error_encode_len(s)),
   }
 }
 
@@ -121,35 +110,56 @@ pub fn string_to_redirection(s: &str) -> Result<Redirection, RedisProtocolError>
   let parts: Vec<&str> = s.split(" ").collect();
 
   if parts.len() != 3 {
-    return Err(RedisProtocolError::new(RedisProtocolErrorKind::Unknown, "Invalid redirection."));
+    return Err(RedisProtocolError::new(
+      RedisProtocolErrorKind::Unknown,
+      "Invalid redirection.",
+    ));
   }
 
   let is_moved = match parts[0].as_ref() {
     "MOVED" => true,
-    "ASK"   => false,
-    _ => return Err(RedisProtocolError::new(RedisProtocolErrorKind::Unknown, "Invalid redirection kind."))
+    "ASK" => false,
+    _ => {
+      return Err(RedisProtocolError::new(
+        RedisProtocolErrorKind::Unknown,
+        "Invalid redirection kind.",
+      ))
+    }
   };
 
   let slot = match parts[1].parse::<u16>() {
     Ok(s) => s,
-    Err(_) => return Err(RedisProtocolError::new(RedisProtocolErrorKind::Unknown, "Invalid hash slot redirection."))
+    Err(_) => {
+      return Err(RedisProtocolError::new(
+        RedisProtocolErrorKind::Unknown,
+        "Invalid hash slot redirection.",
+      ))
+    }
   };
 
   let address_parts: Vec<&str> = parts[2].split(":").collect();
   if address_parts.len() != 2 {
-    return Err(RedisProtocolError::new(RedisProtocolErrorKind::Unknown, "Invalid redirection address."));
+    return Err(RedisProtocolError::new(
+      RedisProtocolErrorKind::Unknown,
+      "Invalid redirection address.",
+    ));
   }
 
   let host = address_parts[0].to_owned();
   let port = match address_parts[1].parse::<u16>() {
     Ok(p) => p,
-    Err(_) => return Err(RedisProtocolError::new(RedisProtocolErrorKind::Unknown, "Invalid redirection address port."))
+    Err(_) => {
+      return Err(RedisProtocolError::new(
+        RedisProtocolErrorKind::Unknown,
+        "Invalid redirection address port.",
+      ))
+    }
   };
 
   if is_moved {
-    Ok(Redirection::Moved {slot, host, port})
-  }else{
-    Ok(Redirection::Ask {slot, host, port})
+    Ok(Redirection::Moved { slot, host, port })
+  } else {
+    Ok(Redirection::Ask { slot, host, port })
   }
 }
 
@@ -175,7 +185,7 @@ pub fn redis_keyslot(key: &str) -> u16 {
   }
 
   let i = i.unwrap();
-  for (idx, c) in key[i+1..].chars().enumerate() {
+  for (idx, c) in key[i + 1..].chars().enumerate() {
     if c == '}' {
       j = Some(idx);
       break;
@@ -187,10 +197,10 @@ pub fn redis_keyslot(key: &str) -> u16 {
   }
 
   let j = j.unwrap();
-  let out = if i+j == key.len() || j == 0 {
+  let out = if i + j == key.len() || j == 0 {
     crc16_xmodem(key)
-  }else{
-    crc16_xmodem(&key[i+1..i+j+1])
+  } else {
+    crc16_xmodem(&key[i + 1..i + j + 1])
   };
 
   trace!("mapped {} to redis slot {}", key, out);
@@ -201,10 +211,10 @@ pub fn read_cluster_error(payload: &str) -> Option<Frame> {
   if payload.starts_with("MOVED") {
     let parts: Vec<&str> = payload.split(" ").collect();
     Some(Frame::Moved(parts[1..].join(" ").to_owned()))
-  }else if payload.starts_with("ASK") {
+  } else if payload.starts_with("ASK") {
     let parts: Vec<&str> = payload.split(" ").collect();
     Some(Frame::Ask(parts[1..].join(" ").to_owned()))
-  }else{
+  } else {
     None
   }
 }
@@ -216,13 +226,19 @@ pub fn opt_frame_to_string_panic(f: Option<Frame>, msg: &str) -> String {
 pub fn is_normal_pubsub(frames: &Vec<Frame>) -> bool {
   frames.len() == 3
     && frames[0].kind() == FrameKind::BulkString
-    && frames[0].as_str().map(|s| s == PUBSUB_PREFIX).unwrap_or(false)
+    && frames[0]
+      .as_str()
+      .map(|s| s == PUBSUB_PREFIX)
+      .unwrap_or(false)
 }
 
 pub fn is_pattern_pubsub(frames: &Vec<Frame>) -> bool {
   frames.len() == 4
     && frames[0].kind() == FrameKind::BulkString
-    && frames[0].as_str().map(|s| s == PATTERN_PUBSUB_PREFIX).unwrap_or(false)
+    && frames[0]
+      .as_str()
+      .map(|s| s == PATTERN_PUBSUB_PREFIX)
+      .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -320,5 +336,4 @@ mod tests {
 
     assert_eq!(actual, expected);
   }
-
 }

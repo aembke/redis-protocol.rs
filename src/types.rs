@@ -1,26 +1,17 @@
-
-use ::utils;
-
-use std::fmt;
-use std::str;
-use std::borrow::Cow;
-
-use std::error::Error;
-use std::borrow::Borrow;
+use utils;
 
 use cookie_factory::GenError;
-
-use nom::{
-  Context,
-  Err as NomError,
-  Needed
-};
+use nom::{Context, Err as NomError, Needed};
+use std::borrow::Borrow;
+use std::borrow::Cow;
+use std::fmt;
+use std::str;
 
 pub const SIMPLESTRING_BYTE: u8 = b'+';
-pub const ERROR_BYTE: u8        = b'-';
-pub const INTEGER_BYTE: u8      = b':';
-pub const BULKSTRING_BYTE: u8   = b'$';
-pub const ARRAY_BYTE: u8        = b'*';
+pub const ERROR_BYTE: u8 = b'-';
+pub const INTEGER_BYTE: u8 = b':';
+pub const BULKSTRING_BYTE: u8 = b'$';
+pub const ARRAY_BYTE: u8 = b'*';
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RedisProtocolErrorKind {
@@ -31,42 +22,47 @@ pub enum RedisProtocolErrorKind {
   /// An error that occurred while decoding data.
   DecodeError,
   /// An unknown error, or an error that can occur during encoding or decoding.
-  Unknown
+  Unknown,
 }
 
 impl RedisProtocolErrorKind {
-
   pub fn to_str(&self) -> &'static str {
     use self::RedisProtocolErrorKind::*;
 
     match *self {
-      EncodeError       => "Encode Error",
-      DecodeError       => "Decode Error",
-      Unknown           => "Unknown Error",
-      BufferTooSmall(_) => "Buffer too small"
+      EncodeError => "Encode Error",
+      DecodeError => "Decode Error",
+      Unknown => "Unknown Error",
+      BufferTooSmall(_) => "Buffer too small",
     }
   }
-
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RedisProtocolError<'a> {
   desc: Cow<'static, str>,
   kind: RedisProtocolErrorKind,
-  context: Option<&'a [u8]>
+  context: Option<&'a [u8]>,
 }
 
 impl<'a> RedisProtocolError<'a> {
-
   pub fn new<S: Into<Cow<'static, str>>>(kind: RedisProtocolErrorKind, desc: S) -> Self {
-    RedisProtocolError { kind, desc: desc.into(), context: None }
+    RedisProtocolError {
+      kind,
+      desc: desc.into(),
+      context: None,
+    }
+  }
+
+  pub fn description(&self) -> &str {
+    self.desc.borrow()
   }
 
   pub fn new_empty() -> Self {
     RedisProtocolError {
       kind: RedisProtocolErrorKind::Unknown,
       desc: "".into(),
-      context: None
+      context: None,
     }
   }
 
@@ -82,10 +78,9 @@ impl<'a> RedisProtocolError<'a> {
   pub fn context(&self) -> Option<&[u8]> {
     match self.context {
       Some(ref c) => Some(c),
-      None => None
+      None => None,
     }
   }
-
 }
 
 impl<'a> fmt::Display for RedisProtocolError<'a> {
@@ -94,25 +89,22 @@ impl<'a> fmt::Display for RedisProtocolError<'a> {
   }
 }
 
-impl<'a> Error for RedisProtocolError<'a> {
-
-  fn description(&self) -> &str {
-    self.desc.borrow()
-  }
-
-}
-
 // yikes
 impl<'a> From<GenError> for RedisProtocolError<'a> {
   fn from(e: GenError) -> Self {
     match e {
       GenError::CustomError(i) => match i {
-        1                         => RedisProtocolError::new(RedisProtocolErrorKind::EncodeError, "Invalid frame kind."),
-        _                         => RedisProtocolError::new_empty()
+        1 => RedisProtocolError::new(RedisProtocolErrorKind::EncodeError, "Invalid frame kind."),
+        _ => RedisProtocolError::new_empty(),
       },
-      GenError::InvalidOffset     => RedisProtocolError::new(RedisProtocolErrorKind::Unknown, "Invalid offset."),
-      GenError::BufferTooSmall(b) => RedisProtocolError::new(RedisProtocolErrorKind::BufferTooSmall(b), format!("Need {} more bytes", b)),
-      _                           => RedisProtocolError::new_empty()
+      GenError::InvalidOffset => {
+        RedisProtocolError::new(RedisProtocolErrorKind::Unknown, "Invalid offset.")
+      }
+      GenError::BufferTooSmall(b) => RedisProtocolError::new(
+        RedisProtocolErrorKind::BufferTooSmall(b),
+        format!("Need {} more bytes", b),
+      ),
+      _ => RedisProtocolError::new_empty(),
     }
   }
 }
@@ -123,19 +115,19 @@ impl<'a> From<NomError<&'a [u8]>> for RedisProtocolError<'a> {
       RedisProtocolError {
         kind: RedisProtocolErrorKind::BufferTooSmall(*s),
         desc: Cow::Owned(format!("{:?}", e)),
-        context: None
+        context: None,
       }
-    }else{
+    } else {
       let context = match e {
         NomError::Failure(Context::Code(i, _)) => Some(i),
         NomError::Error(Context::Code(i, _)) => Some(i),
-        _ => None
+        _ => None,
       };
 
       RedisProtocolError {
         kind: RedisProtocolErrorKind::Unknown,
         desc: Cow::Owned(format!("{:?}", e)),
-        context
+        context,
       }
     }
   }
@@ -146,16 +138,8 @@ impl<'a> From<NomError<&'a [u8]>> for RedisProtocolError<'a> {
 /// <https://redis.io/topics/cluster-spec#redirection-and-resharding>
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Redirection {
-  Moved {
-    slot: u16,
-    host: String,
-    port: u16
-  },
-  Ask {
-    slot: u16,
-    host: String,
-    port: u16
-  }
+  Moved { slot: u16, host: String, port: u16 },
+  Ask { slot: u16, host: String, port: u16 },
 }
 
 /// An enum representing the kind of a Frame without references to any inner data.
@@ -168,21 +152,20 @@ pub enum FrameKind {
   Array,
   Moved,
   Ask,
-  Null
+  Null,
 }
 
 impl FrameKind {
-
   pub fn from_byte(d: u8) -> Option<FrameKind> {
     use self::FrameKind::*;
 
     match d {
       SIMPLESTRING_BYTE => Some(SimpleString),
-      ERROR_BYTE        => Some(Error),
-      INTEGER_BYTE      => Some(Integer),
-      BULKSTRING_BYTE   => Some(BulkString),
-      ARRAY_BYTE        => Some(Array),
-      _                 => None
+      ERROR_BYTE => Some(Error),
+      INTEGER_BYTE => Some(Integer),
+      BULKSTRING_BYTE => Some(BulkString),
+      ARRAY_BYTE => Some(Array),
+      _ => None,
     }
   }
 
@@ -190,14 +173,13 @@ impl FrameKind {
     use self::FrameKind::*;
 
     match *self {
-      SimpleString        => SIMPLESTRING_BYTE,
+      SimpleString => SIMPLESTRING_BYTE,
       Error | Moved | Ask => ERROR_BYTE,
-      Integer             => INTEGER_BYTE,
-      BulkString | Null   => BULKSTRING_BYTE,
-      Array               => ARRAY_BYTE,
+      Integer => INTEGER_BYTE,
+      BulkString | Null => BULKSTRING_BYTE,
+      Array => ARRAY_BYTE,
     }
   }
-
 }
 
 /// An enum representing a Frame of data. Frames are recursively defined to account for arrays.
@@ -210,18 +192,15 @@ pub enum Frame {
   Array(Vec<Frame>),
   Moved(String),
   Ask(String),
-  Null
+  Null,
 }
 
 impl Frame {
-
   /// Whether or not the frame is an error.
   pub fn is_error(&self) -> bool {
     match self.kind() {
-      FrameKind::Error
-        | FrameKind::Moved
-        | FrameKind::Ask   => true,
-      _                    => false
+      FrameKind::Error | FrameKind::Moved | FrameKind::Ask => true,
+      _ => false,
     }
   }
 
@@ -229,7 +208,7 @@ impl Frame {
   pub fn is_pubsub_message(&self) -> bool {
     if let Frame::Array(ref frames) = *self {
       utils::is_normal_pubsub(frames) || utils::is_pattern_pubsub(frames)
-    }else{
+    } else {
       false
     }
   }
@@ -238,7 +217,7 @@ impl Frame {
   pub fn is_pattern_pubsub_message(&self) -> bool {
     if let Frame::Array(ref frames) = *self {
       utils::is_pattern_pubsub(frames)
-    }else{
+    } else {
       false
     }
   }
@@ -247,23 +226,23 @@ impl Frame {
   pub fn kind(&self) -> FrameKind {
     match *self {
       Frame::SimpleString(_) => FrameKind::SimpleString,
-      Frame::Error(_)        => FrameKind::Error,
-      Frame::Integer(_)      => FrameKind::Integer,
-      Frame::BulkString(_)   => FrameKind::BulkString,
-      Frame::Array(_)        => FrameKind::Array,
-      Frame::Moved(_)        => FrameKind::Moved,
-      Frame::Ask(_)          => FrameKind::Ask,
-      Frame::Null            => FrameKind::Null
+      Frame::Error(_) => FrameKind::Error,
+      Frame::Integer(_) => FrameKind::Integer,
+      Frame::BulkString(_) => FrameKind::BulkString,
+      Frame::Array(_) => FrameKind::Array,
+      Frame::Moved(_) => FrameKind::Moved,
+      Frame::Ask(_) => FrameKind::Ask,
+      Frame::Null => FrameKind::Null,
     }
   }
 
   /// Attempt to read the frame value as a string slice.
   pub fn as_str(&self) -> Option<&str> {
     match *self {
-      Frame::BulkString(ref b)   => str::from_utf8(b).ok(),
+      Frame::BulkString(ref b) => str::from_utf8(b).ok(),
       Frame::SimpleString(ref s) => Some(s),
-      Frame::Error(ref s)        => Some(s),
-      _                          => None
+      Frame::Error(ref s) => Some(s),
+      _ => None,
     }
   }
 
@@ -271,7 +250,7 @@ impl Frame {
   pub fn is_string(&self) -> bool {
     match *self {
       Frame::SimpleString(_) | Frame::BulkString(_) => true,
-      _                                             => false
+      _ => false,
     }
   }
 
@@ -279,7 +258,7 @@ impl Frame {
   pub fn is_null(&self) -> bool {
     match *self {
       Frame::Null => true,
-      _           => false
+      _ => false,
     }
   }
 
@@ -287,7 +266,7 @@ impl Frame {
   pub fn is_array(&self) -> bool {
     match *self {
       Frame::Array(_) => true,
-      _               => false
+      _ => false,
     }
   }
 
@@ -295,7 +274,7 @@ impl Frame {
   pub fn is_integer(&self) -> bool {
     match *self {
       Frame::Integer(_) => true,
-      _                 => false
+      _ => false,
     }
   }
 
@@ -303,7 +282,7 @@ impl Frame {
   pub fn is_moved_or_ask_error(&self) -> bool {
     match *self {
       Frame::Moved(_) | Frame::Ask(_) => true,
-      _                               => false
+      _ => false,
     }
   }
 
@@ -311,8 +290,8 @@ impl Frame {
   pub fn to_string(&self) -> Option<String> {
     match *self {
       Frame::SimpleString(ref s) => Some(s.clone()),
-      Frame::BulkString(ref b)   => String::from_utf8(b.to_vec()).ok(),
-      _                          => None
+      Frame::BulkString(ref b) => String::from_utf8(b.to_vec()).ok(),
+      _ => None,
     }
   }
 
@@ -320,21 +299,21 @@ impl Frame {
   /// if successful, or the original frame if the inner data is not a publish-subscribe message.
   pub fn parse_as_pubsub(self) -> Result<(String, String), Self> {
     if self.is_pubsub_message() {
-
       // if `is_pubsub_message` returns true but this panics then there's a bug in `is_pubsub_message`, so this fails loudly
       let (message, channel, _) = match self {
-        Frame::Array(mut frames) => {
-          (
-            utils::opt_frame_to_string_panic(frames.pop(), "Expected pubsub payload. This is a bug."),
-            utils::opt_frame_to_string_panic(frames.pop(), "Expected pubsub channel. This is a bug."),
-            utils::opt_frame_to_string_panic(frames.pop(), "Expected pubsub message kind. This is a bug.")
-          )
-        },
-        _ => panic!("Unreachable 1. This is a bug.")
+        Frame::Array(mut frames) => (
+          utils::opt_frame_to_string_panic(frames.pop(), "Expected pubsub payload. This is a bug."),
+          utils::opt_frame_to_string_panic(frames.pop(), "Expected pubsub channel. This is a bug."),
+          utils::opt_frame_to_string_panic(
+            frames.pop(),
+            "Expected pubsub message kind. This is a bug.",
+          ),
+        ),
+        _ => panic!("Unreachable 1. This is a bug."),
       };
 
       Ok((channel, message))
-    }else{
+    } else {
       Err(self)
     }
   }
@@ -343,19 +322,25 @@ impl Frame {
   pub fn to_redirection(&self) -> Result<Redirection, RedisProtocolError> {
     match *self {
       Frame::Moved(ref s) => utils::string_to_redirection(s),
-      Frame::Ask(ref s)   => utils::string_to_redirection(s),
+      Frame::Ask(ref s) => utils::string_to_redirection(s),
       Frame::Error(ref s) => utils::string_to_redirection(s),
-      _ => Err(RedisProtocolError::new(RedisProtocolErrorKind::Unknown, "Invalid frame kind. Expected Moved, Ask, or Error."))
+      _ => Err(RedisProtocolError::new(
+        RedisProtocolErrorKind::Unknown,
+        "Invalid frame kind. Expected Moved, Ask, or Error.",
+      )),
     }
   }
-
 }
 
 impl From<Redirection> for Frame {
   fn from(redirection: Redirection) -> Self {
     match redirection {
-      Redirection::Moved {slot, host, port} => Frame::Moved(utils::redirection_to_frame("MOVED", slot, &host, port)),
-      Redirection::Ask {slot, host, port}   => Frame::Ask(utils::redirection_to_frame("ASK", slot, &host, port))
+      Redirection::Moved { slot, host, port } => {
+        Frame::Moved(utils::redirection_to_frame("MOVED", slot, &host, port))
+      }
+      Redirection::Ask { slot, host, port } => {
+        Frame::Ask(utils::redirection_to_frame("ASK", slot, &host, port))
+      }
     }
   }
 }
@@ -363,26 +348,32 @@ impl From<Redirection> for Frame {
 impl<'a> From<&'a Redirection> for Frame {
   fn from(redirection: &'a Redirection) -> Self {
     match *redirection {
-      Redirection::Moved {ref slot, ref host, ref port} => Frame::Moved(utils::redirection_to_frame("MOVED", *slot, host, *port)),
-      Redirection::Ask {ref slot, ref host, ref port}   => Frame::Ask(utils::redirection_to_frame("ASK", *slot, host, *port))
+      Redirection::Moved {
+        ref slot,
+        ref host,
+        ref port,
+      } => Frame::Moved(utils::redirection_to_frame("MOVED", *slot, host, *port)),
+      Redirection::Ask {
+        ref slot,
+        ref host,
+        ref port,
+      } => Frame::Ask(utils::redirection_to_frame("ASK", *slot, host, *port)),
     }
   }
 }
 
-
 #[cfg(test)]
 mod tests {
   use super::*;
-  use ::utils::ZEROED_KB;
-
   use nom::ErrorKind as NomErrorKind;
+  use utils::ZEROED_KB;
 
   #[test]
   fn should_convert_ask_redirection_to_frame() {
     let redirection = Redirection::Ask {
       slot: 3999,
       host: "127.0.0.1".into(),
-      port: 6381
+      port: 6381,
     };
     let frame = Frame::Ask("ASK 3999 127.0.0.1:6381".into());
 
@@ -394,7 +385,7 @@ mod tests {
     let redirection = Redirection::Moved {
       slot: 3999,
       host: "127.0.0.1".into(),
-      port: 6381
+      port: 6381,
     };
     let frame = Frame::Moved("MOVED 3999 127.0.0.1:6381".into());
 
@@ -406,7 +397,7 @@ mod tests {
     let redirection = Redirection::Moved {
       slot: 3999,
       host: "127.0.0.1".into(),
-      port: 6381
+      port: 6381,
     };
     let frame = Frame::Ask("MOVED 3999 127.0.0.1:6381".into());
 
@@ -418,7 +409,7 @@ mod tests {
     let redirection = Redirection::Ask {
       slot: 3999,
       host: "127.0.0.1".into(),
-      port: 6381
+      port: 6381,
     };
     let frame = Frame::Ask("ASK 3999 127.0.0.1:6381".into());
 
@@ -431,7 +422,7 @@ mod tests {
     let redirection = Redirection::Ask {
       slot: 3999,
       host: "127.0.0.1".into(),
-      port: 6381
+      port: 6381,
     };
     let frame = Frame::BulkString("ASK 3999 127.0.0.1:6381".into());
 
@@ -479,7 +470,7 @@ mod tests {
       Frame::BulkString("pmessage".into()),
       Frame::BulkString("fo*".into()),
       Frame::BulkString("foo".into()),
-      Frame::BulkString("bar".into())
+      Frame::BulkString("bar".into()),
     ];
     assert!(utils::is_pattern_pubsub(&frames));
     let frame = Frame::Array(frames);
@@ -495,7 +486,7 @@ mod tests {
     let frames = vec![
       Frame::BulkString("message".into()),
       Frame::BulkString("foo".into()),
-      Frame::BulkString("bar".into())
+      Frame::BulkString("bar".into()),
     ];
     assert!(!utils::is_pattern_pubsub(&frames));
     let frame = Frame::Array(frames);
@@ -521,7 +512,6 @@ mod tests {
   #[test]
   fn should_create_empty_error() {
     let e = RedisProtocolError::new_empty();
-    let s = e.to_string();
 
     assert_eq!(e.description(), "");
     assert_eq!(e.kind(), &RedisProtocolErrorKind::Unknown);
@@ -531,7 +521,6 @@ mod tests {
   #[test]
   fn should_create_encode_error() {
     let e = RedisProtocolError::new(RedisProtocolErrorKind::EncodeError, "foo");
-    let s = e.to_string();
 
     assert_eq!(e.description(), "foo");
     assert_eq!(e.kind(), &RedisProtocolErrorKind::EncodeError);
@@ -541,7 +530,6 @@ mod tests {
   #[test]
   fn should_create_decode_error() {
     let e = RedisProtocolError::new(RedisProtocolErrorKind::DecodeError, "foo");
-    let s = e.to_string();
 
     assert_eq!(e.description(), "foo");
     assert_eq!(e.kind(), &RedisProtocolErrorKind::DecodeError);
@@ -551,7 +539,6 @@ mod tests {
   #[test]
   fn should_create_buf_too_small_error() {
     let e = RedisProtocolError::new(RedisProtocolErrorKind::BufferTooSmall(10), "foo");
-    let s = e.to_string();
 
     assert_eq!(e.description(), "foo");
     assert_eq!(e.kind(), &RedisProtocolErrorKind::BufferTooSmall(10));
@@ -651,9 +638,15 @@ mod tests {
 
   #[test]
   fn should_decode_frame_kind_byte() {
-    assert_eq!(FrameKind::from_byte(SIMPLESTRING_BYTE), Some(FrameKind::SimpleString));
+    assert_eq!(
+      FrameKind::from_byte(SIMPLESTRING_BYTE),
+      Some(FrameKind::SimpleString)
+    );
     assert_eq!(FrameKind::from_byte(ERROR_BYTE), Some(FrameKind::Error));
-    assert_eq!(FrameKind::from_byte(BULKSTRING_BYTE), Some(FrameKind::BulkString));
+    assert_eq!(
+      FrameKind::from_byte(BULKSTRING_BYTE),
+      Some(FrameKind::BulkString)
+    );
     assert_eq!(FrameKind::from_byte(INTEGER_BYTE), Some(FrameKind::Integer));
     assert_eq!(FrameKind::from_byte(ARRAY_BYTE), Some(FrameKind::Array));
   }
@@ -691,7 +684,9 @@ mod tests {
     assert_eq!(RedisProtocolErrorKind::EncodeError.to_str(), "Encode Error");
     assert_eq!(RedisProtocolErrorKind::DecodeError.to_str(), "Decode Error");
     assert_eq!(RedisProtocolErrorKind::Unknown.to_str(), "Unknown Error");
-    assert_eq!(RedisProtocolErrorKind::BufferTooSmall(10).to_str(), "Buffer too small");
+    assert_eq!(
+      RedisProtocolErrorKind::BufferTooSmall(10).to_str(),
+      "Buffer too small"
+    );
   }
-
 }
