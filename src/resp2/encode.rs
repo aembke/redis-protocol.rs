@@ -1,81 +1,43 @@
+//! Functions for encoding Frames into the RESP2 protocol.
+//!
+//! <https://redis.io/topics/protocol#resp-protocol-description>
+
+use crate::resp2::types::*;
+use crate::resp2::utils::{self as resp2_utils};
+use crate::types::{RedisProtocolError, RedisProtocolErrorKind, CRLF};
+use crate::utils;
 use bytes::BytesMut;
 use cookie_factory::GenError;
-use types::*;
-use utils;
-use utils::{CRLF, NULL};
 
-fn gen_simplestring<'a>(
-  x: (&'a mut [u8], usize),
-  data: &str,
-) -> Result<(&'a mut [u8], usize), GenError> {
-  let _ = utils::check_offset(&x);
-
-  let required = utils::simplestring_encode_len(data);
-  let remaining = x.0.len() - x.1;
-
-  if remaining < required {
-    return Err(GenError::BufferTooSmall(required - remaining));
-  }
+fn gen_simplestring<'a>(x: (&'a mut [u8], usize), data: &str) -> Result<(&'a mut [u8], usize), GenError> {
+  encode_checks!(x, resp2_utils::simplestring_encode_len(data));
 
   do_gen!(
     x,
-    gen_be_u8!(FrameKind::SimpleString.to_byte())
-      >> gen_slice!(data.as_bytes())
-      >> gen_slice!(CRLF.as_bytes())
+    gen_be_u8!(FrameKind::SimpleString.to_byte()) >> gen_slice!(data.as_bytes()) >> gen_slice!(CRLF.as_bytes())
   )
 }
 
 fn gen_error<'a>(x: (&'a mut [u8], usize), data: &str) -> Result<(&'a mut [u8], usize), GenError> {
-  let _ = utils::check_offset(&x);
-
-  let required = utils::error_encode_len(data);
-  let remaining = x.0.len() - x.1;
-
-  if remaining < required {
-    return Err(GenError::BufferTooSmall(required - remaining));
-  }
+  encode_checks!(x, resp2_utils::error_encode_len(data));
 
   do_gen!(
     x,
-    gen_be_u8!(FrameKind::Error.to_byte())
-      >> gen_slice!(data.as_bytes())
-      >> gen_slice!(CRLF.as_bytes())
+    gen_be_u8!(FrameKind::Error.to_byte()) >> gen_slice!(data.as_bytes()) >> gen_slice!(CRLF.as_bytes())
   )
 }
 
-fn gen_integer<'a>(
-  x: (&'a mut [u8], usize),
-  data: &i64,
-) -> Result<(&'a mut [u8], usize), GenError> {
-  let _ = utils::check_offset(&x);
-
-  let required = utils::integer_encode_len(data);
-  let remaining = x.0.len() - x.1;
-
-  if remaining < required {
-    return Err(GenError::BufferTooSmall(required - remaining));
-  }
+fn gen_integer<'a>(x: (&'a mut [u8], usize), data: &i64) -> Result<(&'a mut [u8], usize), GenError> {
+  encode_checks!(x, resp2_utils::integer_encode_len(data));
 
   do_gen!(
     x,
-    gen_be_u8!(FrameKind::Integer.to_byte())
-      >> gen_slice!(data.to_string().as_bytes())
-      >> gen_slice!(CRLF.as_bytes())
+    gen_be_u8!(FrameKind::Integer.to_byte()) >> gen_slice!(data.to_string().as_bytes()) >> gen_slice!(CRLF.as_bytes())
   )
 }
 
-fn gen_bulkstring<'a>(
-  x: (&'a mut [u8], usize),
-  data: &[u8],
-) -> Result<(&'a mut [u8], usize), GenError> {
-  let _ = utils::check_offset(&x)?;
-
-  let required = utils::bulkstring_encode_len(data);
-  let remaining = x.0.len() - x.1;
-
-  if remaining < required {
-    return Err(GenError::BufferTooSmall(required - remaining));
-  }
+fn gen_bulkstring<'a>(x: (&'a mut [u8], usize), data: &[u8]) -> Result<(&'a mut [u8], usize), GenError> {
+  encode_checks!(x, resp2_utils::bulkstring_encode_len(data));
 
   do_gen!(
     x,
@@ -88,30 +50,13 @@ fn gen_bulkstring<'a>(
 }
 
 fn gen_null(x: (&mut [u8], usize)) -> Result<(&mut [u8], usize), GenError> {
-  let _ = utils::check_offset(&x)?;
-
-  let required = NULL.as_bytes().len();
-  let remaining = x.0.len() - x.1;
-
-  if remaining < required {
-    return Err(GenError::BufferTooSmall(required - remaining));
-  }
+  encode_checks!(x, NULL.as_bytes().len());
 
   do_gen!(x, gen_slice!(NULL.as_bytes()))
 }
 
-fn gen_array<'a>(
-  x: (&'a mut [u8], usize),
-  data: &Vec<Frame>,
-) -> Result<(&'a mut [u8], usize), GenError> {
-  let _ = utils::check_offset(&x)?;
-
-  let required = utils::array_encode_len(data)?;
-  let remaining = x.0.len() - x.1;
-
-  if remaining < required {
-    return Err(GenError::BufferTooSmall(required - remaining));
-  }
+fn gen_array<'a>(x: (&'a mut [u8], usize), data: &Vec<Frame>) -> Result<(&'a mut [u8], usize), GenError> {
+  encode_checks!(x, resp2_utils::array_encode_len(data)?);
 
   let mut x = do_gen!(
     x,
@@ -139,8 +84,6 @@ fn attempt_encoding(buf: &mut [u8], offset: usize, frame: &Frame) -> Result<usiz
     Frame::Null => gen_null((buf, offset)).map(|(_, l)| l),
     Frame::Array(ref frames) => gen_array((buf, offset), frames).map(|(_, l)| l),
     Frame::Error(ref s) => gen_error((buf, offset), s).map(|(_, l)| l),
-    Frame::Moved(ref s) => gen_error((buf, offset), s).map(|(_, l)| l),
-    Frame::Ask(ref s) => gen_error((buf, offset), s).map(|(_, l)| l),
     Frame::SimpleString(ref s) => gen_simplestring((buf, offset), s).map(|(_, l)| l),
     Frame::Integer(ref i) => gen_integer((buf, offset), i).map(|(_, l)| l),
   }
@@ -149,17 +92,14 @@ fn attempt_encoding(buf: &mut [u8], offset: usize, frame: &Frame) -> Result<usiz
 /// Attempt to encode a frame into `buf`, assuming a starting offset of 0.
 ///
 /// The caller is responsible for extending the buffer if a `RedisProtocolErrorKind::BufferTooSmall` is returned.
-pub fn encode<'a>(buf: &'a mut [u8], frame: &Frame) -> Result<usize, RedisProtocolError<'a>> {
-  attempt_encoding(buf, 0, frame).map_err(|e| e.into())
+pub fn encode(buf: &mut [u8], offset: usize, frame: &Frame) -> Result<usize, RedisProtocolError> {
+  attempt_encoding(buf, offset, frame).map_err(|e| e.into())
 }
 
 /// Attempt to encode a frame into `buf`, extending the buffer as needed.
 ///
-/// Returns the new length of the buffer.
-pub fn encode_bytes<'a>(
-  buf: &'a mut BytesMut,
-  frame: &Frame,
-) -> Result<usize, RedisProtocolError<'a>> {
+/// Returns the number of bytes encoded.
+pub fn encode_bytes(buf: &mut BytesMut, frame: &Frame) -> Result<usize, RedisProtocolError> {
   let offset = buf.len();
 
   loop {
@@ -193,11 +133,7 @@ mod tests {
     };
 
     assert_eq!(buf, expected.as_bytes(), "empty buf contents match");
-    assert_eq!(
-      len,
-      expected.as_bytes().len(),
-      "empty expected len is correct"
-    );
+    assert_eq!(len, expected.as_bytes().len(), "empty expected len is correct");
   }
 
   fn encode_and_verify_non_empty(input: &Frame, expected: &str) {
@@ -211,27 +147,19 @@ mod tests {
     let padded = vec![PADDING, expected].join("");
 
     assert_eq!(buf, padded.as_bytes(), "padded buf contents match");
-    assert_eq!(
-      len,
-      padded.as_bytes().len(),
-      "padded expected len is correct"
-    );
+    assert_eq!(len, padded.as_bytes().len(), "padded expected len is correct");
   }
 
   fn encode_raw_and_verify_empty(input: &Frame, expected: &str) {
     let mut buf = Vec::from(&ZEROED_KB[0..expected.as_bytes().len()]);
 
-    let len = match encode(&mut buf, input) {
+    let len = match encode(&mut buf, 0, input) {
       Ok(l) => l,
       Err(e) => panic!("{:?}", e),
     };
 
     assert_eq!(buf, expected.as_bytes(), "empty buf contents match");
-    assert_eq!(
-      len,
-      expected.as_bytes().len(),
-      "empty expected len is correct"
-    );
+    assert_eq!(len, expected.as_bytes().len(), "empty expected len is correct");
   }
 
   #[test]
@@ -356,7 +284,7 @@ mod tests {
   #[test]
   fn should_encode_moved_error() {
     let expected = "-MOVED 3999 127.0.0.1:6381\r\n";
-    let input = Frame::Moved("MOVED 3999 127.0.0.1:6381".into());
+    let input = Frame::Error("MOVED 3999 127.0.0.1:6381".into());
 
     encode_and_verify_empty(&input, expected);
     encode_and_verify_non_empty(&input, expected);
@@ -365,7 +293,7 @@ mod tests {
   #[test]
   fn should_encode_ask_error() {
     let expected = "-ASK 3999 127.0.0.1:6381\r\n";
-    let input = Frame::Ask("ASK 3999 127.0.0.1:6381".into());
+    let input = Frame::Error("ASK 3999 127.0.0.1:6381".into());
 
     encode_and_verify_empty(&input, expected);
     encode_and_verify_non_empty(&input, expected);
@@ -374,8 +302,7 @@ mod tests {
   #[test]
   fn should_encode_error() {
     let expected = "-WRONGTYPE Operation against a key holding the wrong kind of value\r\n";
-    let input =
-      Frame::Error("WRONGTYPE Operation against a key holding the wrong kind of value".into());
+    let input = Frame::Error("WRONGTYPE Operation against a key holding the wrong kind of value".into());
 
     encode_and_verify_empty(&input, expected);
     encode_and_verify_non_empty(&input, expected);

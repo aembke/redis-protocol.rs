@@ -1,6 +1,6 @@
-//! Redis Protocol
+//! # Redis Protocol
 //!
-//! Structs and functions for implementing the [Redis protocol](https://redis.io/topics/protocol), built on [nom](https://github.com/Geal/nom) and designed to work easily with [Tokio](https://github.com/tokio-rs/tokio).
+//! Structs and functions for implementing the [RESP2](https://redis.io/topics/protocol) and [RESP3](https://github.com/antirez/RESP3/blob/master/spec.md) protocol.
 //!
 //!
 //! ## Examples
@@ -9,7 +9,7 @@
 //! extern crate redis_protocol;
 //! extern crate bytes;
 //!
-//! use redis_protocol::prelude::*;
+//! use redis_protocol::resp2::prelude::*;
 //! use bytes::BytesMut;
 //!
 //! fn main() {
@@ -23,7 +23,7 @@
 //!   println!("Encoded {} bytes into buffer with contents {:?}", len, buf);
 //!
 //!   let buf: BytesMut = "*3\r\n$3\r\nFoo\r\n$-1\r\n$3\r\nBar\r\n".into();
-//!   let (frame, consumed) = match decode_bytes(&buf) {
+//!   let (frame, consumed) = match decode(&buf) {
 //!     Ok((f, c)) => (f, c),
 //!     Err(e) => panic!("Error parsing bytes: {:?}", e)
 //!   };
@@ -39,7 +39,6 @@
 //! }
 //! ```
 //!
-//! Or use `decode()` and `encode()` to interact with slices directly.
 //!
 
 #[macro_use]
@@ -51,22 +50,18 @@ extern crate pretty_env_logger;
 extern crate cookie_factory;
 #[macro_use]
 extern crate nom;
+#[macro_use]
+extern crate float_cmp;
+extern crate core;
 
-/// Decoding functions for BytesMut and slices.
-pub mod decode;
-/// Encoding functions for BytesMut and slices.
-pub mod encode;
-/// Error and Frame types.
+#[macro_use]
+pub(crate) mod utils;
+
+/// Types and functions for implementing the RESP2 protocol.
+pub mod resp2;
+/// Types and functions for implementing the RESP3 protocol.
+pub mod resp3;
+/// Error types and general redis protocol types.
 pub mod types;
-mod utils;
 
-/// Shorthand for `use`'ing `types`, `encode`, `decode`, etc.
-pub mod prelude {
-  pub use decode::*;
-  pub use encode::*;
-  pub use types::*;
-
-  pub use utils::redis_keyslot;
-}
-
-pub use utils::{digits_in_number, redis_keyslot, CRLF, NULL, ZEROED_KB};
+pub use utils::{digits_in_number, redis_keyslot, ZEROED_KB};

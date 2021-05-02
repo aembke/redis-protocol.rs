@@ -1,10 +1,16 @@
+//! Functions for decoding the RESP2 protocol into frames.
+//!
+//! <https://redis.io/topics/protocol#resp-protocol-description>
+
+use crate::resp2::types::*;
+use crate::resp2::utils as resp2_utils;
+use crate::types::*;
+use crate::utils;
 use bytes::BytesMut;
-use nom::{be_u8, Err as NomError};
+use nom::number::streaming::be_u8;
+use nom::Err as NomError;
 use std::num::ParseIntError;
 use std::str;
-use types::*;
-use utils;
-use utils::CRLF;
 
 const NULL_LEN: isize = -1;
 
@@ -17,10 +23,10 @@ fn to_i64(s: &str) -> Result<i64, ParseIntError> {
 }
 
 fn map_error(s: &str) -> Frame {
-  utils::read_cluster_error(s).unwrap_or_else(|| Frame::Error(s.to_owned()))
+  Frame::Error(s.to_owned())
 }
 
-fn isize_to_usize<'a>(s: isize) -> Result<usize, RedisProtocolError<'a>> {
+fn isize_to_usize<'a>(s: isize) -> Result<usize, RedisProtocolError> {
   if s >= 0 {
     Ok(s as usize)
   } else {
@@ -31,12 +37,7 @@ fn isize_to_usize<'a>(s: isize) -> Result<usize, RedisProtocolError<'a>> {
   }
 }
 
-// https://redis.io/topics/protocol#resp-protocol-description
-
-named!(
-  read_to_crlf<&[u8]>,
-  terminated!(take_until!(CRLF), take!(2))
-);
+named!(read_to_crlf<&[u8]>, terminated!(take_until!(CRLF), take!(2)));
 
 named!(read_to_crlf_s<&str>, map_res!(read_to_crlf, str::from_utf8));
 
@@ -110,6 +111,7 @@ named!(
 );
 
 /// Attempt to parse the contents of `buf`, returning the first valid frame and the number of bytes consumed.
+///
 /// If the byte slice contains an incomplete frame then `None` is returned.
 pub fn decode(buf: &[u8]) -> Result<(Option<Frame>, usize), RedisProtocolError> {
   let len = buf.len();
@@ -121,14 +123,6 @@ pub fn decode(buf: &[u8]) -> Result<(Option<Frame>, usize), RedisProtocolError> 
   }
 }
 
-/// Attempt to parse the contents of `buf`, returning the first valid frame and the number of bytes consumed.
-/// If the byte slice contains an incomplete frame then `None` is returned.
-///
-/// **The caller is responsible for consuming the underlying bytes.**
-pub fn decode_bytes(buf: &BytesMut) -> Result<(Option<Frame>, usize), RedisProtocolError> {
-  decode(buf)
-}
-
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -137,17 +131,11 @@ mod tests {
   const PADDING: &'static str = "FOOBARBAZ";
 
   fn pretty_print_panic(e: RedisProtocolError) {
-    match e.context() {
-      Some(c) => match str::from_utf8(c) {
-        Ok(s) => panic!("Error {:?} with {}", e, s),
-        Err(e) => panic!("{:?}", e),
-      },
-      _ => panic!("{:?}", e),
-    }
+    panic!("{:?}", e);
   }
 
   fn decode_and_verify_some(bytes: &mut BytesMut, expected: &(Option<Frame>, usize)) {
-    let (frame, len) = match decode_bytes(&bytes) {
+    let (frame, len) = match decode(&bytes) {
       Ok((f, l)) => (f, l),
       Err(e) => return pretty_print_panic(e),
     };
@@ -159,7 +147,7 @@ mod tests {
   fn decode_and_verify_padded_some(bytes: &mut BytesMut, expected: &(Option<Frame>, usize)) {
     bytes.extend_from_slice(PADDING.as_bytes());
 
-    let (frame, len) = match decode_bytes(&bytes) {
+    let (frame, len) = match decode(&bytes) {
       Ok((f, l)) => (f, l),
       Err(e) => return pretty_print_panic(e),
     };
@@ -169,7 +157,7 @@ mod tests {
   }
 
   fn decode_and_verify_none(bytes: &mut BytesMut) {
-    let (frame, len) = match decode_bytes(&bytes) {
+    let (frame, len) = match decode(&bytes) {
       Ok((f, l)) => (f, l),
       Err(e) => return pretty_print_panic(e),
     };
@@ -197,9 +185,29 @@ mod tests {
   }
 
   #[test]
+  #[should_panic]
+  fn should_decode_simple_string_incomplete() {
+    let expected = (Some(Frame::SimpleString("string".into())), 9);
+    let mut bytes: BytesMut = "+stri".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+  }
+
+  #[test]
   fn should_decode_bulk_string() {
     let expected = (Some(Frame::BulkString("foo".into())), 9);
     let mut bytes: BytesMut = "$3\r\nfoo\r\n".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+  }
+
+  #[test]
+  #[should_panic]
+  fn should_decode_bulk_string_incomplete() {
+    let expected = (Some(Frame::BulkString("foo".into())), 9);
+    let mut bytes: BytesMut = "$3\r\nfo".into();
 
     decode_and_verify_some(&mut bytes, &expected);
     decode_and_verify_padded_some(&mut bytes, &expected);
@@ -239,8 +247,7 @@ mod tests {
 
   #[test]
   fn should_decode_normal_error() {
-    let mut bytes: BytesMut =
-      "-WRONGTYPE Operation against a key holding the wrong kind of value\r\n".into();
+    let mut bytes: BytesMut = "-WRONGTYPE Operation against a key holding the wrong kind of value\r\n".into();
     let expected = (
       Some(Frame::Error(
         "WRONGTYPE Operation against a key holding the wrong kind of value".into(),
@@ -255,10 +262,7 @@ mod tests {
   #[test]
   fn should_decode_moved_error() {
     let mut bytes: BytesMut = "-MOVED 3999 127.0.0.1:6381\r\n".into();
-    let expected = (
-      Some(Frame::Moved("3999 127.0.0.1:6381".into())),
-      bytes.len(),
-    );
+    let expected = (Some(Frame::Error("MOVED 3999 127.0.0.1:6381".into())), bytes.len());
 
     decode_and_verify_some(&mut bytes, &expected);
     decode_and_verify_padded_some(&mut bytes, &expected);
@@ -267,7 +271,7 @@ mod tests {
   #[test]
   fn should_decode_ask_error() {
     let mut bytes: BytesMut = "-ASK 3999 127.0.0.1:6381\r\n".into();
-    let expected = (Some(Frame::Ask("3999 127.0.0.1:6381".into())), bytes.len());
+    let expected = (Some(Frame::Error("ASK 3999 127.0.0.1:6381".into())), bytes.len());
 
     decode_and_verify_some(&mut bytes, &expected);
     decode_and_verify_padded_some(&mut bytes, &expected);
@@ -283,6 +287,6 @@ mod tests {
   #[should_panic]
   fn should_error_on_junk() {
     let bytes: BytesMut = "foobarbazwibblewobble".into();
-    let _ = decode_bytes(&bytes).map_err(|e| pretty_print_panic(e));
+    let _ = decode(&bytes).map_err(|e| pretty_print_panic(e));
   }
 }

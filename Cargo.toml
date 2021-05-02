@@ -7,10 +7,9 @@ license = "MIT"
 name = "redis-protocol"
 readme = "README.md"
 repository = "https://github.com/aembke/redis-protocol.rs"
-version = "2.0.0"
+version = "3.0.0"
 
 [badges]
-
 [badges.maintenance]
 status = "actively-developed"
 
@@ -20,15 +19,18 @@ repository = "aembke/redis-protocol.rs"
 
 [dependencies]
 bytes = "1"
-cookie-factory = "=0.2.4"
 crc16 = "0.3"
+float-cmp = "0.8"
 log = "0.4"
-nom = "4.0"
+nom = "6.1"
 pretty_env_logger = "0.2"
+cookie-factory = "0.3"
 
 [dev-dependencies]
 lazy_static = "1.1"
 rand = "0.5"
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
 
 [lib]
 doc = true
@@ -36,11 +38,12 @@ doctest = true
 name = "redis_protocol"
 test = true
 
+[profile]
 [profile.bench]
-opt-level = 3
-debug = false
-rpath = false
-debug-assertions = false
 codegen-units = 16
+debug = false
+debug-assertions = false
 incremental = false
+opt-level = 3
 overflow-checks = false
+rpath = false
