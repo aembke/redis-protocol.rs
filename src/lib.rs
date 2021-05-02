@@ -23,15 +23,12 @@
 //!   println!("Encoded {} bytes into buffer with contents {:?}", len, buf);
 //!
 //!   let buf: BytesMut = "*3\r\n$3\r\nFoo\r\n$-1\r\n$3\r\nBar\r\n".into();
-//!   let (frame, consumed) = match decode(&buf) {
-//!     Ok((f, c)) => (f, c),
-//!     Err(e) => panic!("Error parsing bytes: {:?}", e)
-//!   };
+//!   let frame = decode(&buf).expect("Failed to parse bytes");
 //!
-//!   if let Some(frame) = frame {
+//!   if let Some((frame, consumed)) = frame {
 //!     println!("Parsed frame {:?} and consumed {} bytes", frame, consumed);
 //!   }else{
-//!     println!("Incomplete frame, parsed {} bytes", consumed);
+//!     println!("Incomplete frame.");
 //!   }
 //!
 //!   let key = "foobarbaz";

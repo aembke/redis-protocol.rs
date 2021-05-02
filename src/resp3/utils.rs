@@ -1,10 +1,12 @@
 use crate::resp3::types::{Frame, FrameKind, HELLO, NULL};
 use crate::types::{Redirection, CRLF};
 use crate::utils::{digits_in_number, PATTERN_PUBSUB_PREFIX, PUBSUB_PREFIX};
+use bytes::BytesMut;
 use cookie_factory::GenError;
 use resp3::types::{Auth, RespVersion, VerbatimStringFormat, INFINITY, NEG_INFINITY};
 use std::borrow::Cow;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
+use types::{RedisProtocolError, RedisProtocolErrorKind};
 
 pub const BOOLEAN_ENCODE_LEN: usize = 4;
 
@@ -115,6 +117,7 @@ pub fn encode_len(data: &Frame) -> Result<usize, GenError> {
     Set(ref s) => set_encode_len(s),
     Hello { ref version, ref auth } => Ok(hello_encode_len(version, auth)),
     BigNumber(ref b) => Ok(bignumber_encode_len(b)),
+    ChunkedString(ref s) => Ok(blobstring_encode_len(s)),
   }
 }
 
@@ -131,4 +134,51 @@ pub fn f64_to_redis_string(data: &f64) -> Cow<'static, str> {
   } else {
     Cow::Owned(data.to_string())
   }
+}
+
+pub fn reconstruct_blobstring(frames: VecDeque<Frame>) -> Result<Frame, RedisProtocolError> {
+  let total_size = frames.iter().fold(0, |m, f| m + f.len());
+  let mut out = Vec::with_capacity(total_size);
+
+  for frame in frames.into_iter() {
+    out.extend_from_slice(frame.as_bytes().ok_or(RedisProtocolError::new(
+      RedisProtocolErrorKind::DecodeError,
+      "Expected inner chunked string.",
+    ))?);
+  }
+
+  Ok(Frame::BlobString(out))
+}
+
+pub fn reconstruct_array(frames: VecDeque<Frame>) -> Result<Frame, RedisProtocolError> {
+  // i hope this uses length hints to allocate enough space up front...
+  Ok(Frame::Array(frames.into_iter().collect()))
+}
+
+pub fn reconstruct_map(mut frames: VecDeque<Frame>) -> Result<Frame, RedisProtocolError> {
+  if frames.len() % 2 != 0 {
+    return Err(RedisProtocolError::new(
+      RedisProtocolErrorKind::DecodeError,
+      "Streamed map must have an even number of frames.",
+    ));
+  }
+
+  let mut out = HashMap::with_capacity(frames.len() / 2);
+  while frames.len() >= 2 {
+    let key = frames.pop_front().unwrap();
+    let value = frames.pop_front().unwrap();
+
+    out.insert(key, value);
+  }
+
+  Ok(Frame::Map(out))
+}
+
+pub fn reconstruct_set(frames: VecDeque<Frame>) -> Result<Frame, RedisProtocolError> {
+  let mut out = HashSet::with_capacity(frames.len());
+
+  for frame in frames.into_iter() {
+    out.insert(frame);
+  }
+  Ok(Frame::Set(out))
 }

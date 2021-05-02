@@ -226,10 +226,29 @@ fn gen_hello<'a>(
         >> gen_slice!(auth.username.as_bytes())
         >> gen_slice!(EMPTY_SPACE.as_bytes())
         >> gen_slice!(auth.password.as_bytes())
+        >> gen_slice!(EMPTY_SPACE.as_bytes())
     )?;
   }
 
   Ok(x)
+}
+
+fn gen_chunked_string<'a>(x: (&'a mut [u8], usize), data: &[u8]) -> Result<(&'a mut [u8], usize), GenError> {
+  encode_checks!(x, resp3_utils::blobstring_encode_len(data));
+
+  if data.is_empty() {
+    // signal the end of the chunked stream
+    do_gen!(x, gen_slice!(END_STREAM_STRING_BYTES.as_bytes()))
+  } else {
+    do_gen!(
+      x,
+      gen_be_u8!(FrameKind::ChunkedString.to_byte())
+        >> gen_slice!(data.len().to_string().as_bytes())
+        >> gen_slice!(CRLF.as_bytes())
+        >> gen_slice!(data)
+        >> gen_slice!(CRLF.as_bytes())
+    )
+  }
 }
 
 fn attempt_encoding<'a>(buf: &'a mut [u8], offset: usize, frame: &Frame) -> Result<(&'a mut [u8], usize), GenError> {
@@ -252,6 +271,7 @@ fn attempt_encoding<'a>(buf: &'a mut [u8], offset: usize, frame: &Frame) -> Resu
     Push(ref a) => gen_push((buf, offset), a),
     Hello { ref version, ref auth } => gen_hello((buf, offset), version, auth),
     BigNumber(ref b) => gen_bignumber((buf, offset), b),
+    ChunkedString(ref b) => gen_chunked_string((buf, offset), b),
   }
 }
 
@@ -363,6 +383,8 @@ pub mod streaming {
   }
 
   /// Encode the bytes making up one chunk of a streaming blob string.
+  ///
+  /// If `data` is empty this will do the same thing as [encode_end_streaming_string] to signal that the streamed string is finished.
   pub fn encode_streaming_string_chunk(
     buf: &mut [u8],
     offset: usize,

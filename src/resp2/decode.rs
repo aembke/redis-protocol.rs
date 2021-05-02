@@ -113,12 +113,12 @@ named!(
 /// Attempt to parse the contents of `buf`, returning the first valid frame and the number of bytes consumed.
 ///
 /// If the byte slice contains an incomplete frame then `None` is returned.
-pub fn decode(buf: &[u8]) -> Result<(Option<Frame>, usize), RedisProtocolError> {
+pub fn decode(buf: &[u8]) -> Result<Option<(Frame, usize)>, RedisProtocolError> {
   let len = buf.len();
 
   match parse_frame(buf) {
-    Ok((remaining, frame)) => Ok((Some(frame), len - remaining.len())),
-    Err(NomError::Incomplete(_)) => Ok((None, 0)),
+    Ok((remaining, frame)) => Ok(Some((frame, len - remaining.len()))),
+    Err(NomError::Incomplete(_)) => Ok(None),
     Err(e) => Err(e.into()),
   }
 }
@@ -134,9 +134,14 @@ mod tests {
     panic!("{:?}", e);
   }
 
+  fn panic_no_decode() {
+    panic!("Failed to decode bytes. None returned");
+  }
+
   fn decode_and_verify_some(bytes: &mut BytesMut, expected: &(Option<Frame>, usize)) {
     let (frame, len) = match decode(&bytes) {
-      Ok((f, l)) => (f, l),
+      Ok(Some((f, l))) => (Some(f), l),
+      Ok(None) => return panic_no_decode(),
       Err(e) => return pretty_print_panic(e),
     };
 
@@ -148,7 +153,8 @@ mod tests {
     bytes.extend_from_slice(PADDING.as_bytes());
 
     let (frame, len) = match decode(&bytes) {
-      Ok((f, l)) => (f, l),
+      Ok(Some((f, l))) => (Some(f), l),
+      Ok(None) => return panic_no_decode(),
       Err(e) => return pretty_print_panic(e),
     };
 
@@ -158,7 +164,8 @@ mod tests {
 
   fn decode_and_verify_none(bytes: &mut BytesMut) {
     let (frame, len) = match decode(&bytes) {
-      Ok((f, l)) => (f, l),
+      Ok(Some((f, l))) => (Some(f), l),
+      Ok(None) => (None, 0),
       Err(e) => return pretty_print_panic(e),
     };
 

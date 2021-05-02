@@ -16,8 +16,42 @@ use std::slice::Chunks;
 use std::str;
 use std::string::FromUtf8Error;
 
+fn non_streaming_error<T>(data: T, kind: FrameKind) -> Result<T, RedisProtocolError> {
+  Err(RedisProtocolError::new(
+    RedisProtocolErrorKind::DecodeError,
+    format!("Cannot decode streaming {:?}", kind),
+  ))
+}
+
+fn map_complete_frame(frame: Frame) -> DecodedFrame {
+  DecodedFrame::Complete(frame)
+}
+
+fn unwrap_complete_frame(frame: DecodedFrame) -> Result<Frame, RedisProtocolError> {
+  frame.into_complete_frame()
+}
+
 fn to_usize(s: &str) -> Result<usize, ParseIntError> {
   s.parse::<usize>()
+}
+
+fn to_isize(s: &str) -> Result<isize, ParseIntError> {
+  if s == "?" {
+    Ok(-1)
+  } else {
+    s.parse::<isize>()
+  }
+}
+
+fn isize_to_usize(n: isize) -> Result<usize, RedisProtocolError> {
+  if n.is_negative() {
+    Err(RedisProtocolError::new(
+      RedisProtocolErrorKind::DecodeError,
+      "Invalid prefix length.",
+    ))
+  } else {
+    Ok(n as usize)
+  }
 }
 
 fn to_i64(s: &str) -> Result<i64, ParseIntError> {
@@ -55,7 +89,6 @@ fn to_verbatimstring_format(s: &str) -> Result<VerbatimStringFormat, RedisProtoc
 }
 
 fn to_hashmap(mut data: Vec<Frame>) -> Result<HashMap<Frame, Frame>, RedisProtocolError> {
-  // use chunks(2)
   if data.len() % 2 != 0 {
     return Err(RedisProtocolError::new(
       RedisProtocolErrorKind::DecodeError,
@@ -63,16 +96,12 @@ fn to_hashmap(mut data: Vec<Frame>) -> Result<HashMap<Frame, Frame>, RedisProtoc
     ));
   }
 
-  let mut idx = 0;
   let mut out = HashMap::with_capacity(data.len() / 2);
-
-  // i want to avoid having to use itertools here, but chunks() only works on slices
-  while idx < data.len() {
+  while data.len() >= 2 {
     let value = data.pop().unwrap();
     let key = data.pop().unwrap();
-    out.insert(key, value);
 
-    idx += 2;
+    out.insert(key, value);
   }
 
   Ok(out)
@@ -117,6 +146,8 @@ named!(read_to_crlf_s<&str>, map_res!(read_to_crlf, str::from_utf8));
 
 named!(read_prefix_len<usize>, map_res!(read_to_crlf_s, to_usize));
 
+named!(read_prefix_len_signed<isize>, map_res!(read_to_crlf_s, to_isize));
+
 named!(
   frame_type<FrameKind>,
   switch!(be_u8,
@@ -134,7 +165,9 @@ named!(
     SET_BYTE             => value!(FrameKind::Set) |
     ATTRIBUTE_BYTE       => value!(FrameKind::Attribute) |
     PUSH_BYTE            => value!(FrameKind::Push) |
-    BIG_NUMBER_BYTE      => value!(FrameKind::BigNumber)
+    BIG_NUMBER_BYTE      => value!(FrameKind::BigNumber) |
+    CHUNKED_STRING_BYTE  => value!(FrameKind::ChunkedString) |
+    END_STREAM_BYTE      => value!(FrameKind::EndStream)
   )
 );
 
@@ -165,9 +198,9 @@ named!(
 
 named!(parse_null<Frame>, do_parse!(read_to_crlf >> (Frame::Null)));
 
-named!(
-  parse_blobstring<Frame>,
-  do_parse!(len: read_prefix_len >> d: terminated!(take!(len), take!(2)) >> (Frame::BlobString(Vec::from(d))))
+named_args!(
+  parse_blobstring(len: usize)<Frame>,
+  do_parse!(d: terminated!(take!(len), take!(2)) >> (Frame::BlobString(Vec::from(d))))
 );
 
 named!(
@@ -191,13 +224,19 @@ named!(
   do_parse!(d: read_to_crlf >> (Frame::BigNumber(d.to_vec())))
 );
 
-named_args!(parse_array_frames(len: usize) <Vec<Frame>>, count!(parse_frame, len));
+named_args!(
+  parse_array_frames(len: usize) <Vec<Frame>>,
+  count!(map_res!(parse_frame, unwrap_complete_frame), len)
+);
 
-named_args!(parse_kv_pairs(len: usize) <HashMap<Frame, Frame>>, map_res!(count!(parse_frame, len * 2), to_hashmap));
+named_args!(
+  parse_kv_pairs(len: usize) <HashMap<Frame, Frame>>,
+  map_res!(count!(map_res!(parse_frame, unwrap_complete_frame), len * 2), to_hashmap)
+);
 
-named!(
-  parse_array<Frame>,
-  do_parse!(len: read_prefix_len >> frames: call!(parse_array_frames, len) >> (Frame::Array(frames)))
+named_args!(
+  parse_array(len: usize)<Frame>,
+  do_parse!(frames: call!(parse_array_frames, len) >> (Frame::Array(frames)))
 );
 
 named!(
@@ -205,14 +244,14 @@ named!(
   do_parse!(len: read_prefix_len >> frames: call!(parse_array_frames, len) >> (Frame::Push(frames)))
 );
 
-named!(
-  parse_set<Frame>,
-  do_parse!(len: read_prefix_len >> frames: map_res!(call!(parse_array_frames, len), to_set) >> (Frame::Set(frames)))
+named_args!(
+  parse_set(len: usize)<Frame>,
+  do_parse!(frames: map_res!(call!(parse_array_frames, len), to_set) >> (Frame::Set(frames)))
 );
 
-named!(
-  parse_map<Frame>,
-  do_parse!(len: read_prefix_len >> map: call!(parse_kv_pairs, len) >> (Frame::Map(map)))
+named_args!(
+  parse_map(len: usize)<Frame>,
+  do_parse!(map: call!(parse_kv_pairs, len) >> (Frame::Map(map)))
 );
 
 named!(
@@ -220,7 +259,10 @@ named!(
   do_parse!(len: read_prefix_len >> map: call!(parse_kv_pairs, len) >> (Frame::Attribute(map)))
 );
 
-named_args!(map_hello<'a>(version: u8, auth: Option<(&'a str, &'a str)>) <(u8, Option<(&'a str, &'a str)>)>, do_parse!((version, auth)));
+named_args!(
+  map_hello<'a>(version: u8, auth: Option<(&'a str, &'a str)>) <(u8, Option<(&'a str, &'a str)>)>,
+  do_parse!((version, auth))
+);
 
 named!(
   parse_hello<Frame>,
@@ -239,35 +281,86 @@ named!(
   )
 );
 
-named!(
-  parse_frame<Frame>,
-  switch!(frame_type,
-    FrameKind::Array          => call!(parse_array) |
-    FrameKind::BlobString     => call!(parse_blobstring) |
-    FrameKind::SimpleString   => call!(parse_simplestring) |
-    FrameKind::SimpleError    => call!(parse_simpleerror) |
-    FrameKind::Number         => call!(parse_number) |
-    FrameKind::Null           => call!(parse_null) |
-    FrameKind::Double         => call!(parse_double) |
-    FrameKind::Boolean        => call!(parse_boolean) |
-    FrameKind::BlobError      => call!(parse_bloberror) |
-    FrameKind::VerbatimString => call!(parse_verbatimstring) |
-    FrameKind::Map            => call!(parse_map) |
-    FrameKind::Set            => call!(parse_set) |
-    FrameKind::Attribute      => call!(parse_attribute) |
-    FrameKind::Push           => call!(parse_push) |
-    FrameKind::BigNumber      => call!(parse_bignumber) |
-    FrameKind::Hello          => call!(parse_hello)
+/// Check for a streaming variant of a frame, and if found then return the prefix bytes only, otherwise return the complete frame.
+///
+/// Only supported for arrays, sets, maps, and blob strings.
+named_args!(
+  check_streaming(kind: FrameKind)<DecodedFrame>,
+  do_parse!(
+    len: read_prefix_len_signed >>
+    frame: switch!(value!(len),
+      // return streaming variant
+      -1 => value!(DecodedFrame::Streaming(StreamedFrame::new(kind))) |
+      // return complete variant
+      _ => do_parse!(
+        len: map_res!(value!(len), isize_to_usize) >>
+        frame: switch!(value!(kind),
+          FrameKind::Array => call!(parse_array, len) |
+          FrameKind::Set => call!(parse_set, len) |
+          FrameKind::Map => call!(parse_map, len)
+        ) >>
+        (DecodedFrame::Complete(frame))
+      )
+    ) >>
+    (frame)
   )
 );
 
-/// Decoding functions for complete frames.
+named!(
+  parse_chunked_string<DecodedFrame>,
+  do_parse!(
+    len: read_prefix_len
+      >> frame:
+        switch!(value!(len),
+          0 => do_parse!(extra: read_to_crlf >> (Frame::new_end_stream())) |
+          _ => do_parse!(d: terminated!(take!(len), take!(2)) >> (Frame::ChunkedString(Vec::from(d))))
+        )
+      >> (DecodedFrame::Complete(frame))
+  )
+);
+
+named!(
+  return_end_stream<DecodedFrame>,
+  do_parse!(extra: read_to_crlf >> (DecodedFrame::Complete(Frame::new_end_stream())))
+);
+
+named!(
+  parse_frame<DecodedFrame>,
+  do_parse!(
+    kind: frame_type
+      >> frame:
+        switch!(value!(kind),
+          FrameKind::Array          => call!(check_streaming, kind) |
+          FrameKind::BlobString     => call!(check_streaming, kind) |
+          FrameKind::SimpleString   => map!(call!(parse_simplestring), map_complete_frame) |
+          FrameKind::SimpleError    => map!(call!(parse_simpleerror), map_complete_frame) |
+          FrameKind::Number         => map!(call!(parse_number), map_complete_frame) |
+          FrameKind::Null           => map!(call!(parse_null), map_complete_frame) |
+          FrameKind::Double         => map!(call!(parse_double), map_complete_frame) |
+          FrameKind::Boolean        => map!(call!(parse_boolean), map_complete_frame) |
+          FrameKind::BlobError      => map!(call!(parse_bloberror), map_complete_frame) |
+          FrameKind::VerbatimString => map!(call!(parse_verbatimstring), map_complete_frame) |
+          FrameKind::Map            => call!(check_streaming, kind) |
+          FrameKind::Set            => call!(check_streaming, kind) |
+          FrameKind::Attribute      => map!(call!(parse_attribute), map_complete_frame) |
+          FrameKind::Push           => map!(call!(parse_push), map_complete_frame) |
+          FrameKind::BigNumber      => map!(call!(parse_bignumber), map_complete_frame) |
+          FrameKind::Hello          => map!(call!(parse_hello), map_complete_frame) |
+          FrameKind::ChunkedString  => call!(parse_chunked_string) |
+          FrameKind::EndStream      => call!(return_end_stream)
+        )
+      >> (frame)
+  )
+);
+
+/// Decoding functions for complete frames. **If a streamed frame is detected it will result in an error.**
 ///
 /// **Note about attributes:**
 ///
-/// Attributes can appear in buffers in different locations. They can either appear just before a frame, in which case [decode_with_attributes](complete::decode_with_attributes) will work as expected, or they can appear
-/// within an aggregate type such as an array. The latter case is left to the caller to handle in that a `Frame::Array` will be returned where one of the inner frames will be an attribute
-/// frame. This approach enables the caller to more easily link the attribute to the following frame in a higher level library.
+/// Attributes can appear in buffers in different locations. They can either appear just before a frame, in which case [decode_with_leading_attributes](complete::decode_with_leading_attributes)
+/// will work as expected, or they can appear within an aggregate type such as an array. The latter case is left to the caller to handle in that a `Frame::Array`
+/// will be returned where one of the inner frames will be an attribute frame. This approach enables the caller to more easily link the attribute to the following
+/// frame in a higher level library.
 pub mod complete {
   use super::*;
   use std::collections::VecDeque;
@@ -275,20 +368,22 @@ pub mod complete {
   /// Attempt to parse the contents of `buf`, returning the first valid frame and the number of bytes consumed.
   ///
   /// If the byte slice contains an incomplete frame then `None` is returned.
-  pub fn decode(buf: &[u8]) -> Result<(Option<Frame>, usize), RedisProtocolError> {
+  pub fn decode(buf: &[u8]) -> Result<Option<(Frame, usize)>, RedisProtocolError> {
     let len = buf.len();
 
     match parse_frame(buf) {
-      Ok((remaining, frame)) => Ok((Some(frame), len - remaining.len())),
-      Err(NomError::Incomplete(_)) => Ok((None, 0)),
+      Ok((remaining, frame)) => Ok(Some((frame.into_complete_frame()?, len - remaining.len()))),
+      Err(NomError::Incomplete(_)) => Ok(None),
       Err(e) => Err(e.into()),
     }
   }
 
-  /// Attempt to parse the contents of `buf`, returning the first valid non-attribute frame, the number of bytes consumed, and a separate array of attribute frames leading up to the first non-attribute frame.
+  /// Attempt to parse the contents of `buf`, returning the first valid non-attribute frame, the number of bytes consumed, and a separate optional array of attribute frames leading up to the first non-attribute frame.
   ///
   /// If the buffer contains an incomplete frame, or if the buffer only contains an attribute frame, then `None` is returned. Use [decode] if you want to parse individual attribute frames.
-  pub fn decode_with_attributes(buf: &[u8]) -> Result<Option<(Frame, usize, VecDeque<Frame>)>, RedisProtocolError> {
+  pub fn decode_with_leading_attributes(
+    buf: &[u8],
+  ) -> Result<Option<(Frame, usize, VecDeque<Frame>)>, RedisProtocolError> {
     let len = buf.len();
     let mut parsed = 0;
     let mut attributes = VecDeque::new();
@@ -298,7 +393,7 @@ pub mod complete {
 
     while parsed < buf.len() {
       let (frame, amt) = match parse_frame(&buf[parsed..]) {
-        Ok((remaining, frame)) => (frame, len - remaining.len()),
+        Ok((remaining, frame)) => (frame.into_complete_frame()?, len - remaining.len()),
         Err(NomError::Incomplete(_)) => return Ok(None),
         Err(e) => return Err(e.into()),
       };
@@ -316,11 +411,64 @@ pub mod complete {
   }
 }
 
-/// Decoding structs and functions that support streaming frames.
+/// Decoding structs and functions that support streaming frames. The caller is responsible for managing any returned state for streaming frames.
+///
+/// **Note about attributes:**
+///
+/// Attributes can appear in buffers in different locations. They can either appear just before a frame, in which case [decode_with_leading_attributes](streaming::decode_with_leading_attributes)
+/// will work as expected, or they can appear within an aggregate type such as an array. The latter case is left to the caller to handle in that a `Frame::Array`
+/// will be returned where one of the inner frames will be an attribute frame. This approach enables the caller to more easily link the attribute to the following
+/// frame in a higher level library.
 pub mod streaming {
-  // expose a streaming struct that has inner state with a streaming frame.
+  use super::*;
+  use std::collections::VecDeque;
 
-  // TODO
+  /// Attempt to parse the contents of `buf`, returning the first valid frame and the number of bytes consumed.
+  ///
+  /// If the byte slice contains an incomplete frame then `None` is returned.
+  pub fn decode(buf: &[u8]) -> Result<Option<(DecodedFrame, usize)>, RedisProtocolError> {
+    let len = buf.len();
+
+    match parse_frame(buf) {
+      Ok((remaining, frame)) => Ok(Some((frame, len - remaining.len()))),
+      Err(NomError::Incomplete(_)) => Ok(None),
+      Err(e) => Err(e.into()),
+    }
+  }
+
+  /// Attempt to parse the contents of `buf`, returning the first valid non-attribute frame, the number of bytes consumed, and a separate optional array of attribute frames leading up to the first non-attribute frame.
+  ///
+  /// If the buffer contains an incomplete frame, or if the buffer only contains an attribute frame, then `None` is returned. Use [decode] if you want to parse individual attribute frames.
+  ///
+  /// TODO examples
+  pub fn decode_with_leading_attributes(
+    buf: &[u8],
+  ) -> Result<Option<(DecodedFrame, usize, VecDeque<Frame>)>, RedisProtocolError> {
+    let len = buf.len();
+    let mut parsed = 0;
+    let mut attributes = VecDeque::new();
+
+    // TODO examine this approach where attribute frames appear within a map.
+    // this may result in an odd number of frames which will fail the decoder.
+
+    while parsed < buf.len() {
+      let (frame, amt) = match parse_frame(&buf[parsed..]) {
+        Ok((remaining, frame)) => (frame, len - remaining.len()),
+        Err(NomError::Incomplete(_)) => return Ok(None),
+        Err(e) => return Err(e.into()),
+      };
+      parsed += amt;
+
+      if frame.is_attribute() {
+        attributes.push_back(frame.into_complete_frame()?);
+        continue;
+      }
+
+      return Ok(Some((frame, parsed, attributes)));
+    }
+
+    Ok(None)
+  }
 }
 
 #[cfg(test)]
@@ -334,9 +482,14 @@ mod tests {
     panic!("{:?}", e);
   }
 
+  fn panic_no_decode() {
+    panic!("Failed to decode bytes. None returned.")
+  }
+
   fn decode_and_verify_some(bytes: &mut BytesMut, expected: &(Option<Frame>, usize)) {
     let (frame, len) = match complete::decode(&bytes) {
-      Ok((f, l)) => (f, l),
+      Ok(Some((f, l))) => (Some(f), l),
+      Ok(None) => return panic_no_decode(),
       Err(e) => return pretty_print_panic(e),
     };
 
@@ -348,7 +501,8 @@ mod tests {
     bytes.extend_from_slice(PADDING.as_bytes());
 
     let (frame, len) = match complete::decode(&bytes) {
-      Ok((f, l)) => (f, l),
+      Ok(Some((f, l))) => (Some(f), l),
+      Ok(None) => return panic_no_decode(),
       Err(e) => return pretty_print_panic(e),
     };
 
@@ -358,7 +512,8 @@ mod tests {
 
   fn decode_and_verify_none(bytes: &mut BytesMut) {
     let (frame, len) = match complete::decode(&bytes) {
-      Ok((f, l)) => (f, l),
+      Ok(Some((f, l))) => (Some(f), l),
+      Ok(None) => (None, 0),
       Err(e) => return pretty_print_panic(e),
     };
 

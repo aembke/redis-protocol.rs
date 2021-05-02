@@ -1,14 +1,16 @@
+use crate::resp3::utils as resp3_utils;
 use crate::utils;
 use bytes::buf::Chain;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use float_cmp::approx_eq;
+use resp3::utils::reconstruct_map;
 use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::mem;
 use std::str;
-use types::{Redirection, RedisProtocolError, CRLF};
+use types::{Redirection, RedisProtocolError, RedisProtocolErrorKind, CRLF};
 
 /// Byte prefix before a simple string type.
 pub const SIMPLE_STRING_BYTE: u8 = b'+';
@@ -44,6 +46,8 @@ pub const NULL_BYTE: u8 = b'_';
 pub const VERBATIM_FORMAT_BYTE: u8 = b':';
 /// Byte representation of a chunked string.
 pub const CHUNKED_STRING_BYTE: u8 = b';';
+/// Byte used to signify the end of a stream.
+pub const END_STREAM_BYTE: u8 = b'.';
 
 /// Byte prefix on a streamed type, following the byte that identifies the type.
 pub const STREAMED_LENGTH_BYTE: u8 = b'?';
@@ -128,7 +132,7 @@ impl VerbatimStringFormat {
 }
 
 /// The type of frame without any associated data.
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Copy)]
 pub enum FrameKind {
   Array,
   BlobString,
@@ -146,6 +150,8 @@ pub enum FrameKind {
   Push,
   Hello,
   BigNumber,
+  ChunkedString,
+  EndStream,
 }
 
 impl FrameKind {
@@ -178,6 +184,8 @@ impl FrameKind {
       Push => "p",
       Hello => "h",
       BigNumber => "bn",
+      ChunkedString => "cs",
+      EndStream => "es",
     }
   }
 
@@ -201,6 +209,8 @@ impl FrameKind {
       ATTRIBUTE_BYTE => Some(Attribute),
       PUSH_BYTE => Some(Push),
       NULL_BYTE => Some(Null),
+      CHUNKED_STRING_BYTE => Some(ChunkedString),
+      END_STREAM_BYTE => Some(EndStream),
       _ => None,
     }
   }
@@ -225,6 +235,8 @@ impl FrameKind {
       Attribute => ATTRIBUTE_BYTE,
       Push => PUSH_BYTE,
       Null => NULL_BYTE,
+      ChunkedString => CHUNKED_STRING_BYTE,
+      EndStream => END_STREAM_BYTE,
       Hello => panic!("HELLO does not have a byte prefix."),
     }
   }
@@ -284,6 +296,8 @@ pub enum Frame {
   ///
   /// This library does not attempt to parse this, nor does it offer any utilities to do so.
   BigNumber(Vec<u8>),
+  /// One chunk of a streaming string.
+  ChunkedString(Vec<u8>),
 }
 
 impl Hash for Frame {
@@ -304,6 +318,7 @@ impl Hash for Frame {
         format.hash(state);
         data.hash(state);
       }
+      ChunkedString(ref b) => b.hash(state),
       BigNumber(ref b) => b.hash(state),
       _ => panic!("Invalid RESP3 data type to use as hash key."),
     };
@@ -315,6 +330,10 @@ impl PartialEq for Frame {
     use self::Frame::*;
 
     match *self {
+      ChunkedString(ref b) => match *other {
+        ChunkedString(ref _b) => b == _b,
+        _ => false,
+      },
       Array(ref b) => match *other {
         Array(ref _b) => b == _b,
         _ => false,
@@ -392,6 +411,28 @@ impl PartialEq for Frame {
 impl Eq for Frame {}
 
 impl Frame {
+  /// Create a new `Frame` that terminates a stream.
+  pub fn new_end_stream() -> Self {
+    Frame::ChunkedString(vec![])
+  }
+
+  /// A context-aware length function that returns the length of the inner frame.
+  pub fn len(&self) -> usize {
+    use self::Frame::*;
+
+    match *self {
+      Array(ref a) | Push(ref a) => a.len(),
+      BlobString(ref b) | BlobError(ref b) | BigNumber(ref b) | ChunkedString(ref b) => b.len(),
+      SimpleString(ref s) | SimpleError(ref s) => s.len(),
+      Number(_) | Double(_) | Boolean(_) => 1,
+      Null => 0,
+      VerbatimString { ref data, .. } => data.as_bytes().len(),
+      Map(ref m) | Attribute(ref m) => m.len(),
+      Set(ref s) => s.len(),
+      Hello { .. } => 1,
+    }
+  }
+
   /// Replace `self` with Null, returning the original value.
   pub fn take(&mut self) -> Frame {
     mem::replace(self, Frame::Null)
@@ -418,6 +459,7 @@ impl Frame {
       Push(_) => FrameKind::Push,
       Hello { .. } => FrameKind::Hello,
       BigNumber(_) => FrameKind::BigNumber,
+      ChunkedString(_) => FrameKind::ChunkedString,
     }
   }
 
@@ -453,6 +495,22 @@ impl Frame {
     }
   }
 
+  /// Whether or not the frame represents a chunked string.
+  pub fn is_chunked_string(&self) -> bool {
+    match *self {
+      Frame::ChunkedString(_) => true,
+      _ => false,
+    }
+  }
+
+  /// Whether or not the frame is an empty chunked string, signifying the end of a chunked string stream.
+  pub fn is_end_stream_frame(&self) -> bool {
+    match *self {
+      Frame::ChunkedString(ref s) => s.is_empty(),
+      _ => false,
+    }
+  }
+
   /// Whether or not the frame is a verbatim string.
   pub fn is_verbatim_string(&self) -> bool {
     match *self {
@@ -477,6 +535,7 @@ impl Frame {
       Frame::SimpleError(ref s) | Frame::SimpleString(ref s) => Some(s),
       Frame::BlobError(ref b) | Frame::BlobString(ref b) | Frame::BigNumber(ref b) => str::from_utf8(b).ok(),
       Frame::VerbatimString { ref data, .. } => Some(data),
+      Frame::ChunkedString(ref b) => str::from_utf8(b).ok(),
       _ => None,
     }
   }
@@ -489,6 +548,7 @@ impl Frame {
         String::from_utf8(b.to_vec()).ok()
       }
       Frame::VerbatimString { ref data, .. } => Some(data.to_owned()),
+      Frame::ChunkedString(ref b) => String::from_utf8(b.to_vec()).ok(),
       Frame::Double(ref f) => Some(f.to_string()),
       Frame::Number(ref i) => Some(i.to_string()),
       _ => None,
@@ -503,6 +563,7 @@ impl Frame {
       Frame::SimpleError(ref s) | Frame::SimpleString(ref s) => Some(s.as_bytes()),
       Frame::BlobError(ref b) | Frame::BlobString(ref b) | Frame::BigNumber(ref b) => Some(b),
       Frame::VerbatimString { ref data, .. } => Some(data.as_bytes()),
+      Frame::ChunkedString(ref b) => Some(b),
       _ => None,
     }
   }
@@ -614,57 +675,76 @@ impl Frame {
 }
 
 /// A helper struct for reading in streams of bytes such that the underlying bytes don't need to be in one continuous, growing block of memory.
+#[derive(Debug)]
 pub struct StreamedFrame {
-  /// The internal buffer of buffers.
-  buffer: VecDeque<BytesMut>,
+  /// The internal buffer of frames.
+  buffer: VecDeque<Frame>,
   /// The type of frame to which this will eventually be cast.
   pub kind: FrameKind,
-  /// Running count of the total number of bytes inside all the internal buffers.
-  pub total_size: usize,
 }
 
 impl StreamedFrame {
   /// Create a new `StreamedFrame` from the first section of data in a streaming response.
-  ///
-  /// Note: the byte prefix that determines the `FrameKind` should **not** be present at the start of `data`.
-  pub fn new(kind: FrameKind, data: &[u8], initial_capacity: usize) -> Self {
-    let total_size = data.len();
-    let mut buffer = VecDeque::with_capacity(initial_capacity);
-    buffer.push_back(BytesMut::from(data));
+  pub fn new(kind: FrameKind) -> Self {
+    let buffer = VecDeque::new();
+    StreamedFrame { buffer, kind }
+  }
 
-    StreamedFrame {
-      buffer,
-      kind,
-      total_size,
+  /// Convert the internal buffer into one frame matching `self.kind`.
+  pub fn into_frame(mut self) -> Result<Frame, RedisProtocolError> {
+    if self.is_finished() {
+      // the last frame is an empty chunked string when the stream is finished
+      let _ = self.buffer.pop_back();
+    }
+
+    match self.kind {
+      FrameKind::ChunkedString => resp3_utils::reconstruct_blobstring(self.buffer),
+      FrameKind::Map => resp3_utils::reconstruct_map(self.buffer),
+      FrameKind::Set => resp3_utils::reconstruct_set(self.buffer),
+      FrameKind::Array => resp3_utils::reconstruct_array(self.buffer),
+      _ => Err(RedisProtocolError::new(
+        RedisProtocolErrorKind::DecodeError,
+        "Streaming frames only supported for chunked strings, maps, sets, and arrays.",
+      )),
     }
   }
 
-  /// Convert the inner buffer of buffers into one buffer with one final allocation from all the chained memory blocks and the correct prefix byte added to the output.
-  ///
-  /// The output of this function should match the non-streamed version of the resulting frame up to the final CRLF.
-  ///
-  /// Note: CRLF terminating bytes are not added to the final output since some types can already contain that at the end, but space is allocated for them if they need to be added later. The internal cursor of the returned buffer will be pointing to where CRLF should be added, if necessary.
-  pub fn into_bytes(mut self) -> BytesMut {
-    let mut buffer = BytesMut::with_capacity(self.total_size + 3);
-    buffer.put_u8(self.kind.to_byte());
+  /// Add a frame to the internal buffer.
+  pub fn add_frame(&mut self, data: Frame) {
+    self.buffer.push_back(data);
+  }
 
-    for slice in self.buffer.into_iter() {
-      buffer.extend_from_slice(&slice);
+  /// Whether or not the last frame represents the terminating sequence at the end of a frame stream.
+  pub fn is_finished(&self) -> bool {
+    self.buffer.back().map(|f| f.is_end_stream_frame()).unwrap_or(false)
+  }
+}
+
+/// Wrapper enum around a decoded frame that supports streaming frames.
+#[derive(Debug)]
+pub enum DecodedFrame {
+  Streaming(StreamedFrame),
+  Complete(Frame),
+}
+
+impl DecodedFrame {
+  /// Convert the decoded frame to a complete frame, returning an error if a streaming variant is found.
+  pub fn into_complete_frame(self) -> Result<Frame, RedisProtocolError> {
+    match self {
+      DecodedFrame::Complete(frame) => Ok(frame),
+      DecodedFrame::Streaming(_) => Err(RedisProtocolError::new(
+        RedisProtocolErrorKind::DecodeError,
+        "Expected complete frame.",
+      )),
     }
-
-    buffer
   }
 
-  /// Add bytes to the streaming buffer.
-  pub fn add_bytes(&mut self, data: &[u8]) {
-    self.total_size += data.len();
-    self.buffer.push_back(BytesMut::from(data));
-  }
-
-  /// Add CRLF to the end of the buffer.
-  pub fn add_crlf(&mut self) {
-    self.total_size += CRLF.as_bytes().len();
-    self.buffer.push_back(BytesMut::from(CRLF));
+  /// Whether or not the frame is a complete frame representing a map of attributes.
+  pub fn is_attribute(&self) -> bool {
+    match *self {
+      DecodedFrame::Complete(ref frame) => frame.is_attribute(),
+      _ => false,
+    }
   }
 }
 
@@ -673,6 +753,7 @@ mod tests {
   use super::*;
   use std::str;
 
+  /*
   #[test]
   fn should_convert_basic_streaming_buffer_to_frame() {
     let mut streaming_buf = StreamedFrame::new(FrameKind::BlobString, "foo".as_bytes(), 4);
@@ -688,4 +769,5 @@ mod tests {
       &format!("{}{}", BLOB_STRING_BYTE as char, "foobarbaz\r\n")
     );
   }
+   */
 }
