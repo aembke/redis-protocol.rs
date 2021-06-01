@@ -23,20 +23,17 @@
 //!   println!("Encoded {} bytes into buffer with contents {:?}", len, buf);
 //!
 //!   let buf: BytesMut = "*3\r\n$3\r\nFoo\r\n$-1\r\n$3\r\nBar\r\n".into();
-//!   let frame = decode(&buf).expect("Failed to parse bytes");
-//!
-//!   if let Some((frame, consumed)) = frame {
-//!     println!("Parsed frame {:?} and consumed {} bytes", frame, consumed);
-//!   }else{
-//!     println!("Incomplete frame.");
-//!   }
+//!   let (frame, consumed) = match decode(&buf) {
+//!     Ok(Some((f, c))) => (f, c),
+//!     Ok(None) => panic!("Incomplete frame."),
+//!     Err(e) => panic!("Error parsing bytes: {:?}", e)
+//!   };
+//!   println!("Parsed frame {:?} and consumed {} bytes", frame, consumed);
 //!
 //!   let key = "foobarbaz";
 //!   println!("Hash slot for {}: {}", key, redis_keyslot(key));
 //! }
 //! ```
-//!
-//!
 
 #[macro_use]
 extern crate log;
@@ -49,7 +46,9 @@ extern crate cookie_factory;
 extern crate nom;
 #[macro_use]
 extern crate float_cmp;
-extern crate core;
+
+#[cfg(feature = "index-map")]
+extern crate indexmap;
 
 #[macro_use]
 pub(crate) mod utils;
@@ -61,4 +60,4 @@ pub mod resp3;
 /// Error types and general redis protocol types.
 pub mod types;
 
-pub use utils::{digits_in_number, redis_keyslot, ZEROED_KB};
+pub use utils::{digits_in_number, redis_keyslot, resp2_frame_to_resp3, resp3_frame_to_resp2, ZEROED_KB};

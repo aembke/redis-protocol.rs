@@ -215,6 +215,11 @@ impl Frame {
       _ => None,
     }
   }
+
+  /// Attempt to read the number of bytes needed to encode this frame.
+  pub fn encode_len(&self) -> Result<usize, RedisProtocolError> {
+    resp2_utils::encode_len(self).map_err(|e| e.into())
+  }
 }
 
 impl From<Redirection> for Frame {

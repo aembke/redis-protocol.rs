@@ -8,7 +8,6 @@ name = "redis-protocol"
 readme = "README.md"
 repository = "https://github.com/aembke/redis-protocol.rs"
 version = "3.0.0"
-
 [badges]
 [badges.maintenance]
 status = "actively-developed"
@@ -19,18 +18,29 @@ repository = "aembke/redis-protocol.rs"
 
 [dependencies]
 bytes = "1"
+cookie-factory = "0.3"
 crc16 = "0.3"
 float-cmp = "0.8"
+indexmap = "1.6"
 log = "0.4"
 nom = "6.1"
 pretty_env_logger = "0.2"
-cookie-factory = "0.3"
 
 [dev-dependencies]
+futures = "0.3"
 lazy_static = "1.1"
 rand = "0.5"
-tokio = { version = "1", features = ["full"] }
-futures = "0.3"
+
+[dev-dependencies.tokio]
+features = ["full"]
+version = "1"
+
+[dev-dependencies.tokio-util]
+features = ["codec"]
+version = "0.6"
+
+[features]
+index-map = []
 
 [lib]
 doc = true

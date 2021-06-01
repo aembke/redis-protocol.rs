@@ -1,10 +1,12 @@
 use crate::resp2::types::Frame as Resp2Frame;
 use crate::resp3::types::Frame as Resp3Frame;
 use cookie_factory::GenError;
+use nom::error::{ContextError, ErrorKind, ParseError};
 use nom::{Err as NomError, Needed};
 use std::borrow::Borrow;
 use std::borrow::Cow;
 use std::fmt;
+use std::io::Error as IoError;
 use std::str;
 use utils;
 
@@ -12,7 +14,7 @@ use utils;
 pub const CRLF: &'static str = "\r\n";
 
 /// The kind of error without any associated data.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub enum RedisProtocolErrorKind {
   /// An error that occurred while encoding data.
   EncodeError,
@@ -20,9 +22,42 @@ pub enum RedisProtocolErrorKind {
   BufferTooSmall(usize),
   /// An error that occurred while decoding data.
   DecodeError,
+  /// An IO error.
+  IO(IoError),
   /// An unknown error, or an error that can occur during encoding or decoding.
   Unknown,
 }
+
+impl PartialEq for RedisProtocolErrorKind {
+  fn eq(&self, other: &Self) -> bool {
+    use self::RedisProtocolErrorKind::*;
+
+    match *self {
+      EncodeError => match *other {
+        EncodeError => true,
+        _ => false,
+      },
+      DecodeError => match *other {
+        DecodeError => true,
+        _ => false,
+      },
+      BufferTooSmall(amt) => match *other {
+        BufferTooSmall(_amt) => amt == amt,
+        _ => false,
+      },
+      IO(_) => match *other {
+        IO(_) => true,
+        _ => false,
+      },
+      Unknown => match *other {
+        Unknown => true,
+        _ => false,
+      },
+    }
+  }
+}
+
+impl Eq for RedisProtocolErrorKind {}
 
 impl RedisProtocolErrorKind {
   pub fn to_str(&self) -> &'static str {
@@ -32,13 +67,14 @@ impl RedisProtocolErrorKind {
       EncodeError => "Encode Error",
       DecodeError => "Decode Error",
       Unknown => "Unknown Error",
+      IO(_) => "IO Error",
       BufferTooSmall(_) => "Buffer too small",
     }
   }
 }
 
 /// The default error type used with all external functions in this library.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct RedisProtocolError {
   desc: Cow<'static, str>,
   kind: RedisProtocolErrorKind,
@@ -136,6 +172,107 @@ impl From<NomError<&[u8]>> for RedisProtocolError {
   }
 }
 
+impl From<IoError> for RedisProtocolError {
+  fn from(e: IoError) -> Self {
+    RedisProtocolError::new(RedisProtocolErrorKind::IO(e), "IO Error")
+  }
+}
+
+/// A struct defining parse errors when decoding frames.
+pub struct RedisParseError<'a> {
+  pub input: Vec<&'a [u8]>,
+  pub context: &'static str,
+  pub message: Option<String>,
+  pub kind: Vec<ErrorKind>,
+  pub needed: Option<usize>,
+}
+
+impl<'a> RedisParseError<'a> {
+  pub fn new<S: Into<String>>(ctx: &'static str, message: S, kind: Option<ErrorKind>) -> Self {
+    let kind = kind.map(|k| vec![k]).unwrap_or(Vec::new());
+
+    RedisParseError {
+      input: Vec::new(),
+      context: ctx,
+      message: Some(message.into()),
+      kind,
+      needed: None,
+    }
+  }
+}
+
+impl<'a> ParseError<&'a [u8]> for RedisParseError<'a> {
+  fn from_error_kind(input: &'a [u8], kind: ErrorKind) -> Self {
+    RedisParseError {
+      input: vec![input],
+      kind: vec![kind],
+      context: "Parse Error",
+      message: None,
+      needed: None,
+    }
+  }
+
+  fn append(input: &'a [u8], kind: ErrorKind, mut other: Self) -> Self {
+    other.input.push(input);
+    other.kind.push(kind);
+
+    other
+  }
+}
+
+impl<'a> ContextError<&'a [u8]> for RedisParseError<'a> {
+  fn add_context(input: &'a [u8], ctx: &'static str, mut other: Self) -> Self {
+    other.context = ctx;
+    other.input.push(input);
+    other
+  }
+}
+
+impl<'a> From<NomError<nom::error::Error<&'a [u8]>>> for RedisParseError<'a> {
+  fn from(e: NomError<nom::error::Error<&[u8]>>) -> Self {
+    let (ctx, kind, input) = match e {
+      NomError::Failure(inner) => ("failure", inner.code, inner.input),
+      NomError::Error(inner) => ("error", inner.code, inner.input),
+      NomError::Incomplete(needed) => {
+        let needed = match needed {
+          Needed::Unknown => None,
+          Needed::Size(s) => Some(s.get()),
+        };
+
+        return RedisParseError {
+          input: vec![],
+          kind: vec![],
+          context: "incomplete",
+          message: None,
+          needed,
+        };
+      }
+    };
+
+    RedisParseError {
+      context: ctx,
+      kind: vec![kind],
+      input: vec![input],
+      message: Some("Parse Error".into()),
+      needed: None,
+    }
+  }
+}
+
+impl<'a> From<RedisParseError<'a>> for RedisProtocolError {
+  fn from(e: RedisParseError<'a>) -> Self {
+    let message = match e.message {
+      Some(ref msg) => msg,
+      None => "Parse Error",
+    };
+
+    RedisProtocolError {
+      kind: RedisProtocolErrorKind::DecodeError,
+      desc: Cow::Owned(format!("{}: {}", e.context, message)),
+    }
+  }
+}
+
 /// A cluster redirection message.
 ///
 /// <https://redis.io/topics/cluster-spec#redirection-and-resharding>
@@ -161,7 +298,10 @@ impl Redirection {
       Redirection::Ask { ref slot, ref server } => format!("ASK {} {}", slot, server),
     };
 
-    Resp3Frame::SimpleError(inner)
+    Resp3Frame::SimpleError {
+      data: inner,
+      attributes: None,
+    }
   }
 }
 

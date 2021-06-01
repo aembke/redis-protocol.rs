@@ -1,6 +1,9 @@
+use crate::resp2::types::Frame as Resp2Frame;
+use crate::resp3::types::Frame as Resp3Frame;
 use bytes::BytesMut;
 use cookie_factory::GenError;
 use crc16::{State, XMODEM};
+use std::str;
 use types::*;
 
 pub const KB: usize = 1024;
@@ -13,6 +16,8 @@ pub const REDIS_CLUSTER_SLOTS: u16 = 16384;
 pub const PUBSUB_PREFIX: &'static str = "message";
 /// Prefix on pubsub messages from a pattern matching subscription.
 pub const PATTERN_PUBSUB_PREFIX: &'static str = "pmessage";
+/// Prefix on push pubsub messages.
+pub const PUBSUB_PUSH_PREFIX: &'static str = "pubsub";
 
 macro_rules! unwrap_return(
   ($expr:expr) => {
@@ -35,8 +40,219 @@ macro_rules! encode_checks(
   }
 );
 
+/// Utility function to translate RESP2 frames to RESP3 frames.
+///
+/// RESP2 frames and RESP3 frames are quite different, but RESP3 is largely a superset of RESP2. Redis handles the protocol choice based on
+/// the response to the HELLO command so developers of higher level clients are faced with a decision on how to handle the situation where
+/// a higher level library may want to use RESP3 since the plan is to upgrade Redis in the future, but the server only supports RESP2 today.
+/// This function can allow callers to take a dependency on the RESP3 interface by lazily translating RESP2 frames from the server to RESP3
+/// frames while exposing the RESP3 interface up the stack.
+pub fn resp2_frame_to_resp3(frame: Resp2Frame) -> Resp3Frame {
+  if frame.is_normal_pubsub() {
+    let mut out = Vec::with_capacity(4);
+    out.push(Resp3Frame::SimpleString {
+      data: PUBSUB_PUSH_PREFIX.to_owned(),
+      attributes: None,
+    });
+    out.push(Resp3Frame::SimpleString {
+      data: PUBSUB_PREFIX.to_owned(),
+      attributes: None,
+    });
+    if let Resp2Frame::Array(mut inner) = frame {
+      // unwrap checked in is_normal_pubsub
+      let message = inner.pop().unwrap();
+      let channel = inner.pop().unwrap();
+      out.push(resp2_frame_to_resp3(channel));
+      out.push(resp2_frame_to_resp3(message));
+    } else {
+      panic!("Invalid pubsub frame conversion to resp3. This is a bug.");
+    }
+
+    return Resp3Frame::Push {
+      data: out,
+      attributes: None,
+    };
+  }
+  if frame.is_pattern_pubsub_message() {
+    let mut out = Vec::with_capacity(4);
+    out.push(Resp3Frame::SimpleString {
+      data: PUBSUB_PUSH_PREFIX.to_owned(),
+      attributes: None,
+    });
+    out.push(Resp3Frame::SimpleString {
+      data: PATTERN_PUBSUB_PREFIX.to_owned(),
+      attributes: None,
+    });
+    if let Resp2Frame::Array(mut inner) = frame {
+      // unwrap checked in is_normal_pubsub
+      let message = inner.pop().unwrap();
+      let channel = inner.pop().unwrap();
+      out.push(resp2_frame_to_resp3(channel));
+      out.push(resp2_frame_to_resp3(message));
+    } else {
+      panic!("Invalid pattern pubsub frame conversion to resp3. This is a bug.");
+    }
+
+    return Resp3Frame::Push {
+      data: out,
+      attributes: None,
+    };
+  }
+
+  match frame {
+    Resp2Frame::Integer(i) => Resp3Frame::Number {
+      data: i,
+      attributes: None,
+    },
+    Resp2Frame::Error(s) => Resp3Frame::SimpleError {
+      data: s,
+      attributes: None,
+    },
+    Resp2Frame::BulkString(d) => {
+      if d.len() < 6 {
+        match str::from_utf8(&d).ok() {
+          Some(s) => match s.as_ref() {
+            "true" => Resp3Frame::Boolean {
+              data: true,
+              attributes: None,
+            },
+            "false" => Resp3Frame::Boolean {
+              data: false,
+              attributes: None,
+            },
+            _ => Resp3Frame::BlobString {
+              data: d,
+              attributes: None,
+            },
+          },
+          None => Resp3Frame::BlobString {
+            data: d,
+            attributes: None,
+          },
+        }
+      } else {
+        Resp3Frame::BlobString {
+          data: d,
+          attributes: None,
+        }
+      }
+    }
+    Resp2Frame::SimpleString(s) => Resp3Frame::SimpleString {
+      data: s,
+      attributes: None,
+    },
+    Resp2Frame::Null => Resp3Frame::Null,
+    Resp2Frame::Array(data) => {
+      let mut out = Vec::with_capacity(data.len());
+      for frame in data.into_iter() {
+        out.push(resp2_frame_to_resp3(frame));
+      }
+      Resp3Frame::Array {
+        data: out,
+        attributes: None,
+      }
+    }
+  }
+}
+
+/// Utility function for converting RESP3 frames back to RESP2 frames.
+///
+/// RESP2 has no concept of attributes, maps, blob errors, or certain other frames. The following policy is used for translating new RESP3 frames back to RESP2:
+///
+/// * Push - If the Push frame corresponds to a pubsub message then it's converted to an array, otherwise an error is returned.
+/// * BlobError - An error is returned since the inner bytes might not be a UTF8 string, or they might be too large for a RESP2 SimpleError.
+/// * BigNumber - This is converted to a RESP2 BulkString
+/// * Boolean - This is converted to a BulkString with values of `true` or `false`. The associated [resp2_frame_to_resp3] function will convert back to Boolean from these values.
+/// * Double - The inner floating point value is converted to a `String` and sent as a BulkString.
+/// * VerbatimString - The inner data is sent as a BulkString. The format is discarded.
+/// * Set - The inner data is sent as an Array.
+/// * Map - An error is returned. RESP2 has no concept of a map.
+/// * Hello - An error is returned. If the caller wants to send Hello it needs to be encoded manually.
+/// * ChunkedString - An error is returned. RESP2 has no concept of streaming strings.
+///
+/// **Calling this with any RESP3 frame with attributes will result in an error.**
+pub fn resp3_frame_to_resp2(frame: Resp3Frame) -> Result<Resp2Frame, RedisProtocolError> {
+  if frame.attributes().is_some() {
+    return Err(RedisProtocolError::new(
+      RedisProtocolErrorKind::Unknown,
+      "Cannot convert RESP3 frame with attributes to RESP2.",
+    ));
+  }
+
+  if frame.is_pubsub_message() {
+    let mut out = Vec::with_capacity(3);
+    out.push(Resp2Frame::SimpleString(PUBSUB_PREFIX.to_owned()));
+
+    if let Resp3Frame::Push { mut data, .. } = frame {
+      // unwrap checked in is_normal_pubsub
+      let message = data.pop().unwrap();
+      let channel = data.pop().unwrap();
+
+      out.push(resp3_frame_to_resp2(channel)?);
+      out.push(resp3_frame_to_resp2(message)?);
+    } else {
+      panic!("Invalid pubsub frame converting to resp2 frame.");
+    }
+
+    return Ok(Resp2Frame::Array(out));
+  }
+
+  match frame {
+    Resp3Frame::Array { data, .. } => {
+      let mut out = Vec::with_capacity(data.len());
+      for frame in data.into_iter() {
+        out.push(resp3_frame_to_resp2(frame)?);
+      }
+      Ok(Resp2Frame::Array(out))
+    }
+    Resp3Frame::Push { data, .. } => Err(RedisProtocolError::new(
+      RedisProtocolErrorKind::Unknown,
+      "Cannot convert non-pubsub PUSH frame to RESP2 frame.",
+    )),
+    Resp3Frame::BlobString { data, .. } => Ok(Resp2Frame::BulkString(data)),
+    Resp3Frame::BlobError { data, .. } => Err(RedisProtocolError::new(
+      RedisProtocolErrorKind::Unknown,
+      "Cannot convert BlobError to RESP2 frame.",
+    )),
+    Resp3Frame::BigNumber { data, .. } => Ok(Resp2Frame::BulkString(data)),
+    Resp3Frame::Boolean { data, .. } => {
+      if data {
+        Ok(Resp2Frame::BulkString("true".into()))
+      } else {
+        Ok(Resp2Frame::BulkString("false".into()))
+      }
+    }
+    Resp3Frame::Number { data, .. } => Ok(Resp2Frame::Integer(data)),
+    Resp3Frame::Double { data, .. } => Ok(Resp2Frame::BulkString(data.to_string().into_bytes())),
+    Resp3Frame::VerbatimString { data, .. } => Ok(Resp2Frame::BulkString(data.into_bytes())),
+    Resp3Frame::SimpleError { data, .. } => Ok(Resp2Frame::Error(data)),
+    Resp3Frame::SimpleString { data, .. } => Ok(Resp2Frame::SimpleString(data)),
+    Resp3Frame::Set { data, .. } => {
+      let mut out = Vec::with_capacity(data.len());
+      for frame in data.into_iter() {
+        out.push(resp3_frame_to_resp2(frame)?);
+      }
+      Ok(Resp2Frame::Array(out))
+    }
+    Resp3Frame::Map { data, .. } => Err(RedisProtocolError::new(
+      RedisProtocolErrorKind::Unknown,
+      "Cannot convert Map to RESP2 frame.",
+    )),
+    Resp3Frame::Null => Ok(Resp2Frame::Null),
+    Resp3Frame::ChunkedString(_) => Err(RedisProtocolError::new(
+      RedisProtocolErrorKind::Unknown,
+      "Cannot convert ChunkedString to RESP2 frame.",
+    )),
+    Resp3Frame::Hello { .. } => Err(RedisProtocolError::new(
+      RedisProtocolErrorKind::Unknown,
+      "Cannot convert HELLO to RESP2 frame.",
+    )),
+  }
+}
+
 pub fn check_offset(x: &(&mut [u8], usize)) -> Result<(), GenError> {
   if x.1 > x.0.len() {
+    error!("Invalid offset of {} with buf len {}", x.1, x.0.len());
     Err(GenError::InvalidOffset)
   } else {
     Ok(())
@@ -110,6 +326,16 @@ fn crc16_xmodem(key: &str) -> u16 {
 }
 
 /// Map a Redis key to its cluster key slot.
+///
+/// ```ignore
+/// $ redis-cli -p 30001 cluster keyslot "8xjx7vWrfPq54mKfFD3Y1CcjjofpnAcQ"
+/// (integer) 5458
+/// ```
+///
+/// ```no_run
+/// # use redis_protocol::redis_keyslot;
+/// assert_eq!(redis_keyslot("8xjx7vWrfPq54mKfFD3Y1CcjjofpnAcQ"), 5458);
+/// ```
 pub fn redis_keyslot(key: &str) -> u16 {
   let (mut i, mut j): (Option<usize>, Option<usize>) = (None, None);
 

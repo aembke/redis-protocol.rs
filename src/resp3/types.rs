@@ -1,16 +1,19 @@
 use crate::resp3::utils as resp3_utils;
 use crate::utils;
-use bytes::buf::Chain;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use float_cmp::approx_eq;
 use resp3::utils::reconstruct_map;
 use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::convert::{TryFrom, TryInto};
 use std::hash::{Hash, Hasher};
 use std::mem;
 use std::str;
 use types::{Redirection, RedisProtocolError, RedisProtocolErrorKind, CRLF};
+
+#[cfg(feature = "index-map")]
+use indexmap::{IndexMap, IndexSet};
 
 /// Byte prefix before a simple string type.
 pub const SIMPLE_STRING_BYTE: u8 = b'+';
@@ -75,6 +78,23 @@ pub const EMPTY_SPACE: &'static str = " ";
 /// Byte representation of `AUTH`.
 pub const AUTH: &'static str = "AUTH";
 
+/// Additional information returned alongside a frame.
+#[cfg(not(feature = "index-map"))]
+pub type Attributes = HashMap<Frame, Frame>;
+#[cfg(not(feature = "index-map"))]
+pub type FrameMap = HashMap<Frame, Frame>;
+#[cfg(not(feature = "index-map"))]
+pub type FrameSet = HashSet<Frame>;
+
+/// Additional information returned alongside a frame.
+#[cfg(feature = "index-map")]
+pub type Attributes = IndexMap<Frame, Frame>;
+
+#[cfg(feature = "index-map")]
+pub type FrameMap = IndexMap<Frame, Frame>;
+#[cfg(feature = "index-map")]
+pub type FrameSet = IndexSet<Frame>;
+
 /// Enum describing the byte ordering for numbers and doubles when cast to byte slices.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ByteOrder {
@@ -123,10 +143,18 @@ pub enum VerbatimStringFormat {
 }
 
 impl VerbatimStringFormat {
-  pub fn to_str(&self) -> &'static str {
+  pub(crate) fn to_str(&self) -> &'static str {
     match *self {
       VerbatimStringFormat::Text => "txt",
       VerbatimStringFormat::Markdown => "mkd",
+    }
+  }
+
+  pub(crate) fn encode_len(&self) -> usize {
+    match *self {
+      // the colon suffix is included here
+      VerbatimStringFormat::Text => 4,
+      VerbatimStringFormat::Markdown => 4,
     }
   }
 }
@@ -159,6 +187,14 @@ impl FrameKind {
   pub fn is_aggregate_type(&self) -> bool {
     match *self {
       FrameKind::Array | FrameKind::Set | FrameKind::Map => true,
+      _ => false,
+    }
+  }
+
+  /// Whether or not the frame is an aggregate type or blob string.
+  pub fn is_streaming_type(&self) -> bool {
+    match *self {
+      FrameKind::Array | FrameKind::Set | FrameKind::Map | FrameKind::BlobString => true,
       _ => false,
     }
   }
@@ -257,45 +293,74 @@ impl FrameKind {
 /// <https://github.com/antirez/RESP3/blob/master/spec.md>
 #[derive(Clone, Debug)]
 pub enum Frame {
-  /// An array of frames, arbitrarily nested.
-  Array(Vec<Frame>),
   /// A binary-safe blob.
-  BlobString(Vec<u8>),
+  BlobString {
+    data: Vec<u8>,
+    attributes: Option<Attributes>,
+  },
+  /// A binary-safe blob representing an error.
+  BlobError {
+    data: Vec<u8>,
+    attributes: Option<Attributes>,
+  },
   /// A small non binary-safe string.
-  SimpleString(String),
+  SimpleString {
+    data: String,
+    attributes: Option<Attributes>,
+  },
   /// A small non binary-safe string representing an error.
-  SimpleError(String),
-  /// A signed 64 bit integer.
-  Number(i64),
+  SimpleError {
+    data: String,
+    attributes: Option<Attributes>,
+  },
+  /// A boolean type.
+  Boolean { data: bool, attributes: Option<Attributes> },
   /// A null type.
   Null,
-  /// A boolean type.
-  Boolean(bool),
+  /// A signed 64 bit integer.
+  Number { data: i64, attributes: Option<Attributes> },
   /// A signed 64 bit floating point number.
-  Double(f64),
-  /// A binary-safe blob representing an error.
-  BlobError(Vec<u8>),
+  Double { data: f64, attributes: Option<Attributes> },
+  /// A large number not representable as a `Number` or `Double`.
+  ///
+  /// This library does not attempt to parse this, nor does it offer any utilities to do so.
+  BigNumber {
+    data: Vec<u8>,
+    attributes: Option<Attributes>,
+  },
   /// A binary-safe string to be displayed without any escaping or filtering.
-  VerbatimString { data: String, format: VerbatimStringFormat },
+  VerbatimString {
+    data: String,
+    format: VerbatimStringFormat,
+    attributes: Option<Attributes>,
+  },
+  /// An array of frames, arbitrarily nested.
+  Array {
+    data: Vec<Frame>,
+    attributes: Option<Attributes>,
+  },
   /// An unordered map of key-value pairs.
   ///
   /// According to the spec keys can be any other RESP3 data type. However, it doesn't make sense to implement `Hash` for certain Rust data types like
   /// `HashMap`, `Vec`, `HashSet`, etc, so this library limits the possible data types for keys to only those that can be hashed in a semi-sane way.
   ///
   /// For example, attempting to create a `Frame::Map<HashMap<Frame::Set<HashSet<Frame>>, Frame::Foo>>` from bytes will panic.
-  Map(HashMap<Frame, Frame>),
+  Map {
+    data: FrameMap,
+    attributes: Option<Attributes>,
+  },
   /// An unordered collection of other frames with a uniqueness constraint.
-  Set(HashSet<Frame>),
-  /// Additional information to be returned when parsing other data types.
-  Attribute(HashMap<Frame, Frame>),
+  Set {
+    data: FrameSet,
+    attributes: Option<Attributes>,
+  },
   /// Out-of-band data to be returned to the caller if necessary.
-  Push(Vec<Frame>),
+  Push {
+    data: Vec<Frame>,
+    attributes: Option<Attributes>,
+  },
   /// A special frame type used when first connecting to the server to describe the protocol version and optional credentials.
   Hello { version: RespVersion, auth: Option<Auth> },
-  /// A large number not representable as a `Number` or `Double`.
-  ///
-  /// This library does not attempt to parse this, nor does it offer any utilities to do so.
-  BigNumber(Vec<u8>),
   /// One chunk of a streaming string.
   ChunkedString(Vec<u8>),
 }
@@ -306,20 +371,22 @@ impl Hash for Frame {
     self.kind().hash_prefix().hash(state);
 
     match *self {
-      BlobString(ref b) => b.hash(state),
-      SimpleString(ref s) => s.hash(state),
-      SimpleError(ref s) => s.hash(state),
-      Number(ref i) => i.hash(state),
+      BlobString { ref data, .. } => data.hash(state),
+      SimpleString { ref data, .. } => data.hash(state),
+      SimpleError { ref data, .. } => data.hash(state),
+      Number { ref data, .. } => data.hash(state),
       Null => NULL.hash(state),
-      Double(ref f) => f.to_bits().hash(state),
-      Boolean(ref b) => b.hash(state),
-      BlobError(ref b) => b.hash(state),
-      VerbatimString { ref data, ref format } => {
+      Double { ref data, .. } => data.to_string().hash(state),
+      Boolean { ref data, .. } => data.hash(state),
+      BlobError { ref data, .. } => data.hash(state),
+      VerbatimString {
+        ref data, ref format, ..
+      } => {
         format.hash(state);
         data.hash(state);
       }
-      ChunkedString(ref b) => b.hash(state),
-      BigNumber(ref b) => b.hash(state),
+      ChunkedString(ref data) => data.hash(state),
+      BigNumber { ref data, .. } => data.hash(state),
       _ => panic!("Invalid RESP3 data type to use as hash key."),
     };
   }
@@ -334,65 +401,168 @@ impl PartialEq for Frame {
         ChunkedString(ref _b) => b == _b,
         _ => false,
       },
-      Array(ref b) => match *other {
-        Array(ref _b) => b == _b,
-        _ => false,
-      },
-      BlobString(ref b) => match *other {
-        BlobString(ref _b) => b == _b,
-        _ => false,
-      },
-      SimpleString(ref s) => match *other {
-        SimpleString(ref _s) => s == _s,
-        _ => false,
-      },
-      SimpleError(ref s) => match *other {
-        SimpleError(ref _s) => s == _s,
-        _ => false,
-      },
-      Number(ref i) => match *other {
-        Number(ref _i) => i == _i,
-        _ => false,
-      },
+      Array {
+        ref data,
+        ref attributes,
+      } => {
+        let (_data, _attributes) = (data, attributes);
+        match *other {
+          Array {
+            ref data,
+            ref attributes,
+          } => data == _data && _attributes == _attributes,
+          _ => false,
+        }
+      }
+      BlobString {
+        ref data,
+        ref attributes,
+      } => {
+        let (_data, _attributes) = (data, attributes);
+        match *other {
+          BlobString {
+            ref data,
+            ref attributes,
+          } => data == _data && _attributes == _attributes,
+          _ => false,
+        }
+      }
+      SimpleString {
+        ref data,
+        ref attributes,
+      } => {
+        let (_data, _attributes) = (data, attributes);
+        match *other {
+          SimpleString {
+            ref data,
+            ref attributes,
+          } => data == _data && _attributes == _attributes,
+          _ => false,
+        }
+      }
+      SimpleError {
+        ref data,
+        ref attributes,
+      } => {
+        let (_data, _attributes) = (data, attributes);
+        match *other {
+          SimpleError {
+            ref data,
+            ref attributes,
+          } => data == _data && _attributes == _attributes,
+          _ => false,
+        }
+      }
+      Number {
+        ref data,
+        ref attributes,
+      } => {
+        let (_data, _attributes) = (data, attributes);
+        match *other {
+          Number {
+            ref data,
+            ref attributes,
+          } => data == _data && _attributes == _attributes,
+          _ => false,
+        }
+      }
       Null => match *other {
         Null => true,
         _ => false,
       },
-      Boolean(ref b) => match *other {
-        Boolean(ref _b) => b == _b,
-        _ => false,
-      },
-      Double(ref f) => match *other {
-        Double(ref _f) => approx_eq!(f64, *f, *_f),
-        _ => false,
-      },
-      BlobError(ref b) => match *other {
-        BlobError(ref _b) => b == _b,
-        _ => false,
-      },
-      VerbatimString { ref data, ref format } => {
-        let (_data, _format) = (data, format);
+      Boolean {
+        ref data,
+        ref attributes,
+      } => {
+        let (_data, _attributes) = (data, attributes);
         match *other {
-          VerbatimString { ref data, ref format } => _data == data && _format == format,
+          Boolean {
+            ref data,
+            ref attributes,
+          } => data == _data && _attributes == _attributes,
           _ => false,
         }
       }
-      Map(ref m) => match *other {
-        Map(ref _m) => m == _m,
-        _ => false,
-      },
-      Set(ref s) => match *other {
-        Set(ref _s) => s == _s,
-        _ => false,
-      },
-      Attribute(ref m) => match *other {
-        Attribute(ref _m) => m == _m,
-        _ => false,
-      },
-      Push(ref a) => match *other {
-        Push(ref _a) => a == _a,
-        _ => false,
-      },
+      Double {
+        ref data,
+        ref attributes,
+      } => {
+        let (_data, _attributes) = (data, attributes);
+        match *other {
+          Double {
+            ref data,
+            ref attributes,
+          } => data == _data && _attributes == _attributes,
+          _ => false,
+        }
+      }
+      BlobError {
+        ref data,
+        ref attributes,
+      } => {
+        let (_data, _attributes) = (data, attributes);
+        match *other {
+          BlobError {
+            ref data,
+            ref attributes,
+          } => data == _data && _attributes == _attributes,
+          _ => false,
+        }
+      }
+      VerbatimString {
+        ref data,
+        ref format,
+        ref attributes,
+      } => {
+        let (_data, _format, _attributes) = (data, format, attributes);
+        match *other {
+          VerbatimString {
+            ref data,
+            ref format,
+            ref attributes,
+          } => _data == data && _format == format && attributes == _attributes,
+          _ => false,
+        }
+      }
+      Map {
+        ref data,
+        ref attributes,
+      } => {
+        let (_data, _attributes) = (data, attributes);
+        match *other {
+          Map {
+            ref data,
+            ref attributes,
+          } => data == _data && _attributes == _attributes,
+          _ => false,
+        }
+      }
+      Set {
+        ref data,
+        ref attributes,
+      } => {
+        let (_data, _attributes) = (data, attributes);
+        match *other {
+          Set {
+            ref data,
+            ref attributes,
+          } => data == _data && _attributes == _attributes,
+          _ => false,
+        }
+      }
+      Push {
+        ref data,
+        ref attributes,
+      } => {
+        let (_data, _attributes) = (data, attributes);
+        match *other {
+          Push {
+            ref data,
+            ref attributes,
+          } => data == _data && _attributes == _attributes,
+          _ => false,
+        }
+      }
       Hello { ref version, ref auth } => {
         let (_version, _auth) = (version, auth);
         match *other {
@@ -400,35 +570,369 @@ impl PartialEq for Frame {
           _ => false,
         }
       }
-      BigNumber(ref b) => match *other {
-        BigNumber(ref _b) => b == _b,
-        _ => false,
-      },
+      BigNumber {
+        ref data,
+        ref attributes,
+      } => {
+        let (_data, _attributes) = (data, attributes);
+        match *other {
+          BigNumber {
+            ref data,
+            ref attributes,
+          } => data == _data && _attributes == _attributes,
+          _ => false,
+        }
+      }
     }
   }
 }
 
 impl Eq for Frame {}
 
+impl TryFrom<(FrameKind, Vec<u8>)> for Frame {
+  type Error = RedisProtocolError;
+
+  fn try_from((kind, value): (FrameKind, Vec<u8>)) -> Result<Self, Self::Error> {
+    let frame = match kind {
+      FrameKind::BlobString => Frame::BlobString {
+        data: value,
+        attributes: None,
+      },
+      FrameKind::BlobError => Frame::BlobError {
+        data: value,
+        attributes: None,
+      },
+      FrameKind::BigNumber => Frame::BigNumber {
+        data: value,
+        attributes: None,
+      },
+      FrameKind::ChunkedString => Frame::ChunkedString(value),
+      _ => {
+        return Err(RedisProtocolError::new(
+          RedisProtocolErrorKind::Unknown,
+          "Cannot convert to Frame.",
+        ))
+      }
+    };
+
+    Ok(frame)
+  }
+}
+
+impl TryFrom<(FrameKind, Vec<Frame>)> for Frame {
+  type Error = RedisProtocolError;
+
+  fn try_from((kind, data): (FrameKind, Vec<Frame>)) -> Result<Self, Self::Error> {
+    let frame = match kind {
+      FrameKind::Array => Frame::Array { data, attributes: None },
+      FrameKind::Push => Frame::Push { data, attributes: None },
+      _ => {
+        return Err(RedisProtocolError::new(
+          RedisProtocolErrorKind::Unknown,
+          "Cannot convert to Frame.",
+        ))
+      }
+    };
+
+    Ok(frame)
+  }
+}
+
+impl TryFrom<(FrameKind, VecDeque<Frame>)> for Frame {
+  type Error = RedisProtocolError;
+
+  fn try_from((kind, value): (FrameKind, VecDeque<Frame>)) -> Result<Self, Self::Error> {
+    let data: Vec<Frame> = value.into_iter().collect();
+
+    let frame = match kind {
+      FrameKind::Array => Frame::Array { data, attributes: None },
+      FrameKind::Push => Frame::Push { data, attributes: None },
+      _ => {
+        return Err(RedisProtocolError::new(
+          RedisProtocolErrorKind::Unknown,
+          "Cannot convert to Frame.",
+        ))
+      }
+    };
+
+    Ok(frame)
+  }
+}
+
+impl TryFrom<HashMap<Frame, Frame>> for Frame {
+  type Error = RedisProtocolError;
+
+  fn try_from(value: HashMap<Frame, Frame>) -> Result<Self, Self::Error> {
+    Ok(Frame::Map {
+      data: resp3_utils::hashmap_to_frame_map(value),
+      attributes: None,
+    })
+  }
+}
+
+impl TryFrom<HashSet<Frame>> for Frame {
+  type Error = RedisProtocolError;
+
+  fn try_from(value: HashSet<Frame>) -> Result<Self, Self::Error> {
+    Ok(Frame::Set {
+      data: resp3_utils::hashset_to_frame_set(value),
+      attributes: None,
+    })
+  }
+}
+
+#[cfg(feature = "index-map")]
+impl TryFrom<IndexMap<Frame, Frame>> for Frame {
+  type Error = RedisProtocolError;
+
+  fn try_from(value: IndexMap<Frame, Frame>) -> Result<Self, Self::Error> {
+    Ok(Frame::Map {
+      data: value,
+      attributes: None,
+    })
+  }
+}
+
+#[cfg(feature = "index-map")]
+impl TryFrom<IndexSet<Frame>> for Frame {
+  type Error = RedisProtocolError;
+
+  fn try_from(value: IndexSet<Frame>) -> Result<Self, Self::Error> {
+    Ok(Frame::Set {
+      data: value,
+      attributes: None,
+    })
+  }
+}
+
+impl From<i64> for Frame {
+  fn from(value: i64) -> Self {
+    Frame::Number {
+      data: value,
+      attributes: None,
+    }
+  }
+}
+
+impl From<bool> for Frame {
+  fn from(value: bool) -> Self {
+    Frame::Boolean {
+      data: value,
+      attributes: None,
+    }
+  }
+}
+
+impl TryFrom<f64> for Frame {
+  type Error = RedisProtocolError;
+
+  fn try_from(value: f64) -> Result<Self, Self::Error> {
+    if value.is_nan() {
+      Err(RedisProtocolError::new(
+        RedisProtocolErrorKind::Unknown,
+        "Cannot cast NaN to double.",
+      ))
+    } else {
+      Ok(Frame::Double {
+        data: value,
+        attributes: None,
+      })
+    }
+  }
+}
+
+impl TryFrom<(FrameKind, String)> for Frame {
+  type Error = RedisProtocolError;
+
+  fn try_from((kind, value): (FrameKind, String)) -> Result<Self, Self::Error> {
+    let frame = match kind {
+      FrameKind::SimpleError => Frame::SimpleError {
+        data: value,
+        attributes: None,
+      },
+      FrameKind::SimpleString => Frame::SimpleString {
+        data: value,
+        attributes: None,
+      },
+      FrameKind::BlobError => Frame::BlobError {
+        data: value.into_bytes(),
+        attributes: None,
+      },
+      FrameKind::BlobString => Frame::BlobString {
+        data: value.into_bytes(),
+        attributes: None,
+      },
+      FrameKind::BigNumber => Frame::BigNumber {
+        data: value.into_bytes(),
+        attributes: None,
+      },
+      FrameKind::ChunkedString => Frame::ChunkedString(value.into_bytes()),
+      _ => {
+        return Err(RedisProtocolError::new(
+          RedisProtocolErrorKind::Unknown,
+          "Cannot convert to Frame.",
+        ))
+      }
+    };
+
+    Ok(frame)
+  }
+}
+
+impl<'a> TryFrom<(FrameKind, &'a str)> for Frame {
+  type Error = RedisProtocolError;
+
+  fn try_from((kind, value): (FrameKind, &'a str)) -> Result<Self, Self::Error> {
+    (kind, value.to_owned()).try_into()
+  }
+}
+
 impl Frame {
+  /// Whether or not the frame can be used as a key in a `HashMap` or `HashSet`.
+  ///
+  /// Not all frame types can be hashed, and trying to do so can panic. This function can be used to handle this gracefully.
+  pub fn can_hash(&self) -> bool {
+    match self.kind() {
+      FrameKind::BlobString
+      | FrameKind::BlobError
+      | FrameKind::SimpleString
+      | FrameKind::SimpleError
+      | FrameKind::Number
+      | FrameKind::Double
+      | FrameKind::Boolean
+      | FrameKind::Null
+      | FrameKind::ChunkedString
+      | FrameKind::EndStream
+      | FrameKind::VerbatimString
+      | FrameKind::BigNumber => true,
+      _ => false,
+    }
+  }
+
+  /// Read the attributes attached to the frame.
+  pub fn attributes(&self) -> Option<&Attributes> {
+    let attributes = match *self {
+      Frame::Array { ref attributes, .. } => attributes,
+      Frame::Push { ref attributes, .. } => attributes,
+      Frame::BlobString { ref attributes, .. } => attributes,
+      Frame::BlobError { ref attributes, .. } => attributes,
+      Frame::BigNumber { ref attributes, .. } => attributes,
+      Frame::Boolean { ref attributes, .. } => attributes,
+      Frame::Number { ref attributes, .. } => attributes,
+      Frame::Double { ref attributes, .. } => attributes,
+      Frame::VerbatimString { ref attributes, .. } => attributes,
+      Frame::SimpleError { ref attributes, .. } => attributes,
+      Frame::SimpleString { ref attributes, .. } => attributes,
+      Frame::Set { ref attributes, .. } => attributes,
+      Frame::Map { ref attributes, .. } => attributes,
+      Frame::Null | Frame::ChunkedString(_) | Frame::Hello { .. } => return None,
+    };
+
+    attributes.as_ref()
+  }
+
+  /// Take the attributes off this frame.
+  pub fn take_attributes(&mut self) -> Option<Attributes> {
+    let attributes = match *self {
+      Frame::Array { ref mut attributes, .. } => attributes,
+      Frame::Push { ref mut attributes, .. } => attributes,
+      Frame::BlobString { ref mut attributes, .. } => attributes,
+      Frame::BlobError { ref mut attributes, .. } => attributes,
+      Frame::BigNumber { ref mut attributes, .. } => attributes,
+      Frame::Boolean { ref mut attributes, .. } => attributes,
+      Frame::Number { ref mut attributes, .. } => attributes,
+      Frame::Double { ref mut attributes, .. } => attributes,
+      Frame::VerbatimString { ref mut attributes, .. } => attributes,
+      Frame::SimpleError { ref mut attributes, .. } => attributes,
+      Frame::SimpleString { ref mut attributes, .. } => attributes,
+      Frame::Set { ref mut attributes, .. } => attributes,
+      Frame::Map { ref mut attributes, .. } => attributes,
+      Frame::Null | Frame::ChunkedString(_) | Frame::Hello { .. } => return None,
+    };
+
+    attributes.take()
+  }
+
+  /// Read a mutable reference to any attributes attached to the frame.
+  pub fn attributes_mut(&mut self) -> Option<&mut Attributes> {
+    let attributes = match *self {
+      Frame::Array { ref mut attributes, .. } => attributes,
+      Frame::Push { ref mut attributes, .. } => attributes,
+      Frame::BlobString { ref mut attributes, .. } => attributes,
+      Frame::BlobError { ref mut attributes, .. } => attributes,
+      Frame::BigNumber { ref mut attributes, .. } => attributes,
+      Frame::Boolean { ref mut attributes, .. } => attributes,
+      Frame::Number { ref mut attributes, .. } => attributes,
+      Frame::Double { ref mut attributes, .. } => attributes,
+      Frame::VerbatimString { ref mut attributes, .. } => attributes,
+      Frame::SimpleError { ref mut attributes, .. } => attributes,
+      Frame::SimpleString { ref mut attributes, .. } => attributes,
+      Frame::Set { ref mut attributes, .. } => attributes,
+      Frame::Map { ref mut attributes, .. } => attributes,
+      Frame::Null | Frame::ChunkedString(_) | Frame::Hello { .. } => return None,
+    };
+
+    attributes.as_mut()
+  }
+
+  /// Attempt to add attributes to the frame, extending the existing attributes if needed.
+  pub fn add_attributes(&mut self, attributes: Attributes) -> Result<(), RedisProtocolError> {
+    let _attributes = match *self {
+      Frame::Array { ref mut attributes, .. } => attributes,
+      Frame::Push { ref mut attributes, .. } => attributes,
+      Frame::BlobString { ref mut attributes, .. } => attributes,
+      Frame::BlobError { ref mut attributes, .. } => attributes,
+      Frame::BigNumber { ref mut attributes, .. } => attributes,
+      Frame::Boolean { ref mut attributes, .. } => attributes,
+      Frame::Number { ref mut attributes, .. } => attributes,
+      Frame::Double { ref mut attributes, .. } => attributes,
+      Frame::VerbatimString { ref mut attributes, .. } => attributes,
+      Frame::SimpleError { ref mut attributes, .. } => attributes,
+      Frame::SimpleString { ref mut attributes, .. } => attributes,
+      Frame::Set { ref mut attributes, .. } => attributes,
+      Frame::Map { ref mut attributes, .. } => attributes,
+      Frame::Null | Frame::ChunkedString(_) | Frame::Hello { .. } => {
+        return Err(RedisProtocolError::new(
+          RedisProtocolErrorKind::Unknown,
+          format!("{:?} cannot have attributes.", self.kind()),
+        ))
+      }
+    };
+
+    if let Some(_attributes) = _attributes.as_mut() {
+      _attributes.extend(attributes.into_iter());
+    } else {
+      *_attributes = Some(attributes);
+    }
+
+    Ok(())
+  }
+
   /// Create a new `Frame` that terminates a stream.
   pub fn new_end_stream() -> Self {
     Frame::ChunkedString(vec![])
   }
 
-  /// A context-aware length function that returns the length of the inner frame.
+  /// A context-aware length function that returns the length of the inner frame contents.
+  ///
+  /// This does not return the encoded length, but rather the length of the contents of the frame such as the number of elements in an array, the size of any inner buffers, etc.
+  ///
+  /// Note: `Null` has a length of 0 and `Hello`, `Number`, `Double`, and `Boolean` have a length of 1.
   pub fn len(&self) -> usize {
     use self::Frame::*;
 
     match *self {
-      Array(ref a) | Push(ref a) => a.len(),
-      BlobString(ref b) | BlobError(ref b) | BigNumber(ref b) | ChunkedString(ref b) => b.len(),
-      SimpleString(ref s) | SimpleError(ref s) => s.len(),
-      Number(_) | Double(_) | Boolean(_) => 1,
+      Array { ref data, .. } | Push { ref data, .. } => data.len(),
+      BlobString { ref data, .. }
+      | BlobError { ref data, .. }
+      | BigNumber { ref data, .. }
+      | ChunkedString(ref data) => data.len(),
+      SimpleString { ref data, .. } | SimpleError { ref data, .. } => data.len(),
+      Number { .. } | Double { .. } | Boolean { .. } => 1,
       Null => 0,
       VerbatimString { ref data, .. } => data.as_bytes().len(),
-      Map(ref m) | Attribute(ref m) => m.len(),
-      Set(ref s) => s.len(),
+      Map { ref data, .. } => data.len(),
+      Set { ref data, .. } => data.len(),
       Hello { .. } => 1,
     }
   }
@@ -443,30 +947,51 @@ impl Frame {
     use self::Frame::*;
 
     match *self {
-      Array(_) => FrameKind::Array,
-      BlobString(_) => FrameKind::BlobString,
-      SimpleString(_) => FrameKind::SimpleString,
-      SimpleError(_) => FrameKind::SimpleError,
-      Number(_) => FrameKind::Number,
+      Array { .. } => FrameKind::Array,
+      BlobString { .. } => FrameKind::BlobString,
+      SimpleString { .. } => FrameKind::SimpleString,
+      SimpleError { .. } => FrameKind::SimpleError,
+      Number { .. } => FrameKind::Number,
       Null => FrameKind::Null,
-      Double(_) => FrameKind::Double,
-      BlobError(_) => FrameKind::BlobError,
+      Double { .. } => FrameKind::Double,
+      BlobError { .. } => FrameKind::BlobError,
       VerbatimString { .. } => FrameKind::VerbatimString,
-      Boolean(_) => FrameKind::Boolean,
-      Map(_) => FrameKind::Map,
-      Set(_) => FrameKind::Set,
-      Attribute(_) => FrameKind::Attribute,
-      Push(_) => FrameKind::Push,
+      Boolean { .. } => FrameKind::Boolean,
+      Map { .. } => FrameKind::Map,
+      Set { .. } => FrameKind::Set,
+      Push { .. } => FrameKind::Push,
       Hello { .. } => FrameKind::Hello,
-      BigNumber(_) => FrameKind::BigNumber,
-      ChunkedString(_) => FrameKind::ChunkedString,
+      BigNumber { .. } => FrameKind::BigNumber,
+      ChunkedString(ref inner) => {
+        if inner.is_empty() {
+          FrameKind::EndStream
+        } else {
+          FrameKind::ChunkedString
+        }
+      }
+    }
+  }
+
+  /// Whether or not the frame represents an array of frames.
+  pub fn is_array(&self) -> bool {
+    match *self {
+      Frame::Array { .. } => true,
+      _ => false,
+    }
+  }
+
+  /// Whether or not the frame represents data pushed to the client from the server.
+  pub fn is_push(&self) -> bool {
+    match *self {
+      Frame::Push { .. } => true,
+      _ => false,
     }
   }
 
   /// Whether or not the frame is a boolean value.
   pub fn is_boolean(&self) -> bool {
     match *self {
-      Frame::Boolean(_) => true,
+      Frame::Boolean { .. } => true,
       _ => false,
     }
   }
@@ -474,7 +999,7 @@ impl Frame {
   /// Whether or not the frame represents an error.
   pub fn is_error(&self) -> bool {
     match *self {
-      Frame::BlobError(_) | Frame::SimpleError(_) => true,
+      Frame::BlobError { .. } | Frame::SimpleError { .. } => true,
       _ => false,
     }
   }
@@ -482,7 +1007,7 @@ impl Frame {
   /// Whether or not the frame is an array, map, or set.
   pub fn is_aggregate_type(&self) -> bool {
     match *self {
-      Frame::Map(_) | Frame::Set(_) | Frame::Array(_) => true,
+      Frame::Map { .. } | Frame::Set { .. } | Frame::Array { .. } => true,
       _ => false,
     }
   }
@@ -490,7 +1015,7 @@ impl Frame {
   /// Whether or not the frame represents a `BlobString` or `BlobError`.
   pub fn is_blob(&self) -> bool {
     match *self {
-      Frame::BlobString(_) | Frame::BlobError(_) => true,
+      Frame::BlobString { .. } | Frame::BlobError { .. } => true,
       _ => false,
     }
   }
@@ -532,10 +1057,12 @@ impl Frame {
   /// Numbers and Doubles will not be cast to a string since that would require allocating.
   pub fn as_str(&self) -> Option<&str> {
     match *self {
-      Frame::SimpleError(ref s) | Frame::SimpleString(ref s) => Some(s),
-      Frame::BlobError(ref b) | Frame::BlobString(ref b) | Frame::BigNumber(ref b) => str::from_utf8(b).ok(),
+      Frame::SimpleError { ref data, .. } | Frame::SimpleString { ref data, .. } => Some(data),
+      Frame::BlobError { ref data, .. } | Frame::BlobString { ref data, .. } | Frame::BigNumber { ref data, .. } => {
+        str::from_utf8(data).ok()
+      }
       Frame::VerbatimString { ref data, .. } => Some(data),
-      Frame::ChunkedString(ref b) => str::from_utf8(b).ok(),
+      Frame::ChunkedString(ref data) => str::from_utf8(data).ok(),
       _ => None,
     }
   }
@@ -543,14 +1070,14 @@ impl Frame {
   /// Read the frame as a `String` if it can be parsed as a UTF-8 string.
   pub fn to_string(&self) -> Option<String> {
     match *self {
-      Frame::SimpleError(ref s) | Frame::SimpleString(ref s) => Some(s.to_owned()),
-      Frame::BlobError(ref b) | Frame::BlobString(ref b) | Frame::BigNumber(ref b) => {
-        String::from_utf8(b.to_vec()).ok()
+      Frame::SimpleError { ref data, .. } | Frame::SimpleString { ref data, .. } => Some(data.to_owned()),
+      Frame::BlobError { ref data, .. } | Frame::BlobString { ref data, .. } | Frame::BigNumber { ref data, .. } => {
+        String::from_utf8(data.to_vec()).ok()
       }
       Frame::VerbatimString { ref data, .. } => Some(data.to_owned()),
       Frame::ChunkedString(ref b) => String::from_utf8(b.to_vec()).ok(),
-      Frame::Double(ref f) => Some(f.to_string()),
-      Frame::Number(ref i) => Some(i.to_string()),
+      Frame::Double { ref data, .. } => Some(data.to_string()),
+      Frame::Number { ref data, .. } => Some(data.to_string()),
       _ => None,
     }
   }
@@ -560,8 +1087,10 @@ impl Frame {
   /// Number and Double will not be returned as a byte slice. Use [number_or_double_as_bytes](Self::number_or_double_as_bytes) instead.
   pub fn as_bytes(&self) -> Option<&[u8]> {
     match *self {
-      Frame::SimpleError(ref s) | Frame::SimpleString(ref s) => Some(s.as_bytes()),
-      Frame::BlobError(ref b) | Frame::BlobString(ref b) | Frame::BigNumber(ref b) => Some(b),
+      Frame::SimpleError { ref data, .. } | Frame::SimpleString { ref data, .. } => Some(data.as_bytes()),
+      Frame::BlobError { ref data, .. } | Frame::BlobString { ref data, .. } | Frame::BigNumber { ref data, .. } => {
+        Some(data)
+      }
       Frame::VerbatimString { ref data, .. } => Some(data.as_bytes()),
       Frame::ChunkedString(ref b) => Some(b),
       _ => None,
@@ -571,13 +1100,13 @@ impl Frame {
   /// Attempt the read the frame as bytes if the inner type is an `i64` or `f64`.
   pub fn number_or_double_as_bytes(&self, ordering: ByteOrder) -> Option<[u8; 8]> {
     match *self {
-      Frame::Double(ref f) => Some(match ordering {
-        ByteOrder::BigEndian => f.to_be_bytes(),
-        ByteOrder::LittleEndian => f.to_le_bytes(),
+      Frame::Double { ref data, .. } => Some(match ordering {
+        ByteOrder::BigEndian => data.to_be_bytes(),
+        ByteOrder::LittleEndian => data.to_le_bytes(),
       }),
-      Frame::Number(ref i) => Some(match ordering {
-        ByteOrder::BigEndian => i.to_be_bytes(),
-        ByteOrder::LittleEndian => i.to_le_bytes(),
+      Frame::Number { ref data, .. } => Some(match ordering {
+        ByteOrder::BigEndian => data.to_be_bytes(),
+        ByteOrder::LittleEndian => data.to_le_bytes(),
       }),
       _ => None,
     }
@@ -586,7 +1115,7 @@ impl Frame {
   /// Attempt to read the frame as an `i64` without casting.
   pub fn as_i64(&self) -> Option<i64> {
     match *self {
-      Frame::Number(ref i) => Some(*i),
+      Frame::Number { ref data, .. } => Some(*data),
       _ => None,
     }
   }
@@ -594,7 +1123,7 @@ impl Frame {
   /// Attempt to read the frame as an `f64` without casting.
   pub fn as_f64(&self) -> Option<f64> {
     match *self {
-      Frame::Double(ref f) => Some(*f),
+      Frame::Double { ref data, .. } => Some(*data),
       _ => None,
     }
   }
@@ -602,7 +1131,7 @@ impl Frame {
   /// Whether or not the frame represents a MOVED or ASK error.
   pub fn is_moved_or_ask_error(&self) -> bool {
     match *self {
-      Frame::SimpleError(ref s) => utils::is_cluster_error(s),
+      Frame::SimpleError { ref data, .. } => utils::is_cluster_error(data),
       _ => false,
     }
   }
@@ -610,31 +1139,15 @@ impl Frame {
   /// Attempt to parse the frame as a cluster redirection error.
   pub fn to_redirection(&self) -> Option<Redirection> {
     match *self {
-      Frame::SimpleError(ref s) => utils::read_cluster_error(s),
+      Frame::SimpleError { ref data, .. } => utils::read_cluster_error(data),
       _ => None,
-    }
-  }
-
-  /// Whether or not the frame is a Push frame.
-  pub fn is_push(&self) -> bool {
-    match *self {
-      Frame::Push(_) => true,
-      _ => false,
-    }
-  }
-
-  /// Whether or not the frame is an attribute map frame.
-  pub fn is_attribute(&self) -> bool {
-    match *self {
-      Frame::Attribute(_) => true,
-      _ => false,
     }
   }
 
   /// Whether or not the frame represents a publish-subscribe message, but not a pattern publish-subscribe message.
   pub fn is_normal_pubsub(&self) -> bool {
-    if let Frame::Push(ref frames) = *self {
-      unimplemented!()
+    if let Frame::Push { ref data, .. } = *self {
+      resp3_utils::is_normal_pubsub(data)
     } else {
       false
     }
@@ -642,8 +1155,8 @@ impl Frame {
 
   /// Whether or not the frame represents a message on a publish-subscribe channel.
   pub fn is_pubsub_message(&self) -> bool {
-    if let Frame::Push(ref frames) = *self {
-      unimplemented!()
+    if let Frame::Push { ref data, .. } = *self {
+      resp3_utils::is_normal_pubsub(data) || resp3_utils::is_pattern_pubsub(data)
     } else {
       false
     }
@@ -651,8 +1164,8 @@ impl Frame {
 
   /// Whether or not the frame represents a message on a publish-subscribe channel matched against a pattern subscription.
   pub fn is_pattern_pubsub_message(&self) -> bool {
-    if let Frame::Push(ref frames) = *self {
-      unimplemented!()
+    if let Frame::Push { ref data, .. } = *self {
+      resp3_utils::is_pattern_pubsub(data)
     } else {
       false
     }
@@ -660,10 +1173,14 @@ impl Frame {
 
   /// Attempt to parse the frame as a publish-subscribe message, returning the `(channel, message)` tuple
   /// if successful, or the original frame if the inner data is not a publish-subscribe message.
-  pub fn parse_as_pubsub(self) -> Result<(String, String), Self> {
+  pub fn parse_as_pubsub(self) -> Result<(Frame, Frame), Self> {
     if self.is_pubsub_message() {
-      if let Frame::Push(ref frames) = self {
-        unimplemented!()
+      if let Frame::Push { mut data, .. } = self {
+        // array len checked in `is_pubsub_message`
+        let message = data.pop().unwrap();
+        let channel = data.pop().unwrap();
+
+        Ok((channel, message))
       } else {
         warn!("Invalid pubsub frame. Expected a Push frame.");
         Err(self)
@@ -672,13 +1189,20 @@ impl Frame {
       Err(self)
     }
   }
+
+  /// Attempt to read the number of bytes needed to encode this frame.
+  pub fn encode_len(&self) -> Result<usize, RedisProtocolError> {
+    resp3_utils::encode_len(self).map_err(|e| e.into())
+  }
 }
 
 /// A helper struct for reading in streams of bytes such that the underlying bytes don't need to be in one continuous, growing block of memory.
 #[derive(Debug)]
 pub struct StreamedFrame {
-  /// The internal buffer of frames.
+  /// The internal buffer of frames and attributes.
   buffer: VecDeque<Frame>,
+  /// Any leading attributes before the stream starts.
+  pub attributes: Option<Attributes>,
   /// The type of frame to which this will eventually be cast.
   pub kind: FrameKind,
 }
@@ -687,26 +1211,44 @@ impl StreamedFrame {
   /// Create a new `StreamedFrame` from the first section of data in a streaming response.
   pub fn new(kind: FrameKind) -> Self {
     let buffer = VecDeque::new();
-    StreamedFrame { buffer, kind }
+    StreamedFrame {
+      buffer,
+      kind,
+      attributes: None,
+    }
   }
 
-  /// Convert the internal buffer into one frame matching `self.kind`.
-  pub fn into_frame(mut self) -> Result<Frame, RedisProtocolError> {
+  /// Convert the internal buffer into one frame matching `self.kind`, clearing the internal buffer.
+  pub fn into_frame(&mut self) -> Result<Frame, RedisProtocolError> {
+    if !self.kind.is_streaming_type() {
+      // try to catch invalid type errors early so the caller can modify the frame before we clear the buffer
+      return Err(RedisProtocolError::new(
+        RedisProtocolErrorKind::DecodeError,
+        "Only blob strings, sets, maps, and arrays can be streamed.",
+      ));
+    }
+
     if self.is_finished() {
       // the last frame is an empty chunked string when the stream is finished
       let _ = self.buffer.pop_back();
     }
+    let buffer = mem::replace(&mut self.buffer, VecDeque::new());
+    let attributes = self.attributes.take();
 
-    match self.kind {
-      FrameKind::ChunkedString => resp3_utils::reconstruct_blobstring(self.buffer),
-      FrameKind::Map => resp3_utils::reconstruct_map(self.buffer),
-      FrameKind::Set => resp3_utils::reconstruct_set(self.buffer),
-      FrameKind::Array => resp3_utils::reconstruct_array(self.buffer),
-      _ => Err(RedisProtocolError::new(
-        RedisProtocolErrorKind::DecodeError,
-        "Streaming frames only supported for chunked strings, maps, sets, and arrays.",
-      )),
-    }
+    let frame = match self.kind {
+      FrameKind::BlobString => resp3_utils::reconstruct_blobstring(buffer, attributes)?,
+      FrameKind::Map => resp3_utils::reconstruct_map(buffer, attributes)?,
+      FrameKind::Set => resp3_utils::reconstruct_set(buffer, attributes)?,
+      FrameKind::Array => resp3_utils::reconstruct_array(buffer, attributes)?,
+      _ => {
+        return Err(RedisProtocolError::new(
+          RedisProtocolErrorKind::DecodeError,
+          "Streaming frames only supported for blob strings, maps, sets, and arrays.",
+        ))
+      }
+    };
+
+    Ok(frame)
   }
 
   /// Add a frame to the internal buffer.
@@ -728,6 +1270,16 @@ pub enum DecodedFrame {
 }
 
 impl DecodedFrame {
+  /// Add attributes to the decoded frame, if possible.
+  pub fn add_attributes(&mut self, attributes: Attributes) -> Result<(), RedisProtocolError> {
+    let _ = match *self {
+      DecodedFrame::Streaming(ref mut inner) => inner.attributes = Some(attributes),
+      DecodedFrame::Complete(ref mut inner) => inner.add_attributes(attributes)?,
+    };
+
+    Ok(())
+  }
+
   /// Convert the decoded frame to a complete frame, returning an error if a streaming variant is found.
   pub fn into_complete_frame(self) -> Result<Frame, RedisProtocolError> {
     match self {
@@ -739,35 +1291,71 @@ impl DecodedFrame {
     }
   }
 
-  /// Whether or not the frame is a complete frame representing a map of attributes.
-  pub fn is_attribute(&self) -> bool {
+  /// Convert the decoded frame into a streaming frame, returning an error if a complete variant is found.
+  pub fn into_streaming_frame(self) -> Result<StreamedFrame, RedisProtocolError> {
+    match self {
+      DecodedFrame::Streaming(frame) => Ok(frame),
+      DecodedFrame::Complete(_) => Err(RedisProtocolError::new(
+        RedisProtocolErrorKind::DecodeError,
+        "Expected streamed frame.",
+      )),
+    }
+  }
+
+  /// Whether or not the decoded frame starts a stream.
+  pub fn is_streaming(&self) -> bool {
     match *self {
-      DecodedFrame::Complete(ref frame) => frame.is_attribute(),
+      DecodedFrame::Streaming(_) => true,
       _ => false,
     }
+  }
+
+  /// Whether or not the decoded frame is a complete frame.
+  pub fn is_complete(&self) -> bool {
+    !self.is_streaming()
   }
 }
 
 #[cfg(test)]
 mod tests {
   use super::*;
+  use resp3::utils::new_map;
   use std::str;
 
-  /*
   #[test]
   fn should_convert_basic_streaming_buffer_to_frame() {
-    let mut streaming_buf = StreamedFrame::new(FrameKind::BlobString, "foo".as_bytes(), 4);
-    streaming_buf.add_bytes("bar".as_bytes());
-    streaming_buf.add_bytes("baz".as_bytes());
-    streaming_buf.add_crlf();
-    let final_buffer = streaming_buf.into_bytes();
+    let mut streaming_buf = StreamedFrame::new(FrameKind::BlobString);
+    streaming_buf.add_frame((FrameKind::ChunkedString, "foo").try_into().unwrap());
+    streaming_buf.add_frame((FrameKind::ChunkedString, "bar").try_into().unwrap());
+    streaming_buf.add_frame((FrameKind::ChunkedString, "baz").try_into().unwrap());
+    streaming_buf.add_frame(Frame::new_end_stream());
+    let frame = streaming_buf
+      .into_frame()
+      .expect("Failed to build frame from chunked stream");
 
-    assert_eq!(final_buffer.len(), 12);
-    assert_eq!(final_buffer.capacity(), 14);
-    assert_eq!(
-      str::from_utf8(&final_buffer).unwrap(),
-      &format!("{}{}", BLOB_STRING_BYTE as char, "foobarbaz\r\n")
-    );
+    assert_eq!(frame.as_str(), Some("foobarbaz"));
   }
-   */
+
+  #[test]
+  fn should_convert_basic_streaming_buffer_to_frame_with_attributes() {
+    let mut attributes = new_map(None);
+    attributes.insert((FrameKind::SimpleString, "a").try_into().unwrap(), 1.into());
+    attributes.insert((FrameKind::SimpleString, "b").try_into().unwrap(), 2.into());
+    attributes.insert((FrameKind::SimpleString, "c").try_into().unwrap(), 3.into());
+
+    let mut streaming_buf = StreamedFrame::new(FrameKind::BlobString);
+    streaming_buf.attributes = Some(attributes.clone());
+
+    streaming_buf.add_frame((FrameKind::ChunkedString, "foo").try_into().unwrap());
+    streaming_buf.add_frame((FrameKind::ChunkedString, "bar").try_into().unwrap());
+    streaming_buf.add_frame((FrameKind::ChunkedString, "baz").try_into().unwrap());
+    streaming_buf.add_frame(Frame::new_end_stream());
+
+    let frame = streaming_buf
+      .into_frame()
+      .expect("Failed to build frame from chunked stream");
+
+    assert_eq!(frame.as_str(), Some("foobarbaz"));
+    assert_eq!(frame.attributes(), Some(&attributes));
+  }
 }

@@ -4,7 +4,6 @@ Redis Protocol
 [![LICENSE](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Build Status](https://travis-ci.org/aembke/redis-protocol.rs.svg?branch=master)](https://travis-ci.org/aembke/redis-protocol.rs)
 [![Crates.io](https://img.shields.io/crates/v/redis-protocol.svg)](https://crates.io/crates/redis-protocol)
-[![Coverage Status](https://coveralls.io/repos/github/aembke/redis-protocol.rs/badge.svg?branch=master)](https://coveralls.io/github/aembke/redis-protocol.rs?branch=master)
 [![API docs](https://docs.rs/redis-protocol/badge.svg)](https://docs.rs/redis-protocol)
 
 Structs and functions for implementing the [Redis protocol](https://redis.io/topics/protocol), built on [nom](https://github.com/Geal/nom) and designed to work easily with [Tokio](https://github.com/tokio-rs/tokio).
@@ -19,9 +18,10 @@ cargo add redis-protocol
 
 ## Features
 
+* Supports RESP2 and RESP3, including streaming frames.
 * Encode and decode with `BytesMut` or slices.
 * Parse publish-subscribe messages.
-* Support `MOVED` and `ASK` errors.
+* Support cluster redirection errors.
 * Implements cluster key hashing.
 
 ## Examples
@@ -30,7 +30,7 @@ cargo add redis-protocol
 extern crate redis_protocol;
 extern crate bytes;
 
-use redis_protocol::prelude::*;
+use redis_protocol::resp2::prelude::*;
 use bytes::BytesMut;
 
 fn main() {
@@ -44,28 +44,26 @@ fn main() {
   println!("Encoded {} bytes into buffer with contents {:?}", len, buf);
   
   let buf: BytesMut = "*3\r\n$3\r\nFoo\r\n$-1\r\n$3\r\nBar\r\n".into();
-  let (frame, consumed) = match decode_bytes(&buf) {
-    Ok((f, c)) => (f, c),
+  let (frame, consumed) = match decode(&buf) {
+    Ok(Some((f, c))) => (f, c),
+    Ok(None) => panic!("Incomplete frame."),
     Err(e) => panic!("Error parsing bytes: {:?}", e)
   };
-  
-  if let Some(frame) = frame {
-    println!("Parsed frame {:?} and consumed {} bytes", frame, consumed);
-  }else{
-    println!("Incomplete frame, parsed {} bytes", consumed);
-  }
+  println!("Parsed frame {:?} and consumed {} bytes", frame, consumed);
   
   let key = "foobarbaz";
   println!("Hash slot for {}: {}", key, redis_keyslot(key));
 }
 ```
 
-See the [encode](/src/encode.rs) and [decode](/src/decode.rs) tests for more examples.
+## IndexMap
+
+Enable the `index-map` feature to use [IndexMap](https://crates.io/crates/indexmap) instead of `HashMap` and `HashSet`. This is useful for testing and may also be useful to callers.
 
 ## Tests
 
 To run the unit tests:
 
 ```
-cargo test
+cargo test --features index-map
 ```
