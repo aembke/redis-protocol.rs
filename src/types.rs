@@ -1,13 +1,15 @@
 use crate::resp2::types::Frame as Resp2Frame;
 use crate::resp3::types::Frame as Resp3Frame;
 use cookie_factory::GenError;
-use nom::error::{ContextError, ErrorKind, ParseError};
+use nom::error::{ContextError, ErrorKind, FromExternalError, ParseError};
 use nom::{Err as NomError, Needed};
 use std::borrow::Borrow;
 use std::borrow::Cow;
-use std::fmt;
+use std::fmt::{self, Debug};
 use std::io::Error as IoError;
+use std::num::NonZeroUsize;
 use std::str;
+use types::RedisParseError::Nom;
 use utils;
 
 /// Terminating bytes between frames.
@@ -178,97 +180,78 @@ impl From<IoError> for RedisProtocolError {
   }
 }
 
+impl<I> From<RedisParseError<I>> for RedisProtocolError
+where
+  I: Debug,
+{
+  fn from(e: RedisParseError<I>) -> Self {
+    RedisProtocolError::new(RedisProtocolErrorKind::DecodeError, format!("{:?}", e))
+  }
+}
+
 /// A struct defining parse errors when decoding frames.
-pub struct RedisParseError<'a> {
-  pub input: Vec<&'a [u8]>,
-  pub context: &'static str,
-  pub message: Option<String>,
-  pub kind: Vec<ErrorKind>,
-  pub needed: Option<usize>,
+pub enum RedisParseError<I> {
+  Custom {
+    context: &'static str,
+    message: Cow<'static, str>,
+  },
+  Incomplete(Needed),
+  Nom(I, ErrorKind),
 }
 
-impl<'a> RedisParseError<'a> {
-  pub fn new<S: Into<String>>(ctx: &'static str, message: S, kind: Option<ErrorKind>) -> Self {
-    let kind = kind.map(|k| vec![k]).unwrap_or(Vec::new());
+impl<I> fmt::Debug for RedisParseError<I>
+where
+  I: Debug,
+{
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    match self {
+      RedisParseError::Custom {
+        ref context,
+        ref message,
+      } => write!(f, "{}: {}", context, message),
+      RedisParseError::Nom(input, kind) => write!(f, "{:?} at {:?}", kind, input),
+      RedisParseError::Incomplete(ref needed) => write!(f, "Incomplete({:?})", needed),
+    }
+  }
+}
 
-    RedisParseError {
-      input: Vec::new(),
+impl<I> RedisParseError<I> {
+  pub fn new_custom<S: Into<Cow<'static, str>>>(ctx: &'static str, message: S) -> Self {
+    RedisParseError::Custom {
       context: ctx,
-      message: Some(message.into()),
-      kind,
-      needed: None,
+      message: message.into(),
+    }
+  }
+
+  pub fn into_nom_error(self) -> nom::Err<RedisParseError<I>> {
+    match self {
+      RedisParseError::Incomplete(n) => nom::Err::Incomplete(n),
+      _ => nom::Err::Failure(self),
     }
   }
 }
 
-impl<'a> ParseError<&'a [u8]> for RedisParseError<'a> {
-  fn from_error_kind(input: &'a [u8], kind: ErrorKind) -> Self {
-    RedisParseError {
-      input: vec![input],
-      kind: vec![kind],
-      context: "Parse Error",
-      message: None,
-      needed: None,
-    }
+impl<I> ParseError<I> for RedisParseError<I> {
+  fn from_error_kind(input: I, kind: ErrorKind) -> Self {
+    RedisParseError::Nom(input, kind)
   }
 
-  fn append(input: &'a [u8], kind: ErrorKind, mut other: Self) -> Self {
-    other.input.push(input);
-    other.kind.push(kind);
-
+  fn append(_: I, _: ErrorKind, other: Self) -> Self {
     other
   }
 }
 
-impl<'a> ContextError<&'a [u8]> for RedisParseError<'a> {
-  fn add_context(input: &'a [u8], ctx: &'static str, mut other: Self) -> Self {
-    other.context = ctx;
-    other.input.push(input);
-    other
+impl<I, E> FromExternalError<I, E> for RedisParseError<I> {
+  fn from_external_error(input: I, kind: ErrorKind, e: E) -> Self {
+    RedisParseError::Nom(input, kind)
   }
 }
 
-impl<'a> From<NomError<nom::error::Error<&'a [u8]>>> for RedisParseError<'a> {
-  fn from(e: NomError<nom::error::Error<&[u8]>>) -> Self {
-    let (ctx, kind, input) = match e {
-      NomError::Failure(inner) => ("failure", inner.code, inner.input),
-      NomError::Error(inner) => ("error", inner.code, inner.input),
-      NomError::Incomplete(needed) => {
-        let needed = match needed {
-          Needed::Unknown => None,
-          Needed::Size(s) => Some(s.get()),
-        };
-
-        return RedisParseError {
-          input: vec![],
-          kind: vec![],
-          context: "incomplete",
-          message: None,
-          needed,
-        };
-      }
-    };
-
-    RedisParseError {
-      context: ctx,
-      kind: vec![kind],
-      input: vec![input],
-      message: Some("Parse Error".into()),
-      needed: None,
-    }
-  }
-}
-
-impl<'a> From<RedisParseError<'a>> for RedisProtocolError {
-  fn from(e: RedisParseError<'a>) -> Self {
-    let message = match e.message {
-      Some(ref msg) => msg,
-      None => "Parse Error",
-    };
-
-    RedisProtocolError {
-      kind: RedisProtocolErrorKind::DecodeError,
-      desc: Cow::Owned(format!("{}: {}", e.context, message)),
+impl<I> From<nom::Err<RedisParseError<I>>> for RedisParseError<I> {
+  fn from(e: NomError<RedisParseError<I>>) -> Self {
+    match e {
+      NomError::Incomplete(n) => RedisParseError::Incomplete(n),
+      NomError::Failure(e) | NomError::Error(e) => e,
     }
   }
 }
