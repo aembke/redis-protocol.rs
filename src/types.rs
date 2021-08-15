@@ -290,10 +290,9 @@ impl Redirection {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::utils::ZEROED_KB;
   use std::num::NonZeroUsize;
-  use utils::ZEROED_KB;
 
-  // gotta pad those coveralls stats...
   #[test]
   fn should_create_empty_error() {
     let e = RedisProtocolError::new_empty();

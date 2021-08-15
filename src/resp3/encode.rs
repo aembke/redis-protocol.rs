@@ -683,9 +683,9 @@ pub mod streaming {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::resp3::utils::{new_map, new_set};
   use crate::utils::ZEROED_KB;
   use bytes::{BufMut, Bytes};
-  use resp3::utils::{new_map, new_set};
   use std::convert::TryInto;
   use std::str;
 

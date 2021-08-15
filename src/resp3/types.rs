@@ -1316,7 +1316,7 @@ impl DecodedFrame {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use resp3::utils::new_map;
+  use crate::resp3::utils::new_map;
   use std::str;
 
   #[test]

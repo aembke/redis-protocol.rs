@@ -123,6 +123,7 @@ pub fn decode(buf: &[u8]) -> Result<Option<(Frame, usize)>, RedisProtocolError> 
 #[cfg(test)]
 mod tests {
   use super::*;
+  use bytes::BytesMut;
   use std::str;
 
   const PADDING: &'static str = "FOOBARBAZ";

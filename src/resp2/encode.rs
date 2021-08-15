@@ -116,16 +116,12 @@ pub fn encode_bytes(buf: &mut BytesMut, frame: &Frame) -> Result<usize, RedisPro
 #[cfg(test)]
 mod tests {
   use super::*;
-  use utils::*;
+  use crate::utils::*;
 
   const PADDING: &'static str = "foobar";
 
-  fn empty_bytes() -> BytesMut {
-    BytesMut::new()
-  }
-
   fn encode_and_verify_empty(input: &Frame, expected: &str) {
-    let mut buf = empty_bytes();
+    let mut buf = BytesMut::new();
 
     let len = match encode_bytes(&mut buf, input) {
       Ok(l) => l,
@@ -137,7 +133,7 @@ mod tests {
   }
 
   fn encode_and_verify_non_empty(input: &Frame, expected: &str) {
-    let mut buf = empty_bytes();
+    let mut buf = BytesMut::new();
     buf.extend_from_slice(PADDING.as_bytes());
 
     let len = match encode_bytes(&mut buf, input) {

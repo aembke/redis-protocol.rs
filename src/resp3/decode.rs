@@ -382,7 +382,11 @@ fn d_check_streaming(input: &[u8], kind: FrameKind) -> IResult<&[u8], DecodedFra
       FrameKind::Array => d_parse_array(input, len)?,
       FrameKind::Set => d_parse_set(input, len)?,
       FrameKind::Map => d_parse_map(input, len)?,
-      _ => e!(RedisParseError::new_custom("check_streaming", "Invalid frame type.")),
+      FrameKind::BlobString => d_parse_blobstring(input, len)?,
+      _ => e!(RedisParseError::new_custom(
+        "check_streaming",
+        format!("Invalid frame type: {:?}", kind)
+      )),
     };
 
     (input, DecodedFrame::Complete(frame))
@@ -641,6 +645,7 @@ pub mod streaming {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use bytes::BytesMut;
   use std::str;
 
   const PADDING: &'static str = "FOOBARBAZ";
@@ -793,7 +798,7 @@ mod tests {
 
   #[test]
   fn should_decode_array_nulls() {
-    let mut bytes: BytesMut = "*3\r\n$3\r\nFoo\r\n$-1\r\n$3\r\nBar\r\n".into();
+    let mut bytes: BytesMut = "*3\r\n$3\r\nFoo\r\n_\r\n$3\r\nBar\r\n".into();
 
     let expected = (
       Some(Frame::Array {
@@ -864,7 +869,7 @@ mod tests {
 
   #[test]
   fn should_decode_incomplete() {
-    let mut bytes: BytesMut = "*3\r\n$3\r\nFoo\r\n$-1\r\n$3\r\nBar".into();
+    let mut bytes: BytesMut = "*3\r\n$3\r\nFoo\r\n_\r\n$3\r\nBar".into();
     decode_and_verify_none(&mut bytes);
   }
 
