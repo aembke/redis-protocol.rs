@@ -22,7 +22,7 @@ bytes = "1"
 cookie-factory = "0.3"
 crc16 = "0.3"
 float-cmp = "0.8"
-indexmap = "1.6"
+indexmap = { version = "1.6", optional = true }
 log = "0.4"
 nom = "6.1"
 pretty_env_logger = "0.2"
@@ -41,7 +41,7 @@ features = ["codec"]
 version = "0.6"
 
 [features]
-index-map = []
+index-map = ["indexmap"]
 
 [lib]
 doc = true

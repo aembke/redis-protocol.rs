@@ -134,12 +134,12 @@ fn gen_bloberror<'a>(
 
 fn gen_verbatimstring<'a>(
   mut x: (&'a mut [u8], usize),
-  data: &str,
+  data: &[u8],
   format: &VerbatimStringFormat,
   attributes: &Option<Attributes>,
 ) -> Result<(&'a mut [u8], usize), GenError> {
   encode_attributes!(x, attributes);
-  let total_len = format.encode_len() + data.as_bytes().len();
+  let total_len = format.encode_len() + data.len();
 
   do_gen!(
     x,
@@ -148,7 +148,7 @@ fn gen_verbatimstring<'a>(
       >> gen_slice!(CRLF.as_bytes())
       >> gen_slice!(format.to_str().as_bytes())
       >> gen_be_u8!(VERBATIM_FORMAT_BYTE)
-      >> gen_slice!(data.as_bytes())
+      >> gen_slice!(data)
       >> gen_slice!(CRLF.as_bytes())
   )
 }
@@ -1141,11 +1141,26 @@ mod tests {
   }
 
   #[test]
-  fn should_encode_verbatimstring() {
+  fn should_encode_verbatimstring_txt() {
     let expected = "=15\r\ntxt:Some string\r\n";
     let input = Frame::VerbatimString {
       format: VerbatimStringFormat::Text,
-      data: "Some string".to_owned(),
+      data: "Some string".as_bytes().to_vec(),
+      attributes: None,
+    };
+
+    encode_and_verify_empty(&input, expected);
+    encode_and_verify_non_empty(&input, expected);
+    encode_and_verify_empty_with_attributes(&input, expected);
+    encode_and_verify_non_empty_with_attributes(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_verbatimstring_mkd() {
+    let expected = "=15\r\nmkd:Some string\r\n";
+    let input = Frame::VerbatimString {
+      format: VerbatimStringFormat::Markdown,
+      data: "Some string".as_bytes().to_vec(),
       attributes: None,
     };
 

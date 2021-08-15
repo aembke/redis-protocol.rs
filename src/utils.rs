@@ -42,11 +42,12 @@ macro_rules! encode_checks(
 
 /// Utility function to translate RESP2 frames to RESP3 frames.
 ///
-/// RESP2 frames and RESP3 frames are quite different, but RESP3 is largely a superset of RESP2. Redis handles the protocol choice based on
-/// the response to the HELLO command so developers of higher level clients are faced with a decision on how to handle the situation where
-/// a higher level library may want to use RESP3 since the plan is to upgrade Redis in the future, but the server only supports RESP2 today.
-/// This function can allow callers to take a dependency on the RESP3 interface by lazily translating RESP2 frames from the server to RESP3
-/// frames while exposing the RESP3 interface up the stack.
+/// RESP2 frames and RESP3 frames are quite different, but RESP3 is largely a superset of RESP2 so this function will never return an error.
+///
+/// Redis handles the protocol choice based on the response to the `HELLO` command, so developers of higher level clients can be faced with a decision on which `Frame`
+/// struct to expose to callers.
+///
+/// This function can allow callers to take a dependency on the RESP3 interface by lazily translating RESP2 frames from the server to RESP3 frames.
 pub fn resp2_frame_to_resp3(frame: Resp2Frame) -> Resp3Frame {
   if frame.is_normal_pubsub() {
     let mut out = Vec::with_capacity(4);
@@ -171,6 +172,9 @@ pub fn resp2_frame_to_resp3(frame: Resp2Frame) -> Resp3Frame {
 /// * ChunkedString - An error is returned. RESP2 has no concept of streaming strings.
 ///
 /// **Calling this with any RESP3 frame with attributes will result in an error.**
+///
+/// As seen above the conversion from RESP3 to RESP2 is lossy and error-prone, so callers are encouraged to use [resp2_frame_to_resp3] instead by exposing the RESP3 interface up
+/// the stack even if RESP2 decoding functions are used.
 pub fn resp3_frame_to_resp2(frame: Resp3Frame) -> Result<Resp2Frame, RedisProtocolError> {
   if frame.attributes().is_some() {
     return Err(RedisProtocolError::new(
@@ -224,7 +228,7 @@ pub fn resp3_frame_to_resp2(frame: Resp3Frame) -> Result<Resp2Frame, RedisProtoc
     }
     Resp3Frame::Number { data, .. } => Ok(Resp2Frame::Integer(data)),
     Resp3Frame::Double { data, .. } => Ok(Resp2Frame::BulkString(data.to_string().into_bytes())),
-    Resp3Frame::VerbatimString { data, .. } => Ok(Resp2Frame::BulkString(data.into_bytes())),
+    Resp3Frame::VerbatimString { data, .. } => Ok(Resp2Frame::BulkString(data)),
     Resp3Frame::SimpleError { data, .. } => Ok(Resp2Frame::Error(data)),
     Resp3Frame::SimpleString { data, .. } => Ok(Resp2Frame::SimpleString(data)),
     Resp3Frame::Set { data, .. } => {

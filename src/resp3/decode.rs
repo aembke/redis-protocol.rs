@@ -79,10 +79,6 @@ fn to_bool(s: &str) -> Result<bool, RedisParseError<&[u8]>> {
   }
 }
 
-fn to_string(d: &[u8]) -> Result<String, RedisParseError<&[u8]>> {
-  String::from_utf8(d.to_vec()).map_err(|e| RedisParseError::new_custom("to_string", format!("{:?}", e)))
-}
-
 fn to_verbatimstring_format(s: &str) -> Result<VerbatimStringFormat, RedisParseError<&[u8]>> {
   match s.as_ref() {
     "txt" => Ok(VerbatimStringFormat::Text),
@@ -253,12 +249,12 @@ fn d_parse_verbatimstring(input: &[u8]) -> IResult<&[u8], Frame, RedisParseError
   let (input, len) = d_read_prefix_len(input)?;
   let (input, format) = nom_map_res(nom_terminated(nom_take(3_usize), nom_take(1_usize)), str::from_utf8)(input)?;
   let format = etry!(to_verbatimstring_format(format));
-  let (input, data) = nom_map_res(nom_terminated(nom_take(len - 4), nom_take(2_usize)), to_string)(input)?;
+  let (input, data) = nom_terminated(nom_take(len - 4), nom_take(2_usize))(input)?;
 
   Ok((
     input,
     Frame::VerbatimString {
-      data,
+      data: data.to_vec(),
       format,
       attributes: None,
     },
@@ -732,7 +728,7 @@ mod tests {
   }
 
   #[test]
-  fn should_decode_bulk_string() {
+  fn should_decode_blob_string() {
     let expected = (
       Some(Frame::BlobString {
         data: "foo".into(),
@@ -748,7 +744,7 @@ mod tests {
 
   #[test]
   #[should_panic]
-  fn should_decode_bulk_string_incomplete() {
+  fn should_decode_blob_string_incomplete() {
     let expected = (
       Some(Frame::BlobString {
         data: "foo".into(),
@@ -872,6 +868,242 @@ mod tests {
 
   // ----------------- end tests adapted from RESP2 ------------------------
 
-  // TODO bloberror, simpleerror, map, set, array, push, hello, boolean, number, double (inf, nan, negative, etc), bignumber, null, verbatimstring
+  #[test]
+  fn should_decode_blob_error() {
+    let expected = (
+      Some(Frame::BlobError {
+        data: "foo".into(),
+        attributes: None,
+      }),
+      9,
+    );
+    let mut bytes: BytesMut = "!3\r\nfoo\r\n".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+  }
+
+  #[test]
+  #[should_panic]
+  fn should_decode_blob_error_incomplete() {
+    let expected = (
+      Some(Frame::BlobError {
+        data: "foo".into(),
+        attributes: None,
+      }),
+      9,
+    );
+    let mut bytes: BytesMut = "!3\r\nfo".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+  }
+
+  #[test]
+  fn should_decode_simple_error() {
+    let expected = (
+      Some(Frame::SimpleError {
+        data: "string".into(),
+        attributes: None,
+      }),
+      9,
+    );
+    let mut bytes: BytesMut = "-string\r\n".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+  }
+
+  #[test]
+  #[should_panic]
+  fn should_decode_simple_error_incomplete() {
+    let expected = (
+      Some(Frame::SimpleError {
+        data: "string".into(),
+        attributes: None,
+      }),
+      9,
+    );
+    let mut bytes: BytesMut = "-strin".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+  }
+
+  #[test]
+  fn should_decode_boolean_true() {
+    let expected = (
+      Some(Frame::Boolean {
+        data: true,
+        attributes: None,
+      }),
+      4,
+    );
+    let mut bytes: BytesMut = "#t\r\n".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+  }
+
+  #[test]
+  fn should_decode_boolean_false() {
+    let expected = (
+      Some(Frame::Boolean {
+        data: false,
+        attributes: None,
+      }),
+      4,
+    );
+    let mut bytes: BytesMut = "#f\r\n".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+  }
+
+  #[test]
+  fn should_decode_number() {
+    let expected = (
+      Some(Frame::Number {
+        data: 42,
+        attributes: None,
+      }),
+      5,
+    );
+    let mut bytes: BytesMut = ":42\r\n".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+  }
+
+  #[test]
+  fn should_decode_double_inf() {
+    let expected = (
+      Some(Frame::Double {
+        data: f64::INFINITY,
+        attributes: None,
+      }),
+      6,
+    );
+    let mut bytes: BytesMut = ",inf\r\n".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+  }
+
+  #[test]
+  fn should_decode_double_neg_inf() {
+    let expected = (
+      Some(Frame::Double {
+        data: f64::NEG_INFINITY,
+        attributes: None,
+      }),
+      7,
+    );
+    let mut bytes: BytesMut = ",-inf\r\n".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+  }
+
+  #[test]
+  #[should_panic]
+  fn should_decode_double_nan() {
+    let expected = (
+      Some(Frame::Double {
+        data: f64::NAN,
+        attributes: None,
+      }),
+      7,
+    );
+    let mut bytes: BytesMut = ",foo\r\n".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+  }
+
+  #[test]
+  fn should_decode_double() {
+    let expected = (
+      Some(Frame::Double {
+        data: 4.59193,
+        attributes: None,
+      }),
+      10,
+    );
+    let mut bytes: BytesMut = ",4.59193\r\n".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+
+    let expected = (
+      Some(Frame::Double {
+        data: 4_f64,
+        attributes: None,
+      }),
+      4,
+    );
+    let mut bytes: BytesMut = ",4\r\n".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+  }
+
+  #[test]
+  fn should_decode_bignumber() {
+    let expected = (
+      Some(Frame::BigNumber {
+        data: "3492890328409238509324850943850943825024385".as_bytes().to_vec(),
+        attributes: None,
+      }),
+      46,
+    );
+    let mut bytes: BytesMut = "(3492890328409238509324850943850943825024385\r\n".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+  }
+
+  #[test]
+  fn should_decode_null() {
+    let expected = (Some(Frame::Null), 3);
+    let mut bytes: BytesMut = "_\r\n".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+  }
+
+  #[test]
+  fn should_decode_verbatim_string_mkd() {
+    let expected = (
+      Some(Frame::VerbatimString {
+        data: "Some string".as_bytes().to_vec(),
+        format: VerbatimStringFormat::Markdown,
+        attributes: None,
+      }),
+      22,
+    );
+    let mut bytes: BytesMut = "=15\r\nmkd:Some string\r\n".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+  }
+
+  #[test]
+  fn should_decode_verbatim_string_txt() {
+    let expected = (
+      Some(Frame::VerbatimString {
+        data: "Some string".as_bytes().to_vec(),
+        format: VerbatimStringFormat::Text,
+        attributes: None,
+      }),
+      22,
+    );
+    let mut bytes: BytesMut = "=15\r\ntxt:Some string\r\n".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+  }
+
+  // TODO  map, set, array, push
   // TODO attributes, streaming
 }

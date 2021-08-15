@@ -97,7 +97,7 @@ pub fn simplestring_encode_len(s: &str) -> usize {
   1 + s.as_bytes().len() + 2
 }
 
-pub fn verbatimstring_encode_len(format: &VerbatimStringFormat, data: &str) -> usize {
+pub fn verbatimstring_encode_len(format: &VerbatimStringFormat, data: &[u8]) -> usize {
   // prefix, data len + format len, crlf, format, colon, data, crlf
   1 + digits_in_number(data.len() + format.encode_len()) + 2 + format.encode_len() + data.len() + 2
 }

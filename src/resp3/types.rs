@@ -77,17 +77,20 @@ pub const AUTH: &'static str = "AUTH";
 /// Additional information returned alongside a frame.
 #[cfg(not(feature = "index-map"))]
 pub type Attributes = HashMap<Frame, Frame>;
+/// A map struct for frames.
 #[cfg(not(feature = "index-map"))]
 pub type FrameMap = HashMap<Frame, Frame>;
+/// A set struct for frames.
 #[cfg(not(feature = "index-map"))]
 pub type FrameSet = HashSet<Frame>;
 
 /// Additional information returned alongside a frame.
 #[cfg(feature = "index-map")]
 pub type Attributes = IndexMap<Frame, Frame>;
-
+/// A map struct for frames.
 #[cfg(feature = "index-map")]
 pub type FrameMap = IndexMap<Frame, Frame>;
+/// A set struct for frames.
 #[cfg(feature = "index-map")]
 pub type FrameSet = IndexSet<Frame>;
 
@@ -326,7 +329,7 @@ pub enum Frame {
   },
   /// A binary-safe string to be displayed without any escaping or filtering.
   VerbatimString {
-    data: String,
+    data: Vec<u8>,
     format: VerbatimStringFormat,
     attributes: Option<Attributes>,
   },
@@ -914,6 +917,8 @@ impl Frame {
   /// This does not return the encoded length, but rather the length of the contents of the frame such as the number of elements in an array, the size of any inner buffers, etc.
   ///
   /// Note: `Null` has a length of 0 and `Hello`, `Number`, `Double`, and `Boolean` have a length of 1.
+  ///
+  /// See [encode_len](Self::encode_len) to read the number of bytes necessary to encode the frame.
   pub fn len(&self) -> usize {
     use self::Frame::*;
 
@@ -926,7 +931,7 @@ impl Frame {
       SimpleString { ref data, .. } | SimpleError { ref data, .. } => data.len(),
       Number { .. } | Double { .. } | Boolean { .. } => 1,
       Null => 0,
-      VerbatimString { ref data, .. } => data.as_bytes().len(),
+      VerbatimString { ref data, .. } => data.len(),
       Map { ref data, .. } => data.len(),
       Set { ref data, .. } => data.len(),
       Hello { .. } => 1,
@@ -1057,7 +1062,7 @@ impl Frame {
       Frame::BlobError { ref data, .. } | Frame::BlobString { ref data, .. } | Frame::BigNumber { ref data, .. } => {
         str::from_utf8(data).ok()
       }
-      Frame::VerbatimString { ref data, .. } => Some(data),
+      Frame::VerbatimString { ref data, .. } => str::from_utf8(data).ok(),
       Frame::ChunkedString(ref data) => str::from_utf8(data).ok(),
       _ => None,
     }
@@ -1070,7 +1075,7 @@ impl Frame {
       Frame::BlobError { ref data, .. } | Frame::BlobString { ref data, .. } | Frame::BigNumber { ref data, .. } => {
         String::from_utf8(data.to_vec()).ok()
       }
-      Frame::VerbatimString { ref data, .. } => Some(data.to_owned()),
+      Frame::VerbatimString { ref data, .. } => String::from_utf8(data.to_vec()).ok(),
       Frame::ChunkedString(ref b) => String::from_utf8(b.to_vec()).ok(),
       Frame::Double { ref data, .. } => Some(data.to_string()),
       Frame::Number { ref data, .. } => Some(data.to_string()),
@@ -1087,7 +1092,7 @@ impl Frame {
       Frame::BlobError { ref data, .. } | Frame::BlobString { ref data, .. } | Frame::BigNumber { ref data, .. } => {
         Some(data)
       }
-      Frame::VerbatimString { ref data, .. } => Some(data.as_bytes()),
+      Frame::VerbatimString { ref data, .. } => Some(data),
       Frame::ChunkedString(ref b) => Some(b),
       _ => None,
     }
@@ -1186,7 +1191,7 @@ impl Frame {
     }
   }
 
-  /// Attempt to read the number of bytes needed to encode this frame.
+  /// Attempt to read the number of bytes needed to encode the frame without allocating.
   pub fn encode_len(&self) -> Result<usize, RedisProtocolError> {
     resp3_utils::encode_len(self).map_err(|e| e.into())
   }
