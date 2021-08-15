@@ -24,6 +24,7 @@ cargo add redis-protocol
 * Parse publish-subscribe messages.
 * Support cluster redirection errors.
 * Implements cluster key hashing.
+* Utility functions for converting between RESP2 and RESP3.
 
 ## Examples
 

@@ -476,7 +476,8 @@ pub mod complete {
 /// async fn write_all(socket: &mut TcpStream, buf: &mut BytesMut) -> Result<usize, RedisProtocolError> {
 ///   let len = buf.len();
 ///   socket.write_all(&buf).await.expect("Failed to write to socket.");
-///   // we could just clear the buffer here, but normally you dont flush the socket each time so you have to split the buf instead
+///   // we could just clear the buffer here since we use `write_all`, but in many cases callers don't flush the socket on each `write` call.
+///   // in those scenarios the caller should split the buffer based on the result from `write`.
 ///   let _ = buf.split_to(len);
 ///
 ///   Ok(len)
@@ -494,6 +495,7 @@ pub mod complete {
 ///   loop {
 ///     let frame = match rx.recv().await {
 ///        Some(frame) => frame,
+///        // break out of the loop when the channel closes
 ///        None => break
 ///     };
 ///
@@ -513,7 +515,7 @@ pub mod complete {
 /// }
 ///
 /// fn generate_frames(tx: UnboundedSender<Frame>) -> Result<(), RedisProtocolError> {
-///   // read from another socket or generate frames somehow
+///   // read from another socket or somehow generate frames, writing them to `tx`
 ///   unimplemented!()
 /// }
 ///

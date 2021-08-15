@@ -458,13 +458,12 @@ fn d_parse_frame_or_attribute(input: &[u8]) -> IResult<&[u8], DecodedFrame, Redi
 /// # extern crate tokio;
 /// # extern crate bytes;
 ///
-/// # use redis_protocol::resp3::types::*;
-/// # use redis_protocol::types::{RedisProtocolError, RedisProtocolErrorKind};
-/// # use redis_protocol::resp3::decode::streaming::*;
-/// # use redis_protocol::resp3::encode::complete::*;
-/// # use bytes::BytesMut;
-/// # use tokio_util::codec::{Decoder, Encoder};
-/// # use std::collections::VecDeque;
+/// use redis_protocol::resp3::types::*;
+/// use redis_protocol::types::{RedisProtocolError, RedisProtocolErrorKind};
+/// use redis_protocol::resp3::decode::complete::*;
+/// use redis_protocol::resp3::encode::complete::*;
+/// use bytes::BytesMut;
+/// use tokio_util::codec::{Decoder, Encoder};
 ///
 /// pub struct RedisCodec {}
 ///
@@ -491,7 +490,7 @@ fn d_parse_frame_or_attribute(input: &[u8]) -> IResult<&[u8], DecodedFrame, Redi
 ///       // clear the buffer up to the amount decoded so the same bytes aren't repeatedly processed
 ///       let _ = src.split_to(amt);
 ///
-///       Ok(Some(frame.into_complete_frame()?))
+///       Ok(Some(frame))
 ///     }else{
 ///       Ok(None)
 ///     }
@@ -527,13 +526,13 @@ pub mod complete {
 /// # extern crate tokio;
 /// # extern crate bytes;
 ///
-/// # use redis_protocol::resp3::types::*;
-/// # use redis_protocol::types::{RedisProtocolError, RedisProtocolErrorKind};
-/// # use redis_protocol::resp3::decode::streaming::*;
-/// # use redis_protocol::resp3::encode::complete::*;
-/// # use bytes::BytesMut;
-/// # use tokio_util::codec::{Decoder, Encoder};
-/// # use std::collections::VecDeque;
+/// use redis_protocol::resp3::types::*;
+/// use redis_protocol::types::{RedisProtocolError, RedisProtocolErrorKind};
+/// use redis_protocol::resp3::decode::streaming::*;
+/// use redis_protocol::resp3::encode::complete::*;
+/// use bytes::BytesMut;
+/// use tokio_util::codec::{Decoder, Encoder};
+/// use std::collections::VecDeque;
 ///
 /// pub struct RedisCodec {
 ///   decoder_stream: Option<StreamedFrame>
@@ -554,6 +553,7 @@ pub mod complete {
 ///   type Error = RedisProtocolError;
 ///
 ///   // Buffer the results of streamed frame before returning the complete frame to the caller.
+///   // Callers that want to surface streaming frame chunks up the stack would simply return after calling `decode` here.
 ///   fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
 ///     if src.is_empty() {
 ///       return Ok(None);
@@ -586,7 +586,7 @@ pub mod complete {
 ///           None
 ///         }
 ///       }else{
-///         // we're not already in the middle of a streaming operation
+///         // we're processing a complete frame or starting a new streamed frame
 ///         if frame.is_streaming() {
 ///           // start a new stream, saving the internal buffer to the codec state
 ///           self.decoder_stream = Some(frame.into_streaming_frame()?);
