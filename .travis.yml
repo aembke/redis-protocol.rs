@@ -21,10 +21,8 @@ branches:
   only:
   - main
   - ci
-
 script:
 - cargo test --release --features index-map
-
 env:
   global:
   - RUST_BACKTRACE=full
