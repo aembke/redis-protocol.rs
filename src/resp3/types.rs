@@ -1,10 +1,8 @@
 use crate::resp3::utils as resp3_utils;
-use crate::types::{Redirection, RedisProtocolError, RedisProtocolErrorKind, CRLF};
+use crate::types::{Redirection, RedisProtocolError, RedisProtocolErrorKind};
 use crate::utils;
-use bytes::{Buf, BufMut, Bytes, BytesMut};
-use float_cmp::approx_eq;
+use bytes::Buf;
 use std::borrow::Cow;
-use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::convert::{TryFrom, TryInto};
 use std::hash::{Hash, Hasher};
@@ -408,7 +406,7 @@ impl PartialEq for Frame {
         match *other {
           Array {
             ref data,
-            ref attributes,
+            attributes: _,
           } => data == _data && _attributes == _attributes,
           _ => false,
         }
@@ -421,7 +419,7 @@ impl PartialEq for Frame {
         match *other {
           BlobString {
             ref data,
-            ref attributes,
+            attributes: _,
           } => data == _data && _attributes == _attributes,
           _ => false,
         }
@@ -434,7 +432,7 @@ impl PartialEq for Frame {
         match *other {
           SimpleString {
             ref data,
-            ref attributes,
+            attributes: _,
           } => data == _data && _attributes == _attributes,
           _ => false,
         }
@@ -447,7 +445,7 @@ impl PartialEq for Frame {
         match *other {
           SimpleError {
             ref data,
-            ref attributes,
+            attributes: _,
           } => data == _data && _attributes == _attributes,
           _ => false,
         }
@@ -460,7 +458,7 @@ impl PartialEq for Frame {
         match *other {
           Number {
             ref data,
-            ref attributes,
+            attributes: _,
           } => data == _data && _attributes == _attributes,
           _ => false,
         }
@@ -477,7 +475,7 @@ impl PartialEq for Frame {
         match *other {
           Boolean {
             ref data,
-            ref attributes,
+            attributes: _,
           } => data == _data && _attributes == _attributes,
           _ => false,
         }
@@ -490,7 +488,7 @@ impl PartialEq for Frame {
         match *other {
           Double {
             ref data,
-            ref attributes,
+            attributes: _,
           } => data == _data && _attributes == _attributes,
           _ => false,
         }
@@ -503,7 +501,7 @@ impl PartialEq for Frame {
         match *other {
           BlobError {
             ref data,
-            ref attributes,
+            attributes: _,
           } => data == _data && _attributes == _attributes,
           _ => false,
         }
@@ -531,7 +529,7 @@ impl PartialEq for Frame {
         match *other {
           Map {
             ref data,
-            ref attributes,
+            attributes: _,
           } => data == _data && _attributes == _attributes,
           _ => false,
         }
@@ -544,7 +542,7 @@ impl PartialEq for Frame {
         match *other {
           Set {
             ref data,
-            ref attributes,
+            attributes: _,
           } => data == _data && _attributes == _attributes,
           _ => false,
         }
@@ -557,7 +555,7 @@ impl PartialEq for Frame {
         match *other {
           Push {
             ref data,
-            ref attributes,
+            attributes: _,
           } => data == _data && _attributes == _attributes,
           _ => false,
         }
@@ -577,7 +575,7 @@ impl PartialEq for Frame {
         match *other {
           BigNumber {
             ref data,
-            ref attributes,
+            attributes: _,
           } => data == _data && _attributes == _attributes,
           _ => false,
         }

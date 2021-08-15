@@ -3,12 +3,11 @@
 //! <https://github.com/antirez/RESP3/blob/master/spec.md>
 
 use crate::resp3::types::*;
-use crate::resp3::utils::{self as resp3_utils, BOOLEAN_ENCODE_LEN};
+use crate::resp3::utils::{self as resp3_utils};
 use crate::types::{RedisProtocolError, RedisProtocolErrorKind, CRLF};
 use crate::utils;
 use bytes::BytesMut;
 use cookie_factory::GenError;
-use std::collections::{HashMap, HashSet};
 
 macro_rules! encode_attributes (
   ($x:ident, $attributes:ident) => {

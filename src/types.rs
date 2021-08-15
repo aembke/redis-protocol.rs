@@ -1,14 +1,14 @@
 use crate::resp2::types::Frame as Resp2Frame;
 use crate::resp3::types::Frame as Resp3Frame;
-use crate::utils;
+
 use cookie_factory::GenError;
-use nom::error::{ContextError, ErrorKind, FromExternalError, ParseError};
+use nom::error::{ErrorKind, FromExternalError, ParseError};
 use nom::{Err as NomError, Needed};
 use std::borrow::Borrow;
 use std::borrow::Cow;
 use std::fmt::{self, Debug};
 use std::io::Error as IoError;
-use std::num::NonZeroUsize;
+
 use std::str;
 
 /// Terminating bytes between frames.
@@ -241,7 +241,7 @@ impl<I> ParseError<I> for RedisParseError<I> {
 }
 
 impl<I, E> FromExternalError<I, E> for RedisParseError<I> {
-  fn from_external_error(input: I, kind: ErrorKind, e: E) -> Self {
+  fn from_external_error(input: I, kind: ErrorKind, _e: E) -> Self {
     RedisParseError::Nom(input, kind)
   }
 }

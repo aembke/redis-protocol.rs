@@ -1,24 +1,13 @@
 #![feature(test)]
 
-extern crate test;
-extern crate rand;
-extern crate redis_protocol;
-extern crate bytes;
-
-#[macro_use]
-extern crate lazy_static;
-
-use rand::Rng;
-
-use redis_protocol::prelude::*;
-use bytes::BytesMut;
 use bytes::BufMut;
+use bytes::BytesMut;
+use rand::Rng;
+use redis_protocol::resp2::types::NULL;
+use redis_protocol::types::CRLF;
 
 pub fn rand_chars(len: usize) -> String {
-  rand::thread_rng()
-    .gen_ascii_chars()
-    .take(len)
-    .collect()
+  rand::thread_rng().gen_ascii_chars().take(len).collect()
 }
 
 fn bulkstring_bytes(len: usize, buf: Option<BytesMut>) -> BytesMut {
@@ -28,15 +17,15 @@ fn bulkstring_bytes(len: usize, buf: Option<BytesMut>) -> BytesMut {
 
   v.put_u8(b'$');
   v.extend_from_slice(len.to_string().as_bytes());
-  v.extend_from_slice(redis_protocol::CRLF.as_bytes());
+  v.extend_from_slice(CRLF.as_bytes());
   v.extend_from_slice(s.as_bytes());
-  v.extend_from_slice(redis_protocol::CRLF.as_bytes());
+  v.extend_from_slice(CRLF.as_bytes());
   v
 }
 
 pub fn encode_null(buf: Option<BytesMut>) -> BytesMut {
   let mut v = buf.unwrap_or(BytesMut::with_capacity(5));
-  v.extend_from_slice(redis_protocol::NULL.as_bytes());
+  v.extend_from_slice(NULL.as_bytes());
   v
 }
 
@@ -47,9 +36,9 @@ pub fn rand_array(len: usize, null_every: usize, str_len: usize) -> BytesMut {
   let mut buf = BytesMut::with_capacity(1 + arr_len_digits + 2 + (len * (1 + str_len_digits + 2 + str_len + 2)));
 
   (0..len).fold(buf, |mut buf, i| {
-    if i+1 % null_every == 0 {
+    if i + 1 % null_every == 0 {
       encode_null(Some(buf))
-    }else{
+    } else {
       bulkstring_bytes(str_len, Some(buf))
     }
   })
@@ -58,7 +47,9 @@ pub fn rand_array(len: usize, null_every: usize, str_len: usize) -> BytesMut {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use test::{Bencher, black_box};
+  use redis_protocol::resp2::decode::decode as resp2_decode;
+  use redis_protocol::resp3::decode::decode as resp3_decode;
+  use test::{black_box, Bencher};
 
   // bulkstring decoding
 
@@ -67,7 +58,7 @@ mod tests {
     let buf = bulkstring_bytes(1024, None);
 
     b.iter(|| {
-      black_box(decode_bytes(&buf));
+      black_box(resp2_decode(&buf));
     });
   }
 
@@ -76,7 +67,7 @@ mod tests {
     let buf = bulkstring_bytes(10 * 1024, None);
 
     b.iter(|| {
-      black_box(decode_bytes(&buf));
+      black_box(resp2_decode(&buf));
     });
   }
 
@@ -85,7 +76,7 @@ mod tests {
     let buf = bulkstring_bytes(100 * 1024, None);
 
     b.iter(|| {
-      black_box(decode_bytes(&buf));
+      black_box(resp2_decode(&buf));
     });
   }
 
@@ -94,7 +85,7 @@ mod tests {
     let buf = bulkstring_bytes(1024 * 1024, None);
 
     b.iter(|| {
-      black_box(decode_bytes(&buf));
+      black_box(resp2_decode(&buf));
     });
   }
 
@@ -103,7 +94,7 @@ mod tests {
     let buf = bulkstring_bytes(10 * 1024 * 1024, None);
 
     b.iter(|| {
-      black_box(decode_bytes(&buf));
+      black_box(resp2_decode(&buf));
     });
   }
 
@@ -114,7 +105,7 @@ mod tests {
     let buf = rand_array(10, 11, 1024);
 
     b.iter(|| {
-      black_box(decode_bytes(&buf));
+      black_box(resp2_decode(&buf));
     });
   }
 
@@ -123,7 +114,7 @@ mod tests {
     let buf = rand_array(100, 101, 1024);
 
     b.iter(|| {
-      black_box(decode_bytes(&buf));
+      black_box(resp2_decode(&buf));
     });
   }
 
@@ -132,7 +123,7 @@ mod tests {
     let buf = rand_array(1000, 1001, 1024);
 
     b.iter(|| {
-      black_box(decode_bytes(&buf));
+      black_box(resp2_decode(&buf));
     });
   }
 
@@ -141,7 +132,7 @@ mod tests {
     let buf = rand_array(10, 11, 10 * 1024);
 
     b.iter(|| {
-      black_box(decode_bytes(&buf));
+      black_box(resp2_decode(&buf));
     });
   }
 
@@ -150,7 +141,7 @@ mod tests {
     let buf = rand_array(100, 101, 10 * 1024);
 
     b.iter(|| {
-      black_box(decode_bytes(&buf));
+      black_box(resp2_decode(&buf));
     });
   }
 
@@ -159,7 +150,7 @@ mod tests {
     let buf = rand_array(1000, 1001, 10 * 1024);
 
     b.iter(|| {
-      black_box(decode_bytes(&buf));
+      black_box(resp2_decode(&buf));
     });
   }
 
@@ -168,7 +159,7 @@ mod tests {
     let buf = rand_array(10, 2, 1024);
 
     b.iter(|| {
-      black_box(decode_bytes(&buf));
+      black_box(resp2_decode(&buf));
     });
   }
 
@@ -177,7 +168,7 @@ mod tests {
     let buf = rand_array(100, 2, 1024);
 
     b.iter(|| {
-      black_box(decode_bytes(&buf));
+      black_box(resp2_decode(&buf));
     });
   }
 
@@ -186,7 +177,7 @@ mod tests {
     let buf = rand_array(1000, 2, 1024);
 
     b.iter(|| {
-      black_box(decode_bytes(&buf));
+      black_box(resp2_decode(&buf));
     });
   }
 
@@ -195,7 +186,7 @@ mod tests {
     let buf = rand_array(10, 2, 10 * 1024);
 
     b.iter(|| {
-      black_box(decode_bytes(&buf));
+      black_box(resp2_decode(&buf));
     });
   }
 
@@ -204,7 +195,7 @@ mod tests {
     let buf = rand_array(100, 2, 10 * 1024);
 
     b.iter(|| {
-      black_box(decode_bytes(&buf));
+      black_box(resp2_decode(&buf));
     });
   }
 
@@ -213,9 +204,7 @@ mod tests {
     let buf = rand_array(1000, 2, 10 * 1024);
 
     b.iter(|| {
-      black_box(decode_bytes(&buf));
+      black_box(resp2_decode(&buf));
     });
   }
-
-
 }

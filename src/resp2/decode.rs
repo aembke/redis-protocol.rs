@@ -3,10 +3,7 @@
 //! <https://redis.io/topics/protocol#resp-protocol-description>
 
 use crate::resp2::types::*;
-use crate::resp2::utils as resp2_utils;
 use crate::types::*;
-use crate::utils;
-use bytes::BytesMut;
 use nom::number::streaming::be_u8;
 use nom::Err as NomError;
 use std::num::ParseIntError;

@@ -4,7 +4,7 @@
 
 use crate::resp2::types::*;
 use crate::resp2::utils::{self as resp2_utils};
-use crate::types::{RedisProtocolError, RedisProtocolErrorKind, CRLF};
+use crate::types::{RedisProtocolError, CRLF};
 use crate::utils;
 use bytes::BytesMut;
 use cookie_factory::GenError;

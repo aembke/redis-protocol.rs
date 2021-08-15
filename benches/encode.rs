@@ -1,32 +1,20 @@
 #![feature(test)]
 
-extern crate test;
-extern crate rand;
-extern crate redis_protocol;
-extern crate bytes;
-
-#[macro_use]
-extern crate lazy_static;
-
-use rand::Rng;
-
-use redis_protocol::prelude::*;
 use bytes::BytesMut;
+use rand::Rng;
+use redis_protocol::resp2::types::Frame;
 
 pub fn rand_chars(len: usize) -> String {
-  rand::thread_rng()
-    .gen_ascii_chars()
-    .take(len)
-    .collect()
+  rand::thread_rng().gen_ascii_chars().take(len).collect()
 }
 
 pub fn rand_array(len: usize, null_every: usize, str_len: usize) -> Vec<Frame> {
   let mut v = Vec::with_capacity(len);
 
   for i in 0..len {
-    if i+1 % null_every == 0 {
+    if i + 1 % null_every == 0 {
       v.push(Frame::Null);
-    }else{
+    } else {
       v.push(Frame::BulkString(rand_chars(str_len).into_bytes()));
     }
   }
@@ -37,7 +25,8 @@ pub fn rand_array(len: usize, null_every: usize, str_len: usize) -> Vec<Frame> {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use test::{Bencher, black_box};
+  use redis_protocol::resp2::encode::encode_bytes as resp2_encode;
+  use test::{black_box, Bencher};
 
   // bulkstring encoding
 
@@ -47,7 +36,7 @@ mod tests {
 
     b.iter(|| {
       let mut b = BytesMut::new();
-      black_box(encode_bytes(&mut b, &f));
+      black_box(resp2_encode(&mut b, &f));
     });
   }
 
@@ -57,7 +46,7 @@ mod tests {
 
     b.iter(|| {
       let mut b = BytesMut::new();
-      black_box(encode_bytes(&mut b, &f));
+      black_box(resp2_encode(&mut b, &f));
     });
   }
 
@@ -67,7 +56,7 @@ mod tests {
 
     b.iter(|| {
       let mut b = BytesMut::new();
-      black_box(encode_bytes(&mut b, &f));
+      black_box(resp2_encode(&mut b, &f));
     });
   }
 
@@ -77,7 +66,7 @@ mod tests {
 
     b.iter(|| {
       let mut b = BytesMut::new();
-      black_box(encode_bytes(&mut b, &f));
+      black_box(resp2_encode(&mut b, &f));
     });
   }
 
@@ -87,10 +76,9 @@ mod tests {
 
     b.iter(|| {
       let mut b = BytesMut::new();
-      black_box(encode_bytes(&mut b, &f));
+      black_box(resp2_encode(&mut b, &f));
     });
   }
-
 
   // array encoding
 
@@ -100,7 +88,7 @@ mod tests {
 
     b.iter(|| {
       let mut b = BytesMut::new();
-      black_box(encode_bytes(&mut b, &f));
+      black_box(resp2_encode(&mut b, &f));
     })
   }
 
@@ -110,7 +98,7 @@ mod tests {
 
     b.iter(|| {
       let mut b = BytesMut::new();
-      black_box(encode_bytes(&mut b, &f));
+      black_box(resp2_encode(&mut b, &f));
     })
   }
 
@@ -120,7 +108,7 @@ mod tests {
 
     b.iter(|| {
       let mut b = BytesMut::new();
-      black_box(encode_bytes(&mut b, &f));
+      black_box(resp2_encode(&mut b, &f));
     })
   }
 
@@ -130,7 +118,7 @@ mod tests {
 
     b.iter(|| {
       let mut b = BytesMut::new();
-      black_box(encode_bytes(&mut b, &f));
+      black_box(resp2_encode(&mut b, &f));
     })
   }
 
@@ -140,7 +128,7 @@ mod tests {
 
     b.iter(|| {
       let mut b = BytesMut::new();
-      black_box(encode_bytes(&mut b, &f));
+      black_box(resp2_encode(&mut b, &f));
     })
   }
 
@@ -150,7 +138,7 @@ mod tests {
 
     b.iter(|| {
       let mut b = BytesMut::new();
-      black_box(encode_bytes(&mut b, &f));
+      black_box(resp2_encode(&mut b, &f));
     })
   }
 
@@ -160,7 +148,7 @@ mod tests {
 
     b.iter(|| {
       let mut b = BytesMut::new();
-      black_box(encode_bytes(&mut b, &f));
+      black_box(resp2_encode(&mut b, &f));
     })
   }
 
@@ -170,7 +158,7 @@ mod tests {
 
     b.iter(|| {
       let mut b = BytesMut::new();
-      black_box(encode_bytes(&mut b, &f));
+      black_box(resp2_encode(&mut b, &f));
     })
   }
 
@@ -180,7 +168,7 @@ mod tests {
 
     b.iter(|| {
       let mut b = BytesMut::new();
-      black_box(encode_bytes(&mut b, &f));
+      black_box(resp2_encode(&mut b, &f));
     })
   }
 
@@ -190,7 +178,7 @@ mod tests {
 
     b.iter(|| {
       let mut b = BytesMut::new();
-      black_box(encode_bytes(&mut b, &f));
+      black_box(resp2_encode(&mut b, &f));
     })
   }
 
@@ -200,7 +188,7 @@ mod tests {
 
     b.iter(|| {
       let mut b = BytesMut::new();
-      black_box(encode_bytes(&mut b, &f));
+      black_box(resp2_encode(&mut b, &f));
     })
   }
 
@@ -210,8 +198,7 @@ mod tests {
 
     b.iter(|| {
       let mut b = BytesMut::new();
-      black_box(encode_bytes(&mut b, &f));
+      black_box(resp2_encode(&mut b, &f));
     })
   }
-
 }

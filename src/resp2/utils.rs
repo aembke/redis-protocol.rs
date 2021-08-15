@@ -1,8 +1,6 @@
 use crate::resp2::types::{Frame, FrameKind, NULL};
-use crate::types::{Redirection, CRLF};
 use crate::utils::{digits_in_number, PATTERN_PUBSUB_PREFIX, PUBSUB_PREFIX};
 use cookie_factory::GenError;
-use std::borrow::Cow;
 
 pub fn bulkstring_encode_len(b: &[u8]) -> usize {
   1 + digits_in_number(b.len()) + 2 + b.len() + 2

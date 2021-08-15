@@ -1,7 +1,6 @@
 use crate::resp3::types::*;
 use crate::types::{Redirection, RedisProtocolError, RedisProtocolErrorKind, CRLF};
 use crate::utils::{digits_in_number, PATTERN_PUBSUB_PREFIX, PUBSUB_PREFIX, PUBSUB_PUSH_PREFIX};
-use bytes::BytesMut;
 use cookie_factory::GenError;
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -146,7 +145,7 @@ pub fn set_encode_len(set: &FrameSet) -> Result<usize, GenError> {
   Ok(total_len)
 }
 
-pub fn hello_encode_len(version: &RespVersion, auth: &Option<Auth>) -> usize {
+pub fn hello_encode_len(_version: &RespVersion, auth: &Option<Auth>) -> usize {
   let mut total_len = HELLO.as_bytes().len() + 3;
 
   if let Some(ref auth) = *auth {
@@ -218,7 +217,7 @@ pub fn encode_len(data: &Frame) -> Result<usize, GenError> {
       ref attributes,
     } => double_encode_len(data)? + attribute_encode_len(attributes)?,
     Boolean {
-      ref data,
+      data: _,
       ref attributes,
     } => BOOLEAN_ENCODE_LEN + attribute_encode_len(attributes)?,
     VerbatimString {

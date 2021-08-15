@@ -205,12 +205,12 @@ pub fn resp3_frame_to_resp2(frame: Resp3Frame) -> Result<Resp2Frame, RedisProtoc
       }
       Ok(Resp2Frame::Array(out))
     }
-    Resp3Frame::Push { data, .. } => Err(RedisProtocolError::new(
+    Resp3Frame::Push { data: _, .. } => Err(RedisProtocolError::new(
       RedisProtocolErrorKind::Unknown,
       "Cannot convert non-pubsub PUSH frame to RESP2 frame.",
     )),
     Resp3Frame::BlobString { data, .. } => Ok(Resp2Frame::BulkString(data)),
-    Resp3Frame::BlobError { data, .. } => Err(RedisProtocolError::new(
+    Resp3Frame::BlobError { data: _, .. } => Err(RedisProtocolError::new(
       RedisProtocolErrorKind::Unknown,
       "Cannot convert BlobError to RESP2 frame.",
     )),
@@ -234,7 +234,7 @@ pub fn resp3_frame_to_resp2(frame: Resp3Frame) -> Result<Resp2Frame, RedisProtoc
       }
       Ok(Resp2Frame::Array(out))
     }
-    Resp3Frame::Map { data, .. } => Err(RedisProtocolError::new(
+    Resp3Frame::Map { data: _, .. } => Err(RedisProtocolError::new(
       RedisProtocolErrorKind::Unknown,
       "Cannot convert Map to RESP2 frame.",
     )),

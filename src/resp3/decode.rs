@@ -5,21 +5,14 @@
 use crate::resp3::types::*;
 use crate::resp3::utils as resp3_utils;
 use crate::types::*;
-use crate::utils;
-use bytes::BytesMut;
 use nom::bytes::streaming::{take as nom_take, take_until as nom_take_until};
 use nom::combinator::{map as nom_map, map_res as nom_map_res, opt as nom_opt};
-use nom::error::{context, convert_error, Error as NomError, ErrorKind, ParseError, VerboseError, VerboseErrorKind};
 use nom::multi::count as nom_count;
 use nom::number::streaming::be_u8;
 use nom::sequence::terminated as nom_terminated;
 use nom::{Err as NomErr, IResult};
 use std::borrow::Cow;
-use std::collections::{HashMap, HashSet};
-use std::num::{ParseFloatError, ParseIntError};
-use std::slice::Chunks;
 use std::str;
-use std::string::FromUtf8Error;
 
 #[cfg(feature = "index-map")]
 use indexmap::{IndexMap, IndexSet};
@@ -39,7 +32,7 @@ macro_rules! etry (
   }
 );
 
-fn non_streaming_error<'a, T>(data: T, kind: FrameKind) -> Result<T, RedisParseError<&'a [u8]>> {
+fn non_streaming_error<'a, T>(_data: T, kind: FrameKind) -> Result<T, RedisParseError<&'a [u8]>> {
   Err(RedisParseError::new_custom(
     "non_streaming_error",
     format!("Cannot decode streaming {:?}", kind),
@@ -518,7 +511,6 @@ fn d_parse_frame_or_attribute(input: &[u8]) -> IResult<&[u8], DecodedFrame, Redi
 ///
 pub mod complete {
   use super::*;
-  use std::collections::VecDeque;
 
   /// Attempt to parse the contents of `buf`, returning the first valid frame and the number of bytes consumed.
   ///

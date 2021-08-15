@@ -1,9 +1,6 @@
 use crate::resp2::utils as resp2_utils;
-use crate::types::{Redirection, RedisProtocolError, RedisProtocolErrorKind};
+use crate::types::{Redirection, RedisProtocolError};
 use crate::utils;
-use nom::{Err as NomError, Needed};
-use std::borrow::Borrow;
-use std::borrow::Cow;
 use std::mem;
 use std::str;
 
