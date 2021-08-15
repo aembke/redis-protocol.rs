@@ -44,7 +44,6 @@ extern crate pretty_env_logger;
 extern crate cookie_factory;
 #[macro_use]
 extern crate nom;
-#[macro_use]
 extern crate float_cmp;
 
 #[cfg(feature = "index-map")]

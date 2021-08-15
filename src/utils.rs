@@ -282,10 +282,6 @@ pub fn zero_extend(buf: &mut BytesMut, mut amt: usize) {
   }
 }
 
-pub fn redirection_to_frame(prefix: &'static str, slot: u16, server: &str) -> String {
-  format!("{} {} {}", prefix, slot, server)
-}
-
 pub fn is_cluster_error(payload: &str) -> bool {
   if payload.starts_with("MOVED") || payload.starts_with("ASK") {
     payload.split(" ").fold(0, |c, _| c + 1) == 3

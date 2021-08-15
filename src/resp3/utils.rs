@@ -1,5 +1,5 @@
 use crate::resp3::types::*;
-use crate::types::{Redirection, RedisProtocolError, RedisProtocolErrorKind, CRLF};
+use crate::types::{RedisProtocolError, RedisProtocolErrorKind};
 use crate::utils::{digits_in_number, PATTERN_PUBSUB_PREFIX, PUBSUB_PREFIX, PUBSUB_PUSH_PREFIX};
 use cookie_factory::GenError;
 use std::borrow::Cow;
@@ -161,10 +161,6 @@ pub fn attribute_encode_len(attributes: &Option<Attributes>) -> Result<usize, Ge
   };
 
   Ok(attribute_len)
-}
-
-pub fn opt_frame_to_string_panic(f: Option<Frame>, msg: &str) -> String {
-  f.expect(msg).to_string().expect(msg)
 }
 
 pub fn is_normal_pubsub(frames: &Vec<Frame>) -> bool {
