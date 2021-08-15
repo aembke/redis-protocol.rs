@@ -683,9 +683,7 @@ pub mod streaming {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::resp3::utils::{new_map, new_set};
   use crate::utils::ZEROED_KB;
-  use bytes::{BufMut, Bytes};
   use std::convert::TryInto;
   use std::str;
 
@@ -800,7 +798,7 @@ mod tests {
   fn encode_and_verify_empty_with_attributes(input: &Frame, expected: &str) {
     let (attributes, encoded_attributes) = create_attributes();
     let mut frame = input.clone();
-    frame.add_attributes(attributes);
+    let _ = frame.add_attributes(attributes).unwrap();
     let mut buf = empty_bytes();
 
     let len = match complete::encode_bytes(&mut buf, &frame) {
@@ -823,7 +821,7 @@ mod tests {
   fn encode_and_verify_non_empty_with_attributes(input: &Frame, expected: &str) {
     let (attributes, encoded_attributes) = create_attributes();
     let mut frame = input.clone();
-    frame.add_attributes(attributes);
+    let _ = frame.add_attributes(attributes).unwrap();
 
     let mut buf = empty_bytes();
     buf.extend_from_slice(PADDING.as_bytes());
@@ -1226,7 +1224,7 @@ mod tests {
   #[test]
   fn should_encode_simple_map() {
     let expected = "%2\r\n+first\r\n:1\r\n+second\r\n:2\r\n";
-    let mut inner = new_map(None);
+    let mut inner = resp3_utils::new_map(None);
     let k1: Frame = (FrameKind::SimpleString, "first").try_into().unwrap();
     let v1: Frame = 1.into();
     let k2: Frame = (FrameKind::SimpleString, "second").try_into().unwrap();
@@ -1248,14 +1246,14 @@ mod tests {
   #[test]
   fn should_encode_nested_map() {
     let expected = "%2\r\n+first\r\n:1\r\n+second\r\n%1\r\n+third\r\n:3\r\n";
-    let mut inner = new_map(None);
+    let mut inner = resp3_utils::new_map(None);
     let k1: Frame = (FrameKind::SimpleString, "first").try_into().unwrap();
     let v1: Frame = 1.into();
     let k2: Frame = (FrameKind::SimpleString, "second").try_into().unwrap();
     let k3: Frame = (FrameKind::SimpleString, "third").try_into().unwrap();
     let v3: Frame = 3.into();
 
-    let mut v2_inner = new_map(None);
+    let mut v2_inner = resp3_utils::new_map(None);
     v2_inner.insert(k3, v3);
     let v2 = Frame::Map {
       data: v2_inner,
@@ -1330,7 +1328,7 @@ mod tests {
       streaming::encode_string_chunk(buf, offset, chunk4.as_bytes())
     })
     .unwrap();
-    offset = streaming::extend_while_encoding(&mut buf, |buf| streaming::encode_end_string(buf, offset)).unwrap();
+    let _ = streaming::extend_while_encoding(&mut buf, |buf| streaming::encode_end_string(buf, offset)).unwrap();
 
     assert_eq!(buf, expected);
   }
@@ -1378,7 +1376,7 @@ mod tests {
       streaming::encode_aggregate_type_inner_value(buf, offset, &chunk4)
     })
     .unwrap();
-    offset =
+    let _ =
       streaming::extend_while_encoding(&mut buf, |buf| streaming::encode_end_aggregate_type(buf, offset)).unwrap();
 
     assert_eq!(buf, expected);
@@ -1427,7 +1425,7 @@ mod tests {
       streaming::encode_aggregate_type_inner_value(buf, offset, &chunk4)
     })
     .unwrap();
-    offset =
+    let _ =
       streaming::extend_while_encoding(&mut buf, |buf| streaming::encode_end_aggregate_type(buf, offset)).unwrap();
 
     assert_eq!(buf, expected);
@@ -1468,7 +1466,7 @@ mod tests {
       streaming::encode_aggregate_type_inner_kv_pair(buf, offset, &k2, &v2)
     })
     .unwrap();
-    offset =
+    let _ =
       streaming::extend_while_encoding(&mut buf, |buf| streaming::encode_end_aggregate_type(buf, offset)).unwrap();
 
     assert_eq!(buf, expected);

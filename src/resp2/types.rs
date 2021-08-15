@@ -234,7 +234,6 @@ impl<'a> From<&'a Redirection> for Frame {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use utils::ZEROED_KB;
 
   #[test]
   fn should_convert_ask_redirection_to_frame() {

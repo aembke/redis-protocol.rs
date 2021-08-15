@@ -14,9 +14,6 @@ use nom::{Err as NomErr, IResult};
 use std::borrow::Cow;
 use std::str;
 
-#[cfg(feature = "index-map")]
-use indexmap::{IndexMap, IndexSet};
-
 macro_rules! e (
   ($err:expr) => {
     return Err($err.into_nom_error());
@@ -31,13 +28,6 @@ macro_rules! etry (
     }
   }
 );
-
-fn non_streaming_error<'a, T>(_data: T, kind: FrameKind) -> Result<T, RedisParseError<&'a [u8]>> {
-  Err(RedisParseError::new_custom(
-    "non_streaming_error",
-    format!("Cannot decode streaming {:?}", kind),
-  ))
-}
 
 fn map_complete_frame(frame: Frame) -> DecodedFrame {
   DecodedFrame::Complete(frame)

@@ -357,16 +357,8 @@ pub fn reconstruct_set(frames: VecDeque<Frame>, attributes: Option<Attributes>) 
 
 #[cfg(test)]
 mod tests {
-  use super::*;
-  use crate::resp3::encode::complete::encode_bytes;
-  use crate::resp3::types::DecodedFrame::Streaming;
-  use crate::resp3::types::{
-    Auth, Frame, FrameKind, FrameMap, FrameSet, RespVersion, StreamedFrame, VerbatimStringFormat,
-  };
+  use crate::resp3::types::*;
   use crate::resp3::utils::{encode_len, new_map, new_set};
-  use bytes::BytesMut;
-  use std::collections::{HashMap, HashSet};
-  use std::str;
 
   fn create_attributes() -> (FrameMap, usize) {
     let mut out = new_map(None);
@@ -516,7 +508,7 @@ mod tests {
     assert_eq!(streamed_frame.into_frame().unwrap(), expected);
 
     let (attributes, _) = create_attributes();
-    k1.add_attributes(attributes.clone());
+    let _ = k1.add_attributes(attributes.clone()).unwrap();
 
     let mut streamed_frame = StreamedFrame::new(FrameKind::Map);
     streamed_frame.add_frame(k1.clone());
@@ -538,7 +530,7 @@ mod tests {
   #[test]
   #[should_panic]
   fn should_reconstruct_map_odd_elements() {
-    let mut k1 = Frame::SimpleString {
+    let k1 = Frame::SimpleString {
       data: "a".into(),
       attributes: None,
     };
@@ -596,7 +588,7 @@ mod tests {
     assert_eq!(streamed_frame.into_frame().unwrap(), expected);
 
     let (attributes, _) = create_attributes();
-    v1.add_attributes(attributes.clone());
+    let _ = v1.add_attributes(attributes.clone()).unwrap();
 
     let mut streamed_frame = StreamedFrame::new(FrameKind::Set);
     streamed_frame.add_frame(v1.clone());
@@ -773,8 +765,8 @@ mod tests {
     assert_eq!(streamed_frame.into_frame().unwrap(), expected);
 
     let (attributes, _) = create_attributes();
-    v1.add_attributes(attributes.clone());
-    inner_v1.add_attributes(attributes.clone());
+    let _ = v1.add_attributes(attributes.clone()).unwrap();
+    let _ = inner_v1.add_attributes(attributes.clone()).unwrap();
     let mut inner_map = new_map(None);
     inner_map.insert(inner_k1, inner_v1);
     let v2 = Frame::Map {
@@ -809,7 +801,7 @@ mod tests {
     assert_eq!(encode_len(&frame).unwrap(), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
-    frame.add_attributes(attributes);
+    let _ = frame.add_attributes(attributes).unwrap();
     assert_eq!(encode_len(&frame).unwrap(), expected_len + attributes_len);
   }
 
@@ -823,7 +815,7 @@ mod tests {
     assert_eq!(encode_len(&frame).unwrap(), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
-    frame.add_attributes(attributes);
+    let _ = frame.add_attributes(attributes).unwrap();
     assert_eq!(encode_len(&frame).unwrap(), expected_len + attributes_len);
   }
 
@@ -837,7 +829,7 @@ mod tests {
     assert_eq!(encode_len(&frame).unwrap(), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
-    frame.add_attributes(attributes);
+    let _ = frame.add_attributes(attributes).unwrap();
     assert_eq!(encode_len(&frame).unwrap(), expected_len + attributes_len);
   }
 
@@ -851,7 +843,7 @@ mod tests {
     assert_eq!(encode_len(&frame).unwrap(), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
-    frame.add_attributes(attributes);
+    let _ = frame.add_attributes(attributes).unwrap();
     assert_eq!(encode_len(&frame).unwrap(), expected_len + attributes_len);
 
     let mut frame = Frame::Boolean {
@@ -862,7 +854,7 @@ mod tests {
     assert_eq!(encode_len(&frame).unwrap(), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
-    frame.add_attributes(attributes);
+    let _ = frame.add_attributes(attributes).unwrap();
     assert_eq!(encode_len(&frame).unwrap(), expected_len + attributes_len);
   }
 
@@ -876,7 +868,7 @@ mod tests {
     assert_eq!(encode_len(&frame).unwrap(), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
-    frame.add_attributes(attributes);
+    let _ = frame.add_attributes(attributes).unwrap();
     assert_eq!(encode_len(&frame).unwrap(), expected_len + attributes_len);
   }
 
@@ -890,7 +882,7 @@ mod tests {
     assert_eq!(encode_len(&frame).unwrap(), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
-    frame.add_attributes(attributes);
+    let _ = frame.add_attributes(attributes).unwrap();
     assert_eq!(encode_len(&frame).unwrap(), expected_len + attributes_len);
   }
 
@@ -904,7 +896,7 @@ mod tests {
     assert_eq!(encode_len(&frame).unwrap(), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
-    frame.add_attributes(attributes);
+    let _ = frame.add_attributes(attributes).unwrap();
     assert_eq!(encode_len(&frame).unwrap(), expected_len + attributes_len);
   }
 
@@ -918,7 +910,7 @@ mod tests {
     assert_eq!(encode_len(&frame).unwrap(), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
-    frame.add_attributes(attributes);
+    let _ = frame.add_attributes(attributes).unwrap();
     assert_eq!(encode_len(&frame).unwrap(), expected_len + attributes_len);
   }
 
@@ -932,7 +924,7 @@ mod tests {
     assert_eq!(encode_len(&frame).unwrap(), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
-    frame.add_attributes(attributes);
+    let _ = frame.add_attributes(attributes).unwrap();
     assert_eq!(encode_len(&frame).unwrap(), expected_len + attributes_len);
 
     let mut frame = Frame::Double {
@@ -943,34 +935,34 @@ mod tests {
     assert_eq!(encode_len(&frame).unwrap(), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
-    frame.add_attributes(attributes);
+    let _ = frame.add_attributes(attributes).unwrap();
     assert_eq!(encode_len(&frame).unwrap(), expected_len + attributes_len);
   }
 
   #[test]
   fn should_get_encode_len_null() {
-    let mut frame = Frame::Null;
+    let frame = Frame::Null;
     let expected_len = 3;
     assert_eq!(encode_len(&frame).unwrap(), expected_len);
   }
 
   #[test]
   fn should_get_encode_len_hello() {
-    let mut frame = Frame::Hello {
+    let frame = Frame::Hello {
       version: RespVersion::RESP3,
       auth: None,
     };
     let expected_len = 5 + 1 + 1 + 1;
     assert_eq!(encode_len(&frame).unwrap(), expected_len);
 
-    let mut frame = Frame::Hello {
+    let frame = Frame::Hello {
       version: RespVersion::RESP2,
       auth: None,
     };
     let expected_len = 5 + 1 + 1 + 1;
     assert_eq!(encode_len(&frame).unwrap(), expected_len);
 
-    let mut frame = Frame::Hello {
+    let frame = Frame::Hello {
       version: RespVersion::RESP3,
       auth: Some(Auth {
         username: "foo".into(),
@@ -992,7 +984,7 @@ mod tests {
     assert_eq!(encode_len(&frame).unwrap(), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
-    frame.add_attributes(attributes);
+    let _ = frame.add_attributes(attributes).unwrap();
     assert_eq!(encode_len(&frame).unwrap(), expected_len + attributes_len);
 
     let mut frame = Frame::VerbatimString {
@@ -1004,13 +996,13 @@ mod tests {
     assert_eq!(encode_len(&frame).unwrap(), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
-    frame.add_attributes(attributes);
+    let _ = frame.add_attributes(attributes).unwrap();
     assert_eq!(encode_len(&frame).unwrap(), expected_len + attributes_len);
   }
 
   #[test]
   fn should_get_encode_len_chunked_string() {
-    let mut frame = Frame::ChunkedString("foobarbaz".as_bytes().to_vec());
+    let frame = Frame::ChunkedString("foobarbaz".as_bytes().to_vec());
     let expected_len = 1 + 1 + 2 + 9 + 2;
     assert_eq!(encode_len(&frame).unwrap(), expected_len);
   }

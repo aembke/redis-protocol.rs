@@ -1316,7 +1316,6 @@ impl DecodedFrame {
 mod tests {
   use super::*;
   use crate::resp3::utils::new_map;
-  use std::str;
 
   #[test]
   fn should_convert_basic_streaming_buffer_to_frame() {
