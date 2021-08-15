@@ -8,7 +8,8 @@ name = "redis-protocol"
 readme = "README.md"
 repository = "https://github.com/aembke/redis-protocol.rs"
 version = "3.0.0"
-[badges]
+edition = "2018"
+
 [badges.maintenance]
 status = "actively-developed"
 

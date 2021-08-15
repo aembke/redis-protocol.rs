@@ -8,7 +8,6 @@ use crate::types::{RedisProtocolError, RedisProtocolErrorKind, CRLF};
 use crate::utils;
 use bytes::BytesMut;
 use cookie_factory::GenError;
-use resp3::utils::map_encode_len;
 use std::collections::{HashMap, HashSet};
 
 macro_rules! encode_attributes (

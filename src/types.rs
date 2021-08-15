@@ -1,5 +1,6 @@
 use crate::resp2::types::Frame as Resp2Frame;
 use crate::resp3::types::Frame as Resp3Frame;
+use crate::utils;
 use cookie_factory::GenError;
 use nom::error::{ContextError, ErrorKind, FromExternalError, ParseError};
 use nom::{Err as NomError, Needed};
@@ -9,8 +10,6 @@ use std::fmt::{self, Debug};
 use std::io::Error as IoError;
 use std::num::NonZeroUsize;
 use std::str;
-use types::RedisParseError::Nom;
-use utils;
 
 /// Terminating bytes between frames.
 pub const CRLF: &'static str = "\r\n";

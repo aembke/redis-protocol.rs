@@ -1,8 +1,8 @@
 use crate::resp3::utils as resp3_utils;
+use crate::types::{Redirection, RedisProtocolError, RedisProtocolErrorKind, CRLF};
 use crate::utils;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use float_cmp::approx_eq;
-use resp3::utils::reconstruct_map;
 use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -10,7 +10,6 @@ use std::convert::{TryFrom, TryInto};
 use std::hash::{Hash, Hasher};
 use std::mem;
 use std::str;
-use types::{Redirection, RedisProtocolError, RedisProtocolErrorKind, CRLF};
 
 #[cfg(feature = "index-map")]
 use indexmap::{IndexMap, IndexSet};

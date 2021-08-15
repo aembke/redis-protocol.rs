@@ -20,7 +20,6 @@ use std::num::{ParseFloatError, ParseIntError};
 use std::slice::Chunks;
 use std::str;
 use std::string::FromUtf8Error;
-use types::RedisProtocolErrorKind::DecodeError;
 
 #[cfg(feature = "index-map")]
 use indexmap::{IndexMap, IndexSet};

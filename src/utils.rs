@@ -1,10 +1,10 @@
 use crate::resp2::types::Frame as Resp2Frame;
 use crate::resp3::types::Frame as Resp3Frame;
+use crate::types::*;
 use bytes::BytesMut;
 use cookie_factory::GenError;
 use crc16::{State, XMODEM};
 use std::str;
-use types::*;
 
 pub const KB: usize = 1024;
 /// A pre-defined zeroed out KB of data, used to speed up extending buffers while encoding.
