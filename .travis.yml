@@ -1,57 +1,30 @@
 language: rust
-# sudo is required to enable kcov to use the personality syscall
-sudo: required
-dist: trusty
-
-matrix:
+rust:
+  - stable
+  - beta
+  - nightly
+jobs:
   allow_failures:
-  - rust: nightly
+    - rust: nightly
   fast_finish: true
-  include:
-  - rust: nightly
-    env: FEATURES="--features nightly"
-    before_script:
-    - export PATH=$HOME/.cargo/bin:$PATH
-  - rust: stable
-addons:
-  apt:
-    packages:
-    - libcurl4-openssl-dev
-    - libssl-dev
-    - libelf-dev
-    - libdw-dev
-    - binutils-dev
-    - cmake
-    sources:
-    - kalakris-cmake
+cache:
+  apt: true
+  directories:
+    - target/debug/deps
+    - target/debug/build
+    - target/release/deps
+notifications:
+  email:
+    on_success: never
+    on_failure: never
 branches:
   only:
-  - master
-  - develop
-
-before_script: |
-  if [[ "$TRAVIS_RUST_VERSION" != stable ]] && [[ "$TRAVIS_BRANCH" == "master" ]]; then
-    RUSTFLAGS="--cfg procmacro2_semver_exempt" cargo install cargo-tarpaulin
-    cargo install cargo-benchcmp || echo "cargo-benchcmp already installed"
-    cargo install-update -a
-  fi
+  - main
+  - ci
 
 script:
-- cargo clean
-- cargo build
-- cargo test --features index-map
 - cargo test --release --features index-map
-
-after_success: |
-  if [[ "$TRAVIS_RUST_VERSION" != stable ]] && [[ "$TRAVIS_BRANCH" == "master" ]]; then
-    cargo tarpaulin --ciserver travis-ci --coveralls $TRAVIS_JOB_ID
-    cargo bench > benches-variable
-    git fetch
-    git revert --no-commit `git rev-parse HEAD~1`
-    cargo bench > benches-control
-    cargo benchcmp benches-control benches-variable
-  fi
 
 env:
   global:
-  - RUST_BACKTRACE=1
+  - RUST_BACKTRACE=full
