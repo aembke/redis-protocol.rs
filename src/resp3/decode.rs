@@ -173,25 +173,17 @@ fn d_read_to_crlf(input: &[u8]) -> IResult<&[u8], &[u8], RedisParseError<&[u8]>>
   nom_terminated(nom_take_until(CRLF), nom_take(2_usize))(input)
 }
 
-// named!(read_to_crlf<&[u8]>, terminated!(take_until!(CRLF), take!(2)));
-
 fn d_read_to_crlf_s(input: &[u8]) -> IResult<&[u8], &str, RedisParseError<&[u8]>> {
   nom_map_res(d_read_to_crlf, str::from_utf8)(input)
 }
-
-//named!(read_to_crlf_s<&str>, map_res!(read_to_crlf, str::from_utf8));
 
 fn d_read_prefix_len(input: &[u8]) -> IResult<&[u8], usize, RedisParseError<&[u8]>> {
   nom_map_res(d_read_to_crlf_s, to_usize)(input)
 }
 
-//named!(read_prefix_len<usize>, map_res!(read_to_crlf_s, to_usize));
-
 fn d_read_prefix_len_signed(input: &[u8]) -> IResult<&[u8], isize, RedisParseError<&[u8]>> {
   nom_map_res(d_read_to_crlf_s, to_isize)(input)
 }
-
-//named!(read_prefix_len_signed<isize>, map_res!(read_to_crlf_s, to_isize));
 
 fn d_frame_type(input: &[u8]) -> IResult<&[u8], FrameKind, RedisParseError<&[u8]>> {
   let (input, byte) = be_u8(input)?;
@@ -202,31 +194,6 @@ fn d_frame_type(input: &[u8]) -> IResult<&[u8], FrameKind, RedisParseError<&[u8]
 
   Ok((input, kind))
 }
-
-/*
-named!(
-  frame_type<FrameKind>,
-  switch!(be_u8,
-    SIMPLE_STRING_BYTE   => value!(FrameKind::SimpleString) |
-    SIMPLE_ERROR_BYTE    => value!(FrameKind::SimpleError) |
-    NUMBER_BYTE          => value!(FrameKind::Number) |
-    DOUBLE_BYTE          => value!(FrameKind::Double) |
-    BLOB_STRING_BYTE     => value!(FrameKind::BlobString) |
-    BLOB_ERROR_BYTE      => value!(FrameKind::BlobError) |
-    VERBATIM_STRING_BYTE => value!(FrameKind::VerbatimString) |
-    ARRAY_BYTE           => value!(FrameKind::Array) |
-    NULL_BYTE            => value!(FrameKind::Null) |
-    BOOLEAN_BYTE         => value!(FrameKind::Boolean) |
-    MAP_BYTE             => value!(FrameKind::Map) |
-    SET_BYTE             => value!(FrameKind::Set) |
-    ATTRIBUTE_BYTE       => value!(FrameKind::Attribute) |
-    PUSH_BYTE            => value!(FrameKind::Push) |
-    BIG_NUMBER_BYTE      => value!(FrameKind::BigNumber) |
-    CHUNKED_STRING_BYTE  => value!(FrameKind::ChunkedString) |
-    END_STREAM_BYTE      => value!(FrameKind::EndStream)
-  )
-);
- */
 
 fn d_parse_simplestring(input: &[u8]) -> IResult<&[u8], Frame, RedisParseError<&[u8]>> {
   let (input, data) = d_read_to_crlf_s(input)?;
@@ -240,19 +207,6 @@ fn d_parse_simplestring(input: &[u8]) -> IResult<&[u8], Frame, RedisParseError<&
   ))
 }
 
-/*
-named!(
-  parse_simplestring<Frame>,
-  do_parse!(
-    data: read_to_crlf_s
-      >> (Frame::SimpleString {
-        data: data.to_owned(),
-        attributes: None
-      })
-  )
-);
- */
-
 fn d_parse_simpleerror(input: &[u8]) -> IResult<&[u8], Frame, RedisParseError<&[u8]>> {
   let (input, data) = d_read_to_crlf_s(input)?;
 
@@ -265,31 +219,11 @@ fn d_parse_simpleerror(input: &[u8]) -> IResult<&[u8], Frame, RedisParseError<&[
   ))
 }
 
-/*
-named!(
-  parse_simpleerror<Frame>,
-  do_parse!(
-    data: read_to_crlf_s
-      >> (Frame::SimpleError {
-        data: data.to_owned(),
-        attributes: None
-      })
-  )
-);
-*/
-
 fn d_parse_number(input: &[u8]) -> IResult<&[u8], Frame, RedisParseError<&[u8]>> {
   let (input, data) = nom_map_res(d_read_to_crlf_s, to_i64)(input)?;
 
   Ok((input, Frame::Number { data, attributes: None }))
 }
-
-/*
-named!(
-  parse_number<Frame>,
-  do_parse!(data: map_res!(read_to_crlf_s, to_i64) >> (Frame::Number { data, attributes: None }))
-);
- */
 
 fn d_parse_double(input: &[u8]) -> IResult<&[u8], Frame, RedisParseError<&[u8]>> {
   let (input, data) = nom_map_res(d_read_to_crlf_s, to_f64)(input)?;
@@ -297,35 +231,16 @@ fn d_parse_double(input: &[u8]) -> IResult<&[u8], Frame, RedisParseError<&[u8]>>
   Ok((input, Frame::Double { data, attributes: None }))
 }
 
-/*
-named!(
-  parse_double<Frame>,
-  do_parse!(data: map_res!(read_to_crlf_s, to_f64) >> (Frame::Double { data, attributes: None }))
-);
- */
-
 fn d_parse_boolean(input: &[u8]) -> IResult<&[u8], Frame, RedisParseError<&[u8]>> {
   let (input, data) = nom_map_res(d_read_to_crlf_s, to_bool)(input)?;
 
   Ok((input, Frame::Boolean { data, attributes: None }))
 }
 
-/*
-named!(
-  parse_boolean<Frame>,
-  do_parse!(data: map_res!(read_to_crlf_s, to_bool) >> (Frame::Boolean { data, attributes: None }))
-);
-
- */
-
 fn d_parse_null(input: &[u8]) -> IResult<&[u8], Frame, RedisParseError<&[u8]>> {
   let (input, _) = d_read_to_crlf_s(input)?;
   Ok((input, Frame::Null))
 }
-
-/*
-named!(parse_null<Frame>, do_parse!(read_to_crlf >> (Frame::Null)));
-*/
 
 fn d_parse_blobstring(input: &[u8], len: usize) -> IResult<&[u8], Frame, RedisParseError<&[u8]>> {
   let (input, data) = nom_terminated(nom_take(len), nom_take(2_usize))(input)?;
@@ -339,14 +254,6 @@ fn d_parse_blobstring(input: &[u8], len: usize) -> IResult<&[u8], Frame, RedisPa
   ))
 }
 
-/*
-named_args!(
-  parse_blobstring(len: usize)<Frame>,
-  do_parse!(d: terminated!(take!(len), take!(2)) >> (Frame::BlobString{ data: Vec::from(d), attributes: None }))
-);
-
- */
-
 fn d_parse_bloberror(input: &[u8]) -> IResult<&[u8], Frame, RedisParseError<&[u8]>> {
   let (input, len) = d_read_prefix_len(input)?;
   let (input, data) = nom_terminated(nom_take(len), nom_take(2_usize))(input)?;
@@ -359,20 +266,6 @@ fn d_parse_bloberror(input: &[u8]) -> IResult<&[u8], Frame, RedisParseError<&[u8
     },
   ))
 }
-
-/*
-named!(
-  parse_bloberror<Frame>,
-  do_parse!(
-    len: read_prefix_len
-      >> d: terminated!(take!(len), take!(2))
-      >> (Frame::BlobError {
-        data: Vec::from(d),
-        attributes: None
-      })
-  )
-);
-*/
 
 fn d_parse_verbatimstring(input: &[u8]) -> IResult<&[u8], Frame, RedisParseError<&[u8]>> {
   let (input, len) = d_read_prefix_len(input)?;
@@ -390,23 +283,6 @@ fn d_parse_verbatimstring(input: &[u8]) -> IResult<&[u8], Frame, RedisParseError
   ))
 }
 
-/*
-named!(
-  parse_verbatimstring<Frame>,
-  do_parse!(
-    len: read_prefix_len
-      >> format_s: map_res!(terminated!(take!(3), take!(1)), str::from_utf8)
-      >> format: map_res!(value!(format_s), to_verbatimstring_format)
-      >> data: map_res!(terminated!(take!(len - 4), take!(2)), to_string)
-      >> (Frame::VerbatimString {
-        format,
-        data,
-        attributes: None
-      })
-  )
-);
- */
-
 fn d_parse_bignumber(input: &[u8]) -> IResult<&[u8], Frame, RedisParseError<&[u8]>> {
   let (input, data) = d_read_to_crlf(input)?;
 
@@ -419,29 +295,9 @@ fn d_parse_bignumber(input: &[u8]) -> IResult<&[u8], Frame, RedisParseError<&[u8
   ))
 }
 
-/*
-named!(
-  parse_bignumber<Frame>,
-  do_parse!(
-    d: read_to_crlf
-      >> (Frame::BigNumber {
-        data: d.to_vec(),
-        attributes: None
-      })
-  )
-);
-*/
-
 fn d_parse_array_frames(input: &[u8], len: usize) -> IResult<&[u8], Vec<Frame>, RedisParseError<&[u8]>> {
   nom_count(nom_map_res(d_parse_frame_or_attribute, unwrap_complete_frame), len)(input)
 }
-
-/*
-named_args!(
-  parse_array_frames(len: usize) <Vec<Frame>>,
-  count!(map_res!(parse_frame_or_attribute, unwrap_complete_frame), len)
-);
-*/
 
 fn d_parse_kv_pairs(input: &[u8], len: usize) -> IResult<&[u8], FrameMap, RedisParseError<&[u8]>> {
   nom_map_res(
@@ -450,25 +306,11 @@ fn d_parse_kv_pairs(input: &[u8], len: usize) -> IResult<&[u8], FrameMap, RedisP
   )(input)
 }
 
-/*
-named_args!(
-  parse_kv_pairs(len: usize) <FrameMap>,
-  map_res!(count!(map_res!(parse_frame_or_attribute, unwrap_complete_frame), len * 2), to_map)
-);
- */
-
 fn d_parse_array(input: &[u8], len: usize) -> IResult<&[u8], Frame, RedisParseError<&[u8]>> {
   let (input, data) = d_parse_array_frames(input, len)?;
 
   Ok((input, Frame::Array { data, attributes: None }))
 }
-
-/*
-named_args!(
-  parse_array(len: usize)<Frame>,
-  do_parse!(frames: call!(parse_array_frames, len) >> (Frame::Array { data: frames, attributes: None }))
-);
- */
 
 fn d_parse_push(input: &[u8]) -> IResult<&[u8], Frame, RedisParseError<&[u8]>> {
   let (input, len) = d_read_prefix_len(input)?;
@@ -476,20 +318,6 @@ fn d_parse_push(input: &[u8]) -> IResult<&[u8], Frame, RedisParseError<&[u8]>> {
 
   Ok((input, Frame::Push { data, attributes: None }))
 }
-
-/*
-named!(
-  parse_push<Frame>,
-  do_parse!(
-    len: read_prefix_len
-      >> frames: call!(parse_array_frames, len)
-      >> (Frame::Push {
-        data: frames,
-        attributes: None
-      })
-  )
-);
- */
 
 fn d_parse_set(input: &[u8], len: usize) -> IResult<&[u8], Frame, RedisParseError<&[u8]>> {
   let (input, frames) = d_parse_array_frames(input, len)?;
@@ -504,13 +332,6 @@ fn d_parse_set(input: &[u8], len: usize) -> IResult<&[u8], Frame, RedisParseErro
   ))
 }
 
-/*
-named_args!(
-  parse_set(len: usize)<Frame>,
-  do_parse!(frames: map_res!(call!(parse_array_frames, len), to_set) >> (Frame::Set { data: frames, attributes: None }))
-);
-*/
-
 fn d_parse_map(input: &[u8], len: usize) -> IResult<&[u8], Frame, RedisParseError<&[u8]>> {
   let (input, frames) = d_parse_kv_pairs(input, len)?;
 
@@ -523,26 +344,12 @@ fn d_parse_map(input: &[u8], len: usize) -> IResult<&[u8], Frame, RedisParseErro
   ))
 }
 
-/*
-named_args!(
-  parse_map(len: usize)<Frame>,
-  do_parse!(map: call!(parse_kv_pairs, len) >> (Frame::Map { data: map, attributes: None }))
-);
- */
-
 fn d_parse_attribute(input: &[u8]) -> IResult<&[u8], Attributes, RedisParseError<&[u8]>> {
   let (input, len) = d_read_prefix_len(input)?;
   let (input, attributes) = d_parse_kv_pairs(input, len)?;
 
   Ok((input, attributes))
 }
-
-/*
-named!(
-  parse_attribute<Attributes>,
-  do_parse!(len: read_prefix_len >> map: call!(parse_kv_pairs, len) >> (map))
-);
- */
 
 fn d_parse_hello(input: &[u8]) -> IResult<&[u8], Frame, RedisParseError<&[u8]>> {
   let (input, _) = nom_map_res(nom_terminated(nom_take_until(HELLO), nom_take(1_usize)), str::from_utf8)(input)?;
@@ -570,25 +377,6 @@ fn d_parse_hello(input: &[u8]) -> IResult<&[u8], Frame, RedisParseError<&[u8]>> 
   Ok((input, etry!(to_hello(version, auth))))
 }
 
-/*
-named!(
-  parse_hello<Frame>,
-  do_parse!(
-    hello: terminated!(take_until!(HELLO), take!(1))
-      >> version: call!(be_u8)
-      >> auth:
-        opt!(do_parse!(
-          auth: terminated!(take_until!(AUTH), take!(1))
-            >> username: map_res!(terminated!(take_until!(EMPTY_SPACE), take!(1)), str::from_utf8)
-            >> password: map_res!(terminated!(take_until!(EMPTY_SPACE), take!(1)), str::from_utf8)
-            >> ((username, password))
-        ))
-      >> hello: map_res!(call!(map_hello, version, auth), to_hello)
-      >> (hello)
-  )
-);
- */
-
 /// Check for a streaming variant of a frame, and if found then return the prefix bytes only, otherwise return the complete frame.
 ///
 /// Only supported for arrays, sets, maps, and blob strings.
@@ -611,31 +399,6 @@ fn d_check_streaming(input: &[u8], kind: FrameKind) -> IResult<&[u8], DecodedFra
   Ok((input, frame))
 }
 
-/*
-named_args!(
-  check_streaming(kind: FrameKind)<DecodedFrame>,
-  do_parse!(
-    len: read_prefix_len_signed >>
-    frame: switch!(value!(len),
-      // return streaming variant
-      -1 => value!(DecodedFrame::Streaming(StreamedFrame::new(kind))) |
-      // return complete variant
-      _ => do_parse!(
-        len: map_res!(value!(len), isize_to_usize) >>
-        frame: switch!(value!(kind),
-          FrameKind::Array => call!(parse_array, len) |
-          FrameKind::Set => call!(parse_set, len) |
-          FrameKind::Map => call!(parse_map, len)
-        ) >>
-        (DecodedFrame::Complete(frame))
-      )
-    ) >>
-    (frame)
-  )
-);
-
- */
-
 fn d_parse_chunked_string(input: &[u8]) -> IResult<&[u8], DecodedFrame, RedisParseError<&[u8]>> {
   let (input, len) = d_read_prefix_len(input)?;
   let (input, frame) = if len == 0 {
@@ -649,33 +412,10 @@ fn d_parse_chunked_string(input: &[u8]) -> IResult<&[u8], DecodedFrame, RedisPar
   Ok((input, DecodedFrame::Complete(frame)))
 }
 
-/*
-named!(
-  parse_chunked_string<DecodedFrame>,
-  do_parse!(
-    len: read_prefix_len
-      >> frame:
-        switch!(value!(len),
-          0 => do_parse!(extra: read_to_crlf >> (Frame::new_end_stream())) |
-          _ => do_parse!(d: terminated!(take!(len), take!(2)) >> (Frame::ChunkedString(Vec::from(d))))
-        )
-      >> (DecodedFrame::Complete(frame))
-  )
-);
-
- */
-
 fn d_return_end_stream(input: &[u8]) -> IResult<&[u8], DecodedFrame, RedisParseError<&[u8]>> {
   let (input, _) = d_read_to_crlf(input)?;
   Ok((input, DecodedFrame::Complete(Frame::new_end_stream())))
 }
-
-/*
-named!(
-  return_end_stream<DecodedFrame>,
-  do_parse!(extra: read_to_crlf >> (DecodedFrame::Complete(Frame::new_end_stream())))
-);
- */
 
 fn d_parse_non_attribute_frame(input: &[u8], kind: FrameKind) -> IResult<&[u8], DecodedFrame, RedisParseError<&[u8]>> {
   let (input, frame) = match kind {
@@ -708,36 +448,6 @@ fn d_parse_non_attribute_frame(input: &[u8], kind: FrameKind) -> IResult<&[u8], 
   Ok((input, frame))
 }
 
-/*
-named_args!(
-  parse_non_attribute_frame(kind: FrameKind)<DecodedFrame>,
-  do_parse!(
-      frame:
-        switch!(value!(kind),
-          FrameKind::Array          => call!(check_streaming, kind) |
-          FrameKind::BlobString     => call!(check_streaming, kind) |
-          FrameKind::SimpleString   => map!(call!(parse_simplestring), map_complete_frame) |
-          FrameKind::SimpleError    => map!(call!(parse_simpleerror), map_complete_frame) |
-          FrameKind::Number         => map!(call!(parse_number), map_complete_frame) |
-          FrameKind::Null           => map!(call!(parse_null), map_complete_frame) |
-          FrameKind::Double         => map!(call!(parse_double), map_complete_frame) |
-          FrameKind::Boolean        => map!(call!(parse_boolean), map_complete_frame) |
-          FrameKind::BlobError      => map!(call!(parse_bloberror), map_complete_frame) |
-          FrameKind::VerbatimString => map!(call!(parse_verbatimstring), map_complete_frame) |
-          FrameKind::Map            => call!(check_streaming, kind) |
-          FrameKind::Set            => call!(check_streaming, kind) |
-          FrameKind::Push           => map!(call!(parse_push), map_complete_frame) |
-          FrameKind::BigNumber      => map!(call!(parse_bignumber), map_complete_frame) |
-          FrameKind::Hello          => map!(call!(parse_hello), map_complete_frame) |
-          FrameKind::ChunkedString  => call!(parse_chunked_string) |
-          FrameKind::EndStream      => call!(return_end_stream)
-        )
-      >> (frame)
-  )
-);
-
- */
-
 fn d_parse_attribute_and_frame(input: &[u8], kind: FrameKind) -> IResult<&[u8], DecodedFrame, RedisParseError<&[u8]>> {
   let (input, attributes) = d_parse_attribute(input)?;
   let (input, next_frame) = d_parse_non_attribute_frame(input, kind)?;
@@ -756,22 +466,6 @@ fn d_parse_frame_or_attribute(input: &[u8]) -> IResult<&[u8], DecodedFrame, Redi
 
   Ok((input, frame))
 }
-
-/*
-named!(
-  parse_frame_or_attribute<DecodedFrame>,
-  do_parse!(
-    kind: frame_type
-      >> frame:
-        switch!(value!(kind),
-          // parse the attribute, then parse the next frame, then attach the attribute to the next frame, and return that frame
-          FrameKind::Attribute => call!(parse_attribute_and_frame, kind) |
-          _                    => call!(parse_non_attribute_frame, kind)
-        )
-      >> (frame)
-  )
-);
-*/
 
 /// Decoding functions for complete frames. **If a streamed frame is detected it will result in an error.**
 ///
