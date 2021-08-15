@@ -631,7 +631,7 @@ pub mod streaming {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use bytes::BytesMut;
+  use bytes::{Bytes, BytesMut};
   use std::str;
 
   const PADDING: &'static str = "FOOBARBAZ";
@@ -1104,6 +1104,143 @@ mod tests {
     decode_and_verify_padded_some(&mut bytes, &expected);
   }
 
-  // TODO  map, set, array, push
+  #[test]
+  fn should_decode_map_no_nulls() {
+    let k1 = Frame::SimpleString {
+      data: "first".into(),
+      attributes: None,
+    };
+    let v1 = Frame::Number {
+      data: 1,
+      attributes: None,
+    };
+    let k2 = Frame::BlobString {
+      data: "second".into(),
+      attributes: None,
+    };
+    let v2 = Frame::Double {
+      data: 4.2,
+      attributes: None,
+    };
+
+    let mut expected_map = resp3_utils::new_map(None);
+    expected_map.insert(k1, v1);
+    expected_map.insert(k2, v2);
+    let expected = (
+      Some(Frame::Map {
+        data: expected_map,
+        attributes: None,
+      }),
+      34,
+    );
+    let mut bytes: BytesMut = "%2\r\n+first\r\n:1\r\n$6\r\nsecond\r\n,4.2\r\n".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+  }
+
+  #[test]
+  fn should_decode_map_with_nulls() {
+    let k1 = Frame::SimpleString {
+      data: "first".into(),
+      attributes: None,
+    };
+    let v1 = Frame::Number {
+      data: 1,
+      attributes: None,
+    };
+    let k2 = Frame::Number {
+      data: 2,
+      attributes: None,
+    };
+    let v2 = Frame::Null;
+    let k3 = Frame::BlobString {
+      data: "second".into(),
+      attributes: None,
+    };
+    let v3 = Frame::Double {
+      data: 4.2,
+      attributes: None,
+    };
+
+    let mut expected_map = resp3_utils::new_map(None);
+    expected_map.insert(k1, v1);
+    expected_map.insert(k2, v2);
+    expected_map.insert(k3, v3);
+    let expected = (
+      Some(Frame::Map {
+        data: expected_map,
+        attributes: None,
+      }),
+      41,
+    );
+    let mut bytes: BytesMut = "%3\r\n+first\r\n:1\r\n:2\r\n_\r\n$6\r\nsecond\r\n,4.2\r\n".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+  }
+
+  #[test]
+  fn should_decode_set_no_nulls() {
+    let mut expected_set = resp3_utils::new_set(None);
+    expected_set.insert(Frame::Number {
+      data: 1,
+      attributes: None,
+    });
+    expected_set.insert(Frame::SimpleString {
+      data: "2".into(),
+      attributes: None,
+    });
+    expected_set.insert(Frame::BlobString {
+      data: "foobar".into(),
+      attributes: None,
+    });
+    expected_set.insert(Frame::Double {
+      data: 4.2,
+      attributes: None,
+    });
+    let expected = (
+      Some(Frame::Set {
+        data: expected_set,
+        attributes: None,
+      }),
+      30,
+    );
+    let mut bytes: BytesMut = "~4\r\n:1\r\n+2\r\n$6\r\nfoobar\r\n,4.2\r\n".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+  }
+
+  #[test]
+  fn should_decode_set_with_nulls() {
+    let mut expected_set = resp3_utils::new_set(None);
+    expected_set.insert(Frame::Number {
+      data: 1,
+      attributes: None,
+    });
+    expected_set.insert(Frame::SimpleString {
+      data: "2".into(),
+      attributes: None,
+    });
+    expected_set.insert(Frame::Null);
+    expected_set.insert(Frame::Double {
+      data: 4.2,
+      attributes: None,
+    });
+    let expected = (
+      Some(Frame::Set {
+        data: expected_set,
+        attributes: None,
+      }),
+      21,
+    );
+    let mut bytes: BytesMut = "~4\r\n:1\r\n+2\r\n_\r\n,4.2\r\n".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+  }
+
+  // TODO push
   // TODO attributes, streaming
 }
