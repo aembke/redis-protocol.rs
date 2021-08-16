@@ -164,13 +164,13 @@ pub fn attribute_encode_len(attributes: &Option<Attributes>) -> Result<usize, Ge
 }
 
 pub fn is_normal_pubsub(frames: &Vec<Frame>) -> bool {
-  frames.len() == 4
+  (frames.len() == 4 || frames.len() == 5)
     && frames[0].as_str().map(|s| s == PUBSUB_PUSH_PREFIX).unwrap_or(false)
     && frames[1].as_str().map(|s| s == PUBSUB_PREFIX).unwrap_or(false)
 }
 
 pub fn is_pattern_pubsub(frames: &Vec<Frame>) -> bool {
-  frames.len() == 4
+  (frames.len() == 4 || frames.len() == 5)
     && frames[0].as_str().map(|s| s == PUBSUB_PUSH_PREFIX).unwrap_or(false)
     && frames[1].as_str().map(|s| s == PATTERN_PUBSUB_PREFIX).unwrap_or(false)
 }

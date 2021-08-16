@@ -631,7 +631,8 @@ pub mod streaming {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use bytes::{Bytes, BytesMut};
+  use crate::resp3::decode::complete::decode;
+  use bytes::BytesMut;
   use std::str;
 
   const PADDING: &'static str = "FOOBARBAZ";
@@ -1241,6 +1242,117 @@ mod tests {
     decode_and_verify_padded_some(&mut bytes, &expected);
   }
 
-  // TODO push
+  #[test]
+  fn should_decode_push_pubsub() {
+    let expected = (
+      Some(Frame::Push {
+        data: vec![
+          Frame::SimpleString {
+            data: "pubsub".into(),
+            attributes: None,
+          },
+          Frame::SimpleString {
+            data: "message".into(),
+            attributes: None,
+          },
+          Frame::SimpleString {
+            data: "somechannel".into(),
+            attributes: None,
+          },
+          Frame::SimpleString {
+            data: "this is the message".into(),
+            attributes: None,
+          },
+        ],
+        attributes: None,
+      }),
+      59,
+    );
+    let mut bytes: BytesMut = ">4\r\n+pubsub\r\n+message\r\n+somechannel\r\n+this is the message\r\n".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+
+    let (frame, _) = decode(&bytes).unwrap().unwrap();
+    assert!(frame.is_pubsub_message());
+    assert!(frame.is_normal_pubsub());
+  }
+
+  #[test]
+  fn should_decode_push_pattern_pubsub() {
+    let expected = (
+      Some(Frame::Push {
+        data: vec![
+          Frame::SimpleString {
+            data: "pubsub".into(),
+            attributes: None,
+          },
+          Frame::SimpleString {
+            data: "pmessage".into(),
+            attributes: None,
+          },
+          Frame::SimpleString {
+            data: "somechannel".into(),
+            attributes: None,
+          },
+          Frame::SimpleString {
+            data: "this is the message".into(),
+            attributes: None,
+          },
+        ],
+        attributes: None,
+      }),
+      60,
+    );
+    let mut bytes: BytesMut = ">4\r\n+pubsub\r\n+pmessage\r\n+somechannel\r\n+this is the message\r\n".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+
+    let (frame, _) = decode(&bytes).unwrap().unwrap();
+    assert!(frame.is_pattern_pubsub_message());
+    assert!(frame.is_pubsub_message());
+  }
+
+  #[test]
+  fn should_decode_keyevent_message() {
+    let expected = (
+      Some(Frame::Push {
+        data: vec![
+          Frame::SimpleString {
+            data: "pubsub".into(),
+            attributes: None,
+          },
+          Frame::SimpleString {
+            data: "pmessage".into(),
+            attributes: None,
+          },
+          Frame::SimpleString {
+            data: "__key*".into(),
+            attributes: None,
+          },
+          Frame::SimpleString {
+            data: "__keyevent@0__:set".into(),
+            attributes: None,
+          },
+          Frame::SimpleString {
+            data: "foo".into(),
+            attributes: None,
+          },
+        ],
+        attributes: None,
+      }),
+      60,
+    );
+    let mut bytes: BytesMut = ">5\r\n+pubsub\r\n+pmessage\r\n+__key*\r\n+__keyevent@0__:set\r\n+foo\r\n".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+
+    let (frame, _) = decode(&bytes).unwrap().unwrap();
+    assert!(frame.is_pattern_pubsub_message());
+    assert!(frame.is_pubsub_message());
+  }
+
   // TODO attributes, streaming
 }
