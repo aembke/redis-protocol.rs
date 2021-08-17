@@ -88,7 +88,6 @@ pub type FrameMap = IndexMap<Frame, Frame>;
 pub type FrameSet = IndexSet<Frame>;
 
 /// Additional information returned alongside a frame.
-#[cfg(feature = "index-map")]
 pub type Attributes = FrameMap;
 
 /// Enum describing the byte ordering for numbers and doubles when cast to byte slices.
@@ -1110,18 +1109,24 @@ impl Frame {
     }
   }
 
-  /// Attempt to read the frame as an `i64` without casting.
+  /// Attempt to read the frame as an `i64`.
   pub fn as_i64(&self) -> Option<i64> {
     match *self {
       Frame::Number { ref data, .. } => Some(*data),
+      Frame::Double { ref data, .. } => Some(*data as i64),
+      Frame::BlobString { ref data, .. } => str::from_utf8(data).ok().and_then(|s| s.parse::<i64>().ok()),
+      Frame::SimpleString { ref data, .. } => data.parse::<i64>().ok(),
       _ => None,
     }
   }
 
-  /// Attempt to read the frame as an `f64` without casting.
+  /// Attempt to read the frame as an `f64`.
   pub fn as_f64(&self) -> Option<f64> {
     match *self {
       Frame::Double { ref data, .. } => Some(*data),
+      Frame::Number { ref data, .. } => Some(*data as f64),
+      Frame::BlobString { ref data, .. } => str::from_utf8(data).ok().and_then(|s| s.parse::<f64>().ok()),
+      Frame::SimpleString { ref data, .. } => data.parse::<f64>().ok(),
       _ => None,
     }
   }
@@ -1188,20 +1193,53 @@ impl Frame {
     }
   }
 
-  /// Attempt to read the number of bytes needed to encode the frame without allocating.
+  /// Attempt to read the number of bytes needed to encode the frame.
   pub fn encode_len(&self) -> Result<usize, RedisProtocolError> {
     resp3_utils::encode_len(self).map_err(|e| e.into())
   }
 }
 
-/// A helper struct for reading in streams of bytes such that the underlying bytes don't need to be in one continuous, growing block of memory.
+/// A helper struct for reading and managing streaming data types.
+///
+/// ```rust edition2018
+/// use redis_protocol::resp3::decode::streaming::decode;
+///
+/// fn main() {
+///   let parts = vec!["*?\r\n", ":1\r\n", ":2\r\n:3\r\n", ".\r\n"];
+///
+///   let (frame, _) = decode(parts[0].as_bytes()).unwrap().unwrap();
+///   assert!(frame.is_streaming());
+///   let mut streaming = frame.into_streaming_frame().unwrap();
+///   println!("Reading streaming {:?}", streaming.kind);
+///
+///   let (frame, _) = decode(parts[1].as_bytes()).unwrap().unwrap();
+///   assert!(frame.is_complete());
+///   // add frames to the buffer until we reach the terminating byte sequence
+///   streaming.add_frame(frame.into_complete_frame().unwrap());
+///
+///   let (frame, _) = decode(parts[2].as_bytes()).unwrap().unwrap();
+///   assert!(frame.is_complete());
+///   streaming.add_frame(frame.into_complete_frame().unwrap());
+///
+///   let (frame, _) = decode(parts[3].as_bytes()).unwrap().unwrap();
+///   assert!(frame.is_complete());
+///   streaming.add_frame(frame.into_complete_frame().unwrap());
+///
+///   assert!(streaming.is_finished());
+///   // convert the buffer into one frame
+///   let result = streaming.into_frame().unwrap();
+///
+///   // Frame::Array { data: [1, 2, 3], attributes: None }
+///   println!("{:?}", result);
+/// }
+/// ```
 #[derive(Debug, Eq, PartialEq)]
 pub struct StreamedFrame {
   /// The internal buffer of frames and attributes.
   buffer: VecDeque<Frame>,
   /// Any leading attributes before the stream starts.
   pub attributes: Option<Attributes>,
-  /// The type of frame to which this will eventually be cast.
+  /// The data type being streamed.  
   pub kind: FrameKind,
 }
 

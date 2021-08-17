@@ -608,7 +608,7 @@ pub mod streaming {
 
   /// Encode the bytes making up one chunk of a streaming blob string.
   ///
-  /// If `data` is empty this will do the same thing as [encode_end_streaming_string] to signal that the streamed string is finished.
+  /// If `data` is empty this will do the same thing as [encode_end_string] to signal that the streamed string is finished.
   pub fn encode_string_chunk(buf: &mut [u8], offset: usize, data: &[u8]) -> Result<usize, RedisProtocolError> {
     gen_streaming_string_chunk((buf, offset), data)
       .map(|(_, l)| l)
