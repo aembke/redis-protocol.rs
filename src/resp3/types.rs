@@ -74,25 +74,22 @@ pub const EMPTY_SPACE: &'static str = " ";
 /// Byte representation of `AUTH`.
 pub const AUTH: &'static str = "AUTH";
 
-/// Additional information returned alongside a frame.
-#[cfg(not(feature = "index-map"))]
-pub type Attributes = HashMap<Frame, Frame>;
 /// A map struct for frames.
 #[cfg(not(feature = "index-map"))]
 pub type FrameMap = HashMap<Frame, Frame>;
 /// A set struct for frames.
 #[cfg(not(feature = "index-map"))]
 pub type FrameSet = HashSet<Frame>;
-
-/// Additional information returned alongside a frame.
-#[cfg(feature = "index-map")]
-pub type Attributes = IndexMap<Frame, Frame>;
 /// A map struct for frames.
 #[cfg(feature = "index-map")]
 pub type FrameMap = IndexMap<Frame, Frame>;
 /// A set struct for frames.
 #[cfg(feature = "index-map")]
 pub type FrameSet = IndexSet<Frame>;
+
+/// Additional information returned alongside a frame.
+#[cfg(feature = "index-map")]
+pub type Attributes = FrameMap;
 
 /// Enum describing the byte ordering for numbers and doubles when cast to byte slices.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1198,7 +1195,7 @@ impl Frame {
 }
 
 /// A helper struct for reading in streams of bytes such that the underlying bytes don't need to be in one continuous, growing block of memory.
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct StreamedFrame {
   /// The internal buffer of frames and attributes.
   buffer: VecDeque<Frame>,
@@ -1264,7 +1261,7 @@ impl StreamedFrame {
 }
 
 /// Wrapper enum around a decoded frame that supports streaming frames.
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum DecodedFrame {
   Streaming(StreamedFrame),
   Complete(Frame),

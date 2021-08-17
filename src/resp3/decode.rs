@@ -384,7 +384,6 @@ fn d_check_streaming(input: &[u8], kind: FrameKind) -> IResult<&[u8], DecodedFra
 fn d_parse_chunked_string(input: &[u8]) -> IResult<&[u8], DecodedFrame, RedisParseError<&[u8]>> {
   let (input, len) = d_read_prefix_len(input)?;
   let (input, frame) = if len == 0 {
-    let (input, _) = d_read_to_crlf(input)?;
     (input, Frame::new_end_stream())
   } else {
     let (input, contents) = nom_terminated(nom_take(len), nom_take(2_usize))(input)?;
@@ -430,8 +429,9 @@ fn d_parse_non_attribute_frame(input: &[u8], kind: FrameKind) -> IResult<&[u8], 
   Ok((input, frame))
 }
 
-fn d_parse_attribute_and_frame(input: &[u8], kind: FrameKind) -> IResult<&[u8], DecodedFrame, RedisParseError<&[u8]>> {
+fn d_parse_attribute_and_frame(input: &[u8]) -> IResult<&[u8], DecodedFrame, RedisParseError<&[u8]>> {
   let (input, attributes) = d_parse_attribute(input)?;
+  let (input, kind) = d_frame_type(input)?;
   let (input, next_frame) = d_parse_non_attribute_frame(input, kind)?;
   let frame = etry!(attach_attributes(attributes, next_frame));
 
@@ -441,7 +441,7 @@ fn d_parse_attribute_and_frame(input: &[u8], kind: FrameKind) -> IResult<&[u8], 
 fn d_parse_frame_or_attribute(input: &[u8]) -> IResult<&[u8], DecodedFrame, RedisParseError<&[u8]>> {
   let (input, kind) = d_frame_type(input)?;
   let (input, frame) = if let FrameKind::Attribute = kind {
-    d_parse_attribute_and_frame(input, kind)?
+    d_parse_attribute_and_frame(input)?
   } else {
     d_parse_non_attribute_frame(input, kind)?
   };
@@ -632,6 +632,7 @@ pub mod streaming {
 mod tests {
   use super::*;
   use crate::resp3::decode::complete::decode;
+  use crate::resp3::decode::streaming::decode as stream_decode;
   use bytes::BytesMut;
   use std::str;
 
@@ -1354,5 +1355,387 @@ mod tests {
     assert!(frame.is_pubsub_message());
   }
 
-  // TODO attributes, streaming
+  #[test]
+  fn should_parse_outer_attributes() {
+    let mut expected_inner_attrs = resp3_utils::new_map(None);
+    expected_inner_attrs.insert(
+      Frame::BlobString {
+        data: "a".into(),
+        attributes: None,
+      },
+      Frame::Double {
+        data: 0.1923,
+        attributes: None,
+      },
+    );
+    expected_inner_attrs.insert(
+      Frame::BlobString {
+        data: "b".into(),
+        attributes: None,
+      },
+      Frame::Double {
+        data: 0.0012,
+        attributes: None,
+      },
+    );
+    let expected_inner_attrs = Frame::Map {
+      data: expected_inner_attrs,
+      attributes: None,
+    };
+
+    let mut expected_attrs = resp3_utils::new_map(None);
+    expected_attrs.insert(
+      Frame::SimpleString {
+        data: "key-popularity".into(),
+        attributes: None,
+      },
+      expected_inner_attrs,
+    );
+
+    let expected = (
+      Some(Frame::Array {
+        data: vec![
+          Frame::Number {
+            data: 2039123,
+            attributes: None,
+          },
+          Frame::Number {
+            data: 9543892,
+            attributes: None,
+          },
+        ],
+        attributes: Some(expected_attrs.into()),
+      }),
+      81,
+    );
+
+    let mut bytes: BytesMut =
+      "|1\r\n+key-popularity\r\n%2\r\n$1\r\na\r\n,0.1923\r\n$1\r\nb\r\n,0.0012\r\n*2\r\n:2039123\r\n:9543892\r\n"
+        .into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+  }
+
+  #[test]
+  fn should_parse_inner_attributes() {
+    let mut expected_attrs = resp3_utils::new_map(None);
+    expected_attrs.insert(
+      Frame::SimpleString {
+        data: "ttl".into(),
+        attributes: None,
+      },
+      Frame::Number {
+        data: 3600,
+        attributes: None,
+      },
+    );
+
+    let expected = (
+      Some(Frame::Array {
+        data: vec![
+          Frame::Number {
+            data: 1,
+            attributes: None,
+          },
+          Frame::Number {
+            data: 2,
+            attributes: None,
+          },
+          Frame::Number {
+            data: 3,
+            attributes: Some(expected_attrs),
+          },
+        ],
+        attributes: None,
+      }),
+      33,
+    );
+    let mut bytes: BytesMut = "*3\r\n:1\r\n:2\r\n|1\r\n+ttl\r\n:3600\r\n:3\r\n".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+  }
+
+  #[test]
+  fn should_decode_end_stream() {
+    let bytes: BytesMut = ";0\r\n".into();
+    let (frame, _) = stream_decode(&bytes).unwrap().unwrap();
+    assert_eq!(frame, DecodedFrame::Complete(Frame::new_end_stream()))
+  }
+
+  #[test]
+  fn should_decode_streaming_string() {
+    let mut bytes: BytesMut = "$?\r\n;4\r\nHell\r\n;6\r\no worl\r\n;1\r\nd\r\n;0\r\n".into();
+
+    let (frame, amt) = stream_decode(&bytes).unwrap().unwrap();
+    assert_eq!(
+      frame,
+      DecodedFrame::Streaming(StreamedFrame::new(FrameKind::BlobString))
+    );
+    assert_eq!(amt, 4);
+    let _ = bytes.split_to(amt);
+
+    let (frame, amt) = stream_decode(&bytes).unwrap().unwrap();
+    assert_eq!(frame, DecodedFrame::Complete(Frame::ChunkedString("Hell".into())));
+    assert_eq!(amt, 10);
+    let _ = bytes.split_to(amt);
+
+    let (frame, amt) = stream_decode(&bytes).unwrap().unwrap();
+    assert_eq!(frame, DecodedFrame::Complete(Frame::ChunkedString("o worl".into())));
+    assert_eq!(amt, 12);
+    let _ = bytes.split_to(amt);
+
+    let (frame, amt) = stream_decode(&bytes).unwrap().unwrap();
+    assert_eq!(frame, DecodedFrame::Complete(Frame::ChunkedString("d".into())));
+    assert_eq!(amt, 7);
+    let _ = bytes.split_to(amt);
+
+    let (frame, amt) = stream_decode(&bytes).unwrap().unwrap();
+    assert_eq!(frame, DecodedFrame::Complete(Frame::new_end_stream()));
+    assert_eq!(amt, 4);
+  }
+
+  #[test]
+  fn should_decode_streaming_array() {
+    let mut bytes: BytesMut = "*?\r\n:1\r\n:2\r\n:3\r\n.\r\n".into();
+
+    let (frame, amt) = stream_decode(&bytes).unwrap().unwrap();
+    assert_eq!(frame, DecodedFrame::Streaming(StreamedFrame::new(FrameKind::Array)));
+    assert_eq!(amt, 4);
+    let _ = bytes.split_to(amt);
+    let mut streamed = frame.into_streaming_frame().unwrap();
+
+    let (frame, amt) = stream_decode(&bytes).unwrap().unwrap();
+    assert_eq!(
+      frame,
+      DecodedFrame::Complete(Frame::Number {
+        data: 1,
+        attributes: None
+      })
+    );
+    assert_eq!(amt, 4);
+    let _ = bytes.split_to(amt);
+    streamed.add_frame(frame.into_complete_frame().unwrap());
+
+    let (frame, amt) = stream_decode(&bytes).unwrap().unwrap();
+    assert_eq!(
+      frame,
+      DecodedFrame::Complete(Frame::Number {
+        data: 2,
+        attributes: None
+      })
+    );
+    assert_eq!(amt, 4);
+    let _ = bytes.split_to(amt);
+    streamed.add_frame(frame.into_complete_frame().unwrap());
+
+    let (frame, amt) = stream_decode(&bytes).unwrap().unwrap();
+    assert_eq!(
+      frame,
+      DecodedFrame::Complete(Frame::Number {
+        data: 3,
+        attributes: None
+      })
+    );
+    assert_eq!(amt, 4);
+    let _ = bytes.split_to(amt);
+    streamed.add_frame(frame.into_complete_frame().unwrap());
+
+    let (frame, amt) = stream_decode(&bytes).unwrap().unwrap();
+    assert_eq!(frame, DecodedFrame::Complete(Frame::new_end_stream()));
+    assert_eq!(amt, 3);
+    streamed.add_frame(frame.into_complete_frame().unwrap());
+
+    assert!(streamed.is_finished());
+    let actual = streamed.into_frame().unwrap();
+    let expected = Frame::Array {
+      data: vec![
+        Frame::Number {
+          data: 1,
+          attributes: None,
+        },
+        Frame::Number {
+          data: 2,
+          attributes: None,
+        },
+        Frame::Number {
+          data: 3,
+          attributes: None,
+        },
+      ],
+      attributes: None,
+    };
+
+    assert_eq!(actual, expected);
+  }
+
+  #[test]
+  fn should_decode_streaming_set() {
+    let mut bytes: BytesMut = "~?\r\n:1\r\n:2\r\n:3\r\n.\r\n".into();
+
+    let (frame, amt) = stream_decode(&bytes).unwrap().unwrap();
+    assert_eq!(frame, DecodedFrame::Streaming(StreamedFrame::new(FrameKind::Set)));
+    assert_eq!(amt, 4);
+    let _ = bytes.split_to(amt);
+    let mut streamed = frame.into_streaming_frame().unwrap();
+
+    let (frame, amt) = stream_decode(&bytes).unwrap().unwrap();
+    assert_eq!(
+      frame,
+      DecodedFrame::Complete(Frame::Number {
+        data: 1,
+        attributes: None
+      })
+    );
+    assert_eq!(amt, 4);
+    let _ = bytes.split_to(amt);
+    streamed.add_frame(frame.into_complete_frame().unwrap());
+
+    let (frame, amt) = stream_decode(&bytes).unwrap().unwrap();
+    assert_eq!(
+      frame,
+      DecodedFrame::Complete(Frame::Number {
+        data: 2,
+        attributes: None
+      })
+    );
+    assert_eq!(amt, 4);
+    let _ = bytes.split_to(amt);
+    streamed.add_frame(frame.into_complete_frame().unwrap());
+
+    let (frame, amt) = stream_decode(&bytes).unwrap().unwrap();
+    assert_eq!(
+      frame,
+      DecodedFrame::Complete(Frame::Number {
+        data: 3,
+        attributes: None
+      })
+    );
+    assert_eq!(amt, 4);
+    let _ = bytes.split_to(amt);
+    streamed.add_frame(frame.into_complete_frame().unwrap());
+
+    let (frame, amt) = stream_decode(&bytes).unwrap().unwrap();
+    assert_eq!(frame, DecodedFrame::Complete(Frame::new_end_stream()));
+    assert_eq!(amt, 3);
+    streamed.add_frame(frame.into_complete_frame().unwrap());
+
+    assert!(streamed.is_finished());
+    let actual = streamed.into_frame().unwrap();
+    let mut expected_result = resp3_utils::new_set(None);
+    expected_result.insert(Frame::Number {
+      data: 1,
+      attributes: None,
+    });
+    expected_result.insert(Frame::Number {
+      data: 2,
+      attributes: None,
+    });
+    expected_result.insert(Frame::Number {
+      data: 3,
+      attributes: None,
+    });
+
+    let expected = Frame::Set {
+      data: expected_result,
+      attributes: None,
+    };
+
+    assert_eq!(actual, expected);
+  }
+
+  #[test]
+  fn should_decode_streaming_map() {
+    let mut bytes: BytesMut = "%?\r\n+a\r\n:1\r\n+b\r\n:2\r\n.\r\n".into();
+
+    let (frame, amt) = stream_decode(&bytes).unwrap().unwrap();
+    assert_eq!(frame, DecodedFrame::Streaming(StreamedFrame::new(FrameKind::Map)));
+    assert_eq!(amt, 4);
+    let _ = bytes.split_to(amt);
+    let mut streamed = frame.into_streaming_frame().unwrap();
+
+    let (frame, amt) = stream_decode(&bytes).unwrap().unwrap();
+    assert_eq!(
+      frame,
+      DecodedFrame::Complete(Frame::SimpleString {
+        data: "a".into(),
+        attributes: None
+      })
+    );
+    assert_eq!(amt, 4);
+    let _ = bytes.split_to(amt);
+    streamed.add_frame(frame.into_complete_frame().unwrap());
+
+    let (frame, amt) = stream_decode(&bytes).unwrap().unwrap();
+    assert_eq!(
+      frame,
+      DecodedFrame::Complete(Frame::Number {
+        data: 1.into(),
+        attributes: None
+      })
+    );
+    assert_eq!(amt, 4);
+    let _ = bytes.split_to(amt);
+    streamed.add_frame(frame.into_complete_frame().unwrap());
+
+    let (frame, amt) = stream_decode(&bytes).unwrap().unwrap();
+    assert_eq!(
+      frame,
+      DecodedFrame::Complete(Frame::SimpleString {
+        data: "b".into(),
+        attributes: None
+      })
+    );
+    assert_eq!(amt, 4);
+    let _ = bytes.split_to(amt);
+    streamed.add_frame(frame.into_complete_frame().unwrap());
+
+    let (frame, amt) = stream_decode(&bytes).unwrap().unwrap();
+    assert_eq!(
+      frame,
+      DecodedFrame::Complete(Frame::Number {
+        data: 2.into(),
+        attributes: None
+      })
+    );
+    assert_eq!(amt, 4);
+    let _ = bytes.split_to(amt);
+    streamed.add_frame(frame.into_complete_frame().unwrap());
+
+    let (frame, amt) = stream_decode(&bytes).unwrap().unwrap();
+    assert_eq!(frame, DecodedFrame::Complete(Frame::new_end_stream()));
+    assert_eq!(amt, 3);
+    streamed.add_frame(frame.into_complete_frame().unwrap());
+
+    assert!(streamed.is_finished());
+    let actual = streamed.into_frame().unwrap();
+    let mut expected_result = resp3_utils::new_map(None);
+    expected_result.insert(
+      Frame::SimpleString {
+        data: "a".into(),
+        attributes: None,
+      },
+      Frame::Number {
+        data: 1,
+        attributes: None,
+      },
+    );
+    expected_result.insert(
+      Frame::SimpleString {
+        data: "b".into(),
+        attributes: None,
+      },
+      Frame::Number {
+        data: 2,
+        attributes: None,
+      },
+    );
+    let expected = Frame::Map {
+      data: expected_result,
+      attributes: None,
+    };
+
+    assert_eq!(actual, expected);
+  }
 }

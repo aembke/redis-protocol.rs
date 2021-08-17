@@ -7,7 +7,7 @@ Redis Protocol
 [![Crates.io](https://img.shields.io/crates/v/redis-protocol.svg)](https://crates.io/crates/redis-protocol)
 [![API docs](https://docs.rs/redis-protocol/badge.svg)](https://docs.rs/redis-protocol)
 
-Structs and functions for implementing the [Redis protocol](https://redis.io/topics/protocol), built on [nom](https://github.com/Geal/nom) and designed to work easily with [Tokio](https://github.com/tokio-rs/tokio).
+Structs and functions for implementing the [Redis protocol](https://redis.io/topics/protocol). 
 
 ## Install
 

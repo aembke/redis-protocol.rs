@@ -723,18 +723,6 @@ mod tests {
     }
   }
 
-  fn simpletring_array(data: Vec<&'static str>) -> Frame {
-    let inner: Vec<Frame> = data
-      .into_iter()
-      .map(|s| (FrameKind::SimpleString, s).try_into().unwrap())
-      .collect();
-
-    Frame::Array {
-      data: inner,
-      attributes: None,
-    }
-  }
-
   fn push_frame_to_array(frame: &mut Frame, inner: Frame) {
     if let Frame::Array { ref mut data, .. } = frame {
       data.push(inner);
