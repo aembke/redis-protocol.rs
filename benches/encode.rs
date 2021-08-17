@@ -1,5 +1,7 @@
 #![feature(test)]
 
+extern crate test;
+
 use bytes::BytesMut;
 use rand::Rng;
 use redis_protocol::resp2::types::Frame;

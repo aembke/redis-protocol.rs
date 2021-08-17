@@ -1,7 +1,6 @@
 use crate::resp3::utils as resp3_utils;
 use crate::types::{Redirection, RedisProtocolError, RedisProtocolErrorKind};
 use crate::utils;
-use bytes::Buf;
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::convert::{TryFrom, TryInto};
@@ -75,22 +74,21 @@ pub const EMPTY_SPACE: &'static str = " ";
 /// Byte representation of `AUTH`.
 pub const AUTH: &'static str = "AUTH";
 
-/// Additional information returned alongside a frame.
-#[cfg(not(feature = "index-map"))]
-pub type Attributes = HashMap<Frame, Frame>;
+/// A map struct for frames.
 #[cfg(not(feature = "index-map"))]
 pub type FrameMap = HashMap<Frame, Frame>;
+/// A set struct for frames.
 #[cfg(not(feature = "index-map"))]
 pub type FrameSet = HashSet<Frame>;
-
-/// Additional information returned alongside a frame.
-#[cfg(feature = "index-map")]
-pub type Attributes = IndexMap<Frame, Frame>;
-
+/// A map struct for frames.
 #[cfg(feature = "index-map")]
 pub type FrameMap = IndexMap<Frame, Frame>;
+/// A set struct for frames.
 #[cfg(feature = "index-map")]
 pub type FrameSet = IndexSet<Frame>;
+
+/// Additional information returned alongside a frame.
+pub type Attributes = FrameMap;
 
 /// Enum describing the byte ordering for numbers and doubles when cast to byte slices.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -327,7 +325,7 @@ pub enum Frame {
   },
   /// A binary-safe string to be displayed without any escaping or filtering.
   VerbatimString {
-    data: String,
+    data: Vec<u8>,
     format: VerbatimStringFormat,
     attributes: Option<Attributes>,
   },
@@ -915,6 +913,8 @@ impl Frame {
   /// This does not return the encoded length, but rather the length of the contents of the frame such as the number of elements in an array, the size of any inner buffers, etc.
   ///
   /// Note: `Null` has a length of 0 and `Hello`, `Number`, `Double`, and `Boolean` have a length of 1.
+  ///
+  /// See [encode_len](Self::encode_len) to read the number of bytes necessary to encode the frame.
   pub fn len(&self) -> usize {
     use self::Frame::*;
 
@@ -927,7 +927,7 @@ impl Frame {
       SimpleString { ref data, .. } | SimpleError { ref data, .. } => data.len(),
       Number { .. } | Double { .. } | Boolean { .. } => 1,
       Null => 0,
-      VerbatimString { ref data, .. } => data.as_bytes().len(),
+      VerbatimString { ref data, .. } => data.len(),
       Map { ref data, .. } => data.len(),
       Set { ref data, .. } => data.len(),
       Hello { .. } => 1,
@@ -1058,7 +1058,7 @@ impl Frame {
       Frame::BlobError { ref data, .. } | Frame::BlobString { ref data, .. } | Frame::BigNumber { ref data, .. } => {
         str::from_utf8(data).ok()
       }
-      Frame::VerbatimString { ref data, .. } => Some(data),
+      Frame::VerbatimString { ref data, .. } => str::from_utf8(data).ok(),
       Frame::ChunkedString(ref data) => str::from_utf8(data).ok(),
       _ => None,
     }
@@ -1071,7 +1071,7 @@ impl Frame {
       Frame::BlobError { ref data, .. } | Frame::BlobString { ref data, .. } | Frame::BigNumber { ref data, .. } => {
         String::from_utf8(data.to_vec()).ok()
       }
-      Frame::VerbatimString { ref data, .. } => Some(data.to_owned()),
+      Frame::VerbatimString { ref data, .. } => String::from_utf8(data.to_vec()).ok(),
       Frame::ChunkedString(ref b) => String::from_utf8(b.to_vec()).ok(),
       Frame::Double { ref data, .. } => Some(data.to_string()),
       Frame::Number { ref data, .. } => Some(data.to_string()),
@@ -1088,7 +1088,7 @@ impl Frame {
       Frame::BlobError { ref data, .. } | Frame::BlobString { ref data, .. } | Frame::BigNumber { ref data, .. } => {
         Some(data)
       }
-      Frame::VerbatimString { ref data, .. } => Some(data.as_bytes()),
+      Frame::VerbatimString { ref data, .. } => Some(data),
       Frame::ChunkedString(ref b) => Some(b),
       _ => None,
     }
@@ -1109,18 +1109,24 @@ impl Frame {
     }
   }
 
-  /// Attempt to read the frame as an `i64` without casting.
+  /// Attempt to read the frame as an `i64`.
   pub fn as_i64(&self) -> Option<i64> {
     match *self {
       Frame::Number { ref data, .. } => Some(*data),
+      Frame::Double { ref data, .. } => Some(*data as i64),
+      Frame::BlobString { ref data, .. } => str::from_utf8(data).ok().and_then(|s| s.parse::<i64>().ok()),
+      Frame::SimpleString { ref data, .. } => data.parse::<i64>().ok(),
       _ => None,
     }
   }
 
-  /// Attempt to read the frame as an `f64` without casting.
+  /// Attempt to read the frame as an `f64`.
   pub fn as_f64(&self) -> Option<f64> {
     match *self {
       Frame::Double { ref data, .. } => Some(*data),
+      Frame::Number { ref data, .. } => Some(*data as f64),
+      Frame::BlobString { ref data, .. } => str::from_utf8(data).ok().and_then(|s| s.parse::<f64>().ok()),
+      Frame::SimpleString { ref data, .. } => data.parse::<f64>().ok(),
       _ => None,
     }
   }
@@ -1187,20 +1193,53 @@ impl Frame {
     }
   }
 
-  /// Attempt to read the number of bytes needed to encode this frame.
+  /// Attempt to read the number of bytes needed to encode the frame.
   pub fn encode_len(&self) -> Result<usize, RedisProtocolError> {
     resp3_utils::encode_len(self).map_err(|e| e.into())
   }
 }
 
-/// A helper struct for reading in streams of bytes such that the underlying bytes don't need to be in one continuous, growing block of memory.
-#[derive(Debug)]
+/// A helper struct for reading and managing streaming data types.
+///
+/// ```rust edition2018
+/// use redis_protocol::resp3::decode::streaming::decode;
+///
+/// fn main() {
+///   let parts = vec!["*?\r\n", ":1\r\n", ":2\r\n:3\r\n", ".\r\n"];
+///
+///   let (frame, _) = decode(parts[0].as_bytes()).unwrap().unwrap();
+///   assert!(frame.is_streaming());
+///   let mut streaming = frame.into_streaming_frame().unwrap();
+///   println!("Reading streaming {:?}", streaming.kind);
+///
+///   let (frame, _) = decode(parts[1].as_bytes()).unwrap().unwrap();
+///   assert!(frame.is_complete());
+///   // add frames to the buffer until we reach the terminating byte sequence
+///   streaming.add_frame(frame.into_complete_frame().unwrap());
+///
+///   let (frame, _) = decode(parts[2].as_bytes()).unwrap().unwrap();
+///   assert!(frame.is_complete());
+///   streaming.add_frame(frame.into_complete_frame().unwrap());
+///
+///   let (frame, _) = decode(parts[3].as_bytes()).unwrap().unwrap();
+///   assert!(frame.is_complete());
+///   streaming.add_frame(frame.into_complete_frame().unwrap());
+///
+///   assert!(streaming.is_finished());
+///   // convert the buffer into one frame
+///   let result = streaming.into_frame().unwrap();
+///
+///   // Frame::Array { data: [1, 2, 3], attributes: None }
+///   println!("{:?}", result);
+/// }
+/// ```
+#[derive(Debug, Eq, PartialEq)]
 pub struct StreamedFrame {
   /// The internal buffer of frames and attributes.
   buffer: VecDeque<Frame>,
   /// Any leading attributes before the stream starts.
   pub attributes: Option<Attributes>,
-  /// The type of frame to which this will eventually be cast.
+  /// The data type being streamed.  
   pub kind: FrameKind,
 }
 
@@ -1260,7 +1299,7 @@ impl StreamedFrame {
 }
 
 /// Wrapper enum around a decoded frame that supports streaming frames.
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum DecodedFrame {
   Streaming(StreamedFrame),
   Complete(Frame),
@@ -1317,7 +1356,6 @@ impl DecodedFrame {
 mod tests {
   use super::*;
   use crate::resp3::utils::new_map;
-  use std::str;
 
   #[test]
   fn should_convert_basic_streaming_buffer_to_frame() {

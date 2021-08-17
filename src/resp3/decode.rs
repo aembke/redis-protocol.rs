@@ -14,9 +14,6 @@ use nom::{Err as NomErr, IResult};
 use std::borrow::Cow;
 use std::str;
 
-#[cfg(feature = "index-map")]
-use indexmap::{IndexMap, IndexSet};
-
 macro_rules! e (
   ($err:expr) => {
     return Err($err.into_nom_error());
@@ -31,13 +28,6 @@ macro_rules! etry (
     }
   }
 );
-
-fn non_streaming_error<'a, T>(_data: T, kind: FrameKind) -> Result<T, RedisParseError<&'a [u8]>> {
-  Err(RedisParseError::new_custom(
-    "non_streaming_error",
-    format!("Cannot decode streaming {:?}", kind),
-  ))
-}
 
 fn map_complete_frame(frame: Frame) -> DecodedFrame {
   DecodedFrame::Complete(frame)
@@ -87,10 +77,6 @@ fn to_bool(s: &str) -> Result<bool, RedisParseError<&[u8]>> {
     "f" => Ok(false),
     _ => Err(RedisParseError::new_custom("to_bool", "Invalid boolean value.")),
   }
-}
-
-fn to_string(d: &[u8]) -> Result<String, RedisParseError<&[u8]>> {
-  String::from_utf8(d.to_vec()).map_err(|e| RedisParseError::new_custom("to_string", format!("{:?}", e)))
 }
 
 fn to_verbatimstring_format(s: &str) -> Result<VerbatimStringFormat, RedisParseError<&[u8]>> {
@@ -263,12 +249,12 @@ fn d_parse_verbatimstring(input: &[u8]) -> IResult<&[u8], Frame, RedisParseError
   let (input, len) = d_read_prefix_len(input)?;
   let (input, format) = nom_map_res(nom_terminated(nom_take(3_usize), nom_take(1_usize)), str::from_utf8)(input)?;
   let format = etry!(to_verbatimstring_format(format));
-  let (input, data) = nom_map_res(nom_terminated(nom_take(len - 4), nom_take(2_usize)), to_string)(input)?;
+  let (input, data) = nom_terminated(nom_take(len - 4), nom_take(2_usize))(input)?;
 
   Ok((
     input,
     Frame::VerbatimString {
-      data,
+      data: data.to_vec(),
       format,
       attributes: None,
     },
@@ -398,7 +384,6 @@ fn d_check_streaming(input: &[u8], kind: FrameKind) -> IResult<&[u8], DecodedFra
 fn d_parse_chunked_string(input: &[u8]) -> IResult<&[u8], DecodedFrame, RedisParseError<&[u8]>> {
   let (input, len) = d_read_prefix_len(input)?;
   let (input, frame) = if len == 0 {
-    let (input, _) = d_read_to_crlf(input)?;
     (input, Frame::new_end_stream())
   } else {
     let (input, contents) = nom_terminated(nom_take(len), nom_take(2_usize))(input)?;
@@ -444,8 +429,9 @@ fn d_parse_non_attribute_frame(input: &[u8], kind: FrameKind) -> IResult<&[u8], 
   Ok((input, frame))
 }
 
-fn d_parse_attribute_and_frame(input: &[u8], kind: FrameKind) -> IResult<&[u8], DecodedFrame, RedisParseError<&[u8]>> {
+fn d_parse_attribute_and_frame(input: &[u8]) -> IResult<&[u8], DecodedFrame, RedisParseError<&[u8]>> {
   let (input, attributes) = d_parse_attribute(input)?;
+  let (input, kind) = d_frame_type(input)?;
   let (input, next_frame) = d_parse_non_attribute_frame(input, kind)?;
   let frame = etry!(attach_attributes(attributes, next_frame));
 
@@ -455,7 +441,7 @@ fn d_parse_attribute_and_frame(input: &[u8], kind: FrameKind) -> IResult<&[u8], 
 fn d_parse_frame_or_attribute(input: &[u8]) -> IResult<&[u8], DecodedFrame, RedisParseError<&[u8]>> {
   let (input, kind) = d_frame_type(input)?;
   let (input, frame) = if let FrameKind::Attribute = kind {
-    d_parse_attribute_and_frame(input, kind)?
+    d_parse_attribute_and_frame(input)?
   } else {
     d_parse_non_attribute_frame(input, kind)?
   };
@@ -472,13 +458,12 @@ fn d_parse_frame_or_attribute(input: &[u8]) -> IResult<&[u8], DecodedFrame, Redi
 /// # extern crate tokio;
 /// # extern crate bytes;
 ///
-/// # use redis_protocol::resp3::types::*;
-/// # use redis_protocol::types::{RedisProtocolError, RedisProtocolErrorKind};
-/// # use redis_protocol::resp3::decode::streaming::*;
-/// # use redis_protocol::resp3::encode::complete::*;
-/// # use bytes::BytesMut;
-/// # use tokio_util::codec::{Decoder, Encoder};
-/// # use std::collections::VecDeque;
+/// use redis_protocol::resp3::types::*;
+/// use redis_protocol::types::{RedisProtocolError, RedisProtocolErrorKind};
+/// use redis_protocol::resp3::decode::complete::*;
+/// use redis_protocol::resp3::encode::complete::*;
+/// use bytes::BytesMut;
+/// use tokio_util::codec::{Decoder, Encoder};
 ///
 /// pub struct RedisCodec {}
 ///
@@ -505,7 +490,7 @@ fn d_parse_frame_or_attribute(input: &[u8]) -> IResult<&[u8], DecodedFrame, Redi
 ///       // clear the buffer up to the amount decoded so the same bytes aren't repeatedly processed
 ///       let _ = src.split_to(amt);
 ///
-///       Ok(Some(frame.into_complete_frame()?))
+///       Ok(Some(frame))
 ///     }else{
 ///       Ok(None)
 ///     }
@@ -541,13 +526,13 @@ pub mod complete {
 /// # extern crate tokio;
 /// # extern crate bytes;
 ///
-/// # use redis_protocol::resp3::types::*;
-/// # use redis_protocol::types::{RedisProtocolError, RedisProtocolErrorKind};
-/// # use redis_protocol::resp3::decode::streaming::*;
-/// # use redis_protocol::resp3::encode::complete::*;
-/// # use bytes::BytesMut;
-/// # use tokio_util::codec::{Decoder, Encoder};
-/// # use std::collections::VecDeque;
+/// use redis_protocol::resp3::types::*;
+/// use redis_protocol::types::{RedisProtocolError, RedisProtocolErrorKind};
+/// use redis_protocol::resp3::decode::streaming::*;
+/// use redis_protocol::resp3::encode::complete::*;
+/// use bytes::BytesMut;
+/// use tokio_util::codec::{Decoder, Encoder};
+/// use std::collections::VecDeque;
 ///
 /// pub struct RedisCodec {
 ///   decoder_stream: Option<StreamedFrame>
@@ -568,6 +553,7 @@ pub mod complete {
 ///   type Error = RedisProtocolError;
 ///
 ///   // Buffer the results of streamed frame before returning the complete frame to the caller.
+///   // Callers that want to surface streaming frame chunks up the stack would simply return after calling `decode` here.
 ///   fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
 ///     if src.is_empty() {
 ///       return Ok(None);
@@ -600,7 +586,7 @@ pub mod complete {
 ///           None
 ///         }
 ///       }else{
-///         // we're not already in the middle of a streaming operation
+///         // we're processing a complete frame or starting a new streamed frame
 ///         if frame.is_streaming() {
 ///           // start a new stream, saving the internal buffer to the codec state
 ///           self.decoder_stream = Some(frame.into_streaming_frame()?);
@@ -645,6 +631,8 @@ pub mod streaming {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::resp3::decode::complete::decode;
+  use crate::resp3::decode::streaming::decode as stream_decode;
   use bytes::BytesMut;
   use std::str;
 
@@ -742,7 +730,7 @@ mod tests {
   }
 
   #[test]
-  fn should_decode_bulk_string() {
+  fn should_decode_blob_string() {
     let expected = (
       Some(Frame::BlobString {
         data: "foo".into(),
@@ -758,7 +746,7 @@ mod tests {
 
   #[test]
   #[should_panic]
-  fn should_decode_bulk_string_incomplete() {
+  fn should_decode_blob_string_incomplete() {
     let expected = (
       Some(Frame::BlobString {
         data: "foo".into(),
@@ -882,6 +870,872 @@ mod tests {
 
   // ----------------- end tests adapted from RESP2 ------------------------
 
-  // TODO bloberror, simpleerror, map, set, array, push, hello, boolean, number, double (inf, nan, negative, etc), bignumber, null, verbatimstring
-  // TODO attributes, streaming
+  #[test]
+  fn should_decode_blob_error() {
+    let expected = (
+      Some(Frame::BlobError {
+        data: "foo".into(),
+        attributes: None,
+      }),
+      9,
+    );
+    let mut bytes: BytesMut = "!3\r\nfoo\r\n".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+  }
+
+  #[test]
+  #[should_panic]
+  fn should_decode_blob_error_incomplete() {
+    let expected = (
+      Some(Frame::BlobError {
+        data: "foo".into(),
+        attributes: None,
+      }),
+      9,
+    );
+    let mut bytes: BytesMut = "!3\r\nfo".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+  }
+
+  #[test]
+  fn should_decode_simple_error() {
+    let expected = (
+      Some(Frame::SimpleError {
+        data: "string".into(),
+        attributes: None,
+      }),
+      9,
+    );
+    let mut bytes: BytesMut = "-string\r\n".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+  }
+
+  #[test]
+  #[should_panic]
+  fn should_decode_simple_error_incomplete() {
+    let expected = (
+      Some(Frame::SimpleError {
+        data: "string".into(),
+        attributes: None,
+      }),
+      9,
+    );
+    let mut bytes: BytesMut = "-strin".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+  }
+
+  #[test]
+  fn should_decode_boolean_true() {
+    let expected = (
+      Some(Frame::Boolean {
+        data: true,
+        attributes: None,
+      }),
+      4,
+    );
+    let mut bytes: BytesMut = "#t\r\n".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+  }
+
+  #[test]
+  fn should_decode_boolean_false() {
+    let expected = (
+      Some(Frame::Boolean {
+        data: false,
+        attributes: None,
+      }),
+      4,
+    );
+    let mut bytes: BytesMut = "#f\r\n".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+  }
+
+  #[test]
+  fn should_decode_number() {
+    let expected = (
+      Some(Frame::Number {
+        data: 42,
+        attributes: None,
+      }),
+      5,
+    );
+    let mut bytes: BytesMut = ":42\r\n".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+  }
+
+  #[test]
+  fn should_decode_double_inf() {
+    let expected = (
+      Some(Frame::Double {
+        data: f64::INFINITY,
+        attributes: None,
+      }),
+      6,
+    );
+    let mut bytes: BytesMut = ",inf\r\n".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+  }
+
+  #[test]
+  fn should_decode_double_neg_inf() {
+    let expected = (
+      Some(Frame::Double {
+        data: f64::NEG_INFINITY,
+        attributes: None,
+      }),
+      7,
+    );
+    let mut bytes: BytesMut = ",-inf\r\n".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+  }
+
+  #[test]
+  #[should_panic]
+  fn should_decode_double_nan() {
+    let expected = (
+      Some(Frame::Double {
+        data: f64::NAN,
+        attributes: None,
+      }),
+      7,
+    );
+    let mut bytes: BytesMut = ",foo\r\n".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+  }
+
+  #[test]
+  fn should_decode_double() {
+    let expected = (
+      Some(Frame::Double {
+        data: 4.59193,
+        attributes: None,
+      }),
+      10,
+    );
+    let mut bytes: BytesMut = ",4.59193\r\n".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+
+    let expected = (
+      Some(Frame::Double {
+        data: 4_f64,
+        attributes: None,
+      }),
+      4,
+    );
+    let mut bytes: BytesMut = ",4\r\n".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+  }
+
+  #[test]
+  fn should_decode_bignumber() {
+    let expected = (
+      Some(Frame::BigNumber {
+        data: "3492890328409238509324850943850943825024385".as_bytes().to_vec(),
+        attributes: None,
+      }),
+      46,
+    );
+    let mut bytes: BytesMut = "(3492890328409238509324850943850943825024385\r\n".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+  }
+
+  #[test]
+  fn should_decode_null() {
+    let expected = (Some(Frame::Null), 3);
+    let mut bytes: BytesMut = "_\r\n".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+  }
+
+  #[test]
+  fn should_decode_verbatim_string_mkd() {
+    let expected = (
+      Some(Frame::VerbatimString {
+        data: "Some string".as_bytes().to_vec(),
+        format: VerbatimStringFormat::Markdown,
+        attributes: None,
+      }),
+      22,
+    );
+    let mut bytes: BytesMut = "=15\r\nmkd:Some string\r\n".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+  }
+
+  #[test]
+  fn should_decode_verbatim_string_txt() {
+    let expected = (
+      Some(Frame::VerbatimString {
+        data: "Some string".as_bytes().to_vec(),
+        format: VerbatimStringFormat::Text,
+        attributes: None,
+      }),
+      22,
+    );
+    let mut bytes: BytesMut = "=15\r\ntxt:Some string\r\n".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+  }
+
+  #[test]
+  fn should_decode_map_no_nulls() {
+    let k1 = Frame::SimpleString {
+      data: "first".into(),
+      attributes: None,
+    };
+    let v1 = Frame::Number {
+      data: 1,
+      attributes: None,
+    };
+    let k2 = Frame::BlobString {
+      data: "second".into(),
+      attributes: None,
+    };
+    let v2 = Frame::Double {
+      data: 4.2,
+      attributes: None,
+    };
+
+    let mut expected_map = resp3_utils::new_map(None);
+    expected_map.insert(k1, v1);
+    expected_map.insert(k2, v2);
+    let expected = (
+      Some(Frame::Map {
+        data: expected_map,
+        attributes: None,
+      }),
+      34,
+    );
+    let mut bytes: BytesMut = "%2\r\n+first\r\n:1\r\n$6\r\nsecond\r\n,4.2\r\n".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+  }
+
+  #[test]
+  fn should_decode_map_with_nulls() {
+    let k1 = Frame::SimpleString {
+      data: "first".into(),
+      attributes: None,
+    };
+    let v1 = Frame::Number {
+      data: 1,
+      attributes: None,
+    };
+    let k2 = Frame::Number {
+      data: 2,
+      attributes: None,
+    };
+    let v2 = Frame::Null;
+    let k3 = Frame::BlobString {
+      data: "second".into(),
+      attributes: None,
+    };
+    let v3 = Frame::Double {
+      data: 4.2,
+      attributes: None,
+    };
+
+    let mut expected_map = resp3_utils::new_map(None);
+    expected_map.insert(k1, v1);
+    expected_map.insert(k2, v2);
+    expected_map.insert(k3, v3);
+    let expected = (
+      Some(Frame::Map {
+        data: expected_map,
+        attributes: None,
+      }),
+      41,
+    );
+    let mut bytes: BytesMut = "%3\r\n+first\r\n:1\r\n:2\r\n_\r\n$6\r\nsecond\r\n,4.2\r\n".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+  }
+
+  #[test]
+  fn should_decode_set_no_nulls() {
+    let mut expected_set = resp3_utils::new_set(None);
+    expected_set.insert(Frame::Number {
+      data: 1,
+      attributes: None,
+    });
+    expected_set.insert(Frame::SimpleString {
+      data: "2".into(),
+      attributes: None,
+    });
+    expected_set.insert(Frame::BlobString {
+      data: "foobar".into(),
+      attributes: None,
+    });
+    expected_set.insert(Frame::Double {
+      data: 4.2,
+      attributes: None,
+    });
+    let expected = (
+      Some(Frame::Set {
+        data: expected_set,
+        attributes: None,
+      }),
+      30,
+    );
+    let mut bytes: BytesMut = "~4\r\n:1\r\n+2\r\n$6\r\nfoobar\r\n,4.2\r\n".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+  }
+
+  #[test]
+  fn should_decode_set_with_nulls() {
+    let mut expected_set = resp3_utils::new_set(None);
+    expected_set.insert(Frame::Number {
+      data: 1,
+      attributes: None,
+    });
+    expected_set.insert(Frame::SimpleString {
+      data: "2".into(),
+      attributes: None,
+    });
+    expected_set.insert(Frame::Null);
+    expected_set.insert(Frame::Double {
+      data: 4.2,
+      attributes: None,
+    });
+    let expected = (
+      Some(Frame::Set {
+        data: expected_set,
+        attributes: None,
+      }),
+      21,
+    );
+    let mut bytes: BytesMut = "~4\r\n:1\r\n+2\r\n_\r\n,4.2\r\n".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+  }
+
+  #[test]
+  fn should_decode_push_pubsub() {
+    let expected = (
+      Some(Frame::Push {
+        data: vec![
+          Frame::SimpleString {
+            data: "pubsub".into(),
+            attributes: None,
+          },
+          Frame::SimpleString {
+            data: "message".into(),
+            attributes: None,
+          },
+          Frame::SimpleString {
+            data: "somechannel".into(),
+            attributes: None,
+          },
+          Frame::SimpleString {
+            data: "this is the message".into(),
+            attributes: None,
+          },
+        ],
+        attributes: None,
+      }),
+      59,
+    );
+    let mut bytes: BytesMut = ">4\r\n+pubsub\r\n+message\r\n+somechannel\r\n+this is the message\r\n".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+
+    let (frame, _) = decode(&bytes).unwrap().unwrap();
+    assert!(frame.is_pubsub_message());
+    assert!(frame.is_normal_pubsub());
+  }
+
+  #[test]
+  fn should_decode_push_pattern_pubsub() {
+    let expected = (
+      Some(Frame::Push {
+        data: vec![
+          Frame::SimpleString {
+            data: "pubsub".into(),
+            attributes: None,
+          },
+          Frame::SimpleString {
+            data: "pmessage".into(),
+            attributes: None,
+          },
+          Frame::SimpleString {
+            data: "somechannel".into(),
+            attributes: None,
+          },
+          Frame::SimpleString {
+            data: "this is the message".into(),
+            attributes: None,
+          },
+        ],
+        attributes: None,
+      }),
+      60,
+    );
+    let mut bytes: BytesMut = ">4\r\n+pubsub\r\n+pmessage\r\n+somechannel\r\n+this is the message\r\n".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+
+    let (frame, _) = decode(&bytes).unwrap().unwrap();
+    assert!(frame.is_pattern_pubsub_message());
+    assert!(frame.is_pubsub_message());
+  }
+
+  #[test]
+  fn should_decode_keyevent_message() {
+    let expected = (
+      Some(Frame::Push {
+        data: vec![
+          Frame::SimpleString {
+            data: "pubsub".into(),
+            attributes: None,
+          },
+          Frame::SimpleString {
+            data: "pmessage".into(),
+            attributes: None,
+          },
+          Frame::SimpleString {
+            data: "__key*".into(),
+            attributes: None,
+          },
+          Frame::SimpleString {
+            data: "__keyevent@0__:set".into(),
+            attributes: None,
+          },
+          Frame::SimpleString {
+            data: "foo".into(),
+            attributes: None,
+          },
+        ],
+        attributes: None,
+      }),
+      60,
+    );
+    let mut bytes: BytesMut = ">5\r\n+pubsub\r\n+pmessage\r\n+__key*\r\n+__keyevent@0__:set\r\n+foo\r\n".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+
+    let (frame, _) = decode(&bytes).unwrap().unwrap();
+    assert!(frame.is_pattern_pubsub_message());
+    assert!(frame.is_pubsub_message());
+  }
+
+  #[test]
+  fn should_parse_outer_attributes() {
+    let mut expected_inner_attrs = resp3_utils::new_map(None);
+    expected_inner_attrs.insert(
+      Frame::BlobString {
+        data: "a".into(),
+        attributes: None,
+      },
+      Frame::Double {
+        data: 0.1923,
+        attributes: None,
+      },
+    );
+    expected_inner_attrs.insert(
+      Frame::BlobString {
+        data: "b".into(),
+        attributes: None,
+      },
+      Frame::Double {
+        data: 0.0012,
+        attributes: None,
+      },
+    );
+    let expected_inner_attrs = Frame::Map {
+      data: expected_inner_attrs,
+      attributes: None,
+    };
+
+    let mut expected_attrs = resp3_utils::new_map(None);
+    expected_attrs.insert(
+      Frame::SimpleString {
+        data: "key-popularity".into(),
+        attributes: None,
+      },
+      expected_inner_attrs,
+    );
+
+    let expected = (
+      Some(Frame::Array {
+        data: vec![
+          Frame::Number {
+            data: 2039123,
+            attributes: None,
+          },
+          Frame::Number {
+            data: 9543892,
+            attributes: None,
+          },
+        ],
+        attributes: Some(expected_attrs.into()),
+      }),
+      81,
+    );
+
+    let mut bytes: BytesMut =
+      "|1\r\n+key-popularity\r\n%2\r\n$1\r\na\r\n,0.1923\r\n$1\r\nb\r\n,0.0012\r\n*2\r\n:2039123\r\n:9543892\r\n"
+        .into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+  }
+
+  #[test]
+  fn should_parse_inner_attributes() {
+    let mut expected_attrs = resp3_utils::new_map(None);
+    expected_attrs.insert(
+      Frame::SimpleString {
+        data: "ttl".into(),
+        attributes: None,
+      },
+      Frame::Number {
+        data: 3600,
+        attributes: None,
+      },
+    );
+
+    let expected = (
+      Some(Frame::Array {
+        data: vec![
+          Frame::Number {
+            data: 1,
+            attributes: None,
+          },
+          Frame::Number {
+            data: 2,
+            attributes: None,
+          },
+          Frame::Number {
+            data: 3,
+            attributes: Some(expected_attrs),
+          },
+        ],
+        attributes: None,
+      }),
+      33,
+    );
+    let mut bytes: BytesMut = "*3\r\n:1\r\n:2\r\n|1\r\n+ttl\r\n:3600\r\n:3\r\n".into();
+
+    decode_and_verify_some(&mut bytes, &expected);
+    decode_and_verify_padded_some(&mut bytes, &expected);
+  }
+
+  #[test]
+  fn should_decode_end_stream() {
+    let bytes: BytesMut = ";0\r\n".into();
+    let (frame, _) = stream_decode(&bytes).unwrap().unwrap();
+    assert_eq!(frame, DecodedFrame::Complete(Frame::new_end_stream()))
+  }
+
+  #[test]
+  fn should_decode_streaming_string() {
+    let mut bytes: BytesMut = "$?\r\n;4\r\nHell\r\n;6\r\no worl\r\n;1\r\nd\r\n;0\r\n".into();
+
+    let (frame, amt) = stream_decode(&bytes).unwrap().unwrap();
+    assert_eq!(
+      frame,
+      DecodedFrame::Streaming(StreamedFrame::new(FrameKind::BlobString))
+    );
+    assert_eq!(amt, 4);
+    let _ = bytes.split_to(amt);
+
+    let (frame, amt) = stream_decode(&bytes).unwrap().unwrap();
+    assert_eq!(frame, DecodedFrame::Complete(Frame::ChunkedString("Hell".into())));
+    assert_eq!(amt, 10);
+    let _ = bytes.split_to(amt);
+
+    let (frame, amt) = stream_decode(&bytes).unwrap().unwrap();
+    assert_eq!(frame, DecodedFrame::Complete(Frame::ChunkedString("o worl".into())));
+    assert_eq!(amt, 12);
+    let _ = bytes.split_to(amt);
+
+    let (frame, amt) = stream_decode(&bytes).unwrap().unwrap();
+    assert_eq!(frame, DecodedFrame::Complete(Frame::ChunkedString("d".into())));
+    assert_eq!(amt, 7);
+    let _ = bytes.split_to(amt);
+
+    let (frame, amt) = stream_decode(&bytes).unwrap().unwrap();
+    assert_eq!(frame, DecodedFrame::Complete(Frame::new_end_stream()));
+    assert_eq!(amt, 4);
+  }
+
+  #[test]
+  fn should_decode_streaming_array() {
+    let mut bytes: BytesMut = "*?\r\n:1\r\n:2\r\n:3\r\n.\r\n".into();
+
+    let (frame, amt) = stream_decode(&bytes).unwrap().unwrap();
+    assert_eq!(frame, DecodedFrame::Streaming(StreamedFrame::new(FrameKind::Array)));
+    assert_eq!(amt, 4);
+    let _ = bytes.split_to(amt);
+    let mut streamed = frame.into_streaming_frame().unwrap();
+
+    let (frame, amt) = stream_decode(&bytes).unwrap().unwrap();
+    assert_eq!(
+      frame,
+      DecodedFrame::Complete(Frame::Number {
+        data: 1,
+        attributes: None
+      })
+    );
+    assert_eq!(amt, 4);
+    let _ = bytes.split_to(amt);
+    streamed.add_frame(frame.into_complete_frame().unwrap());
+
+    let (frame, amt) = stream_decode(&bytes).unwrap().unwrap();
+    assert_eq!(
+      frame,
+      DecodedFrame::Complete(Frame::Number {
+        data: 2,
+        attributes: None
+      })
+    );
+    assert_eq!(amt, 4);
+    let _ = bytes.split_to(amt);
+    streamed.add_frame(frame.into_complete_frame().unwrap());
+
+    let (frame, amt) = stream_decode(&bytes).unwrap().unwrap();
+    assert_eq!(
+      frame,
+      DecodedFrame::Complete(Frame::Number {
+        data: 3,
+        attributes: None
+      })
+    );
+    assert_eq!(amt, 4);
+    let _ = bytes.split_to(amt);
+    streamed.add_frame(frame.into_complete_frame().unwrap());
+
+    let (frame, amt) = stream_decode(&bytes).unwrap().unwrap();
+    assert_eq!(frame, DecodedFrame::Complete(Frame::new_end_stream()));
+    assert_eq!(amt, 3);
+    streamed.add_frame(frame.into_complete_frame().unwrap());
+
+    assert!(streamed.is_finished());
+    let actual = streamed.into_frame().unwrap();
+    let expected = Frame::Array {
+      data: vec![
+        Frame::Number {
+          data: 1,
+          attributes: None,
+        },
+        Frame::Number {
+          data: 2,
+          attributes: None,
+        },
+        Frame::Number {
+          data: 3,
+          attributes: None,
+        },
+      ],
+      attributes: None,
+    };
+
+    assert_eq!(actual, expected);
+  }
+
+  #[test]
+  fn should_decode_streaming_set() {
+    let mut bytes: BytesMut = "~?\r\n:1\r\n:2\r\n:3\r\n.\r\n".into();
+
+    let (frame, amt) = stream_decode(&bytes).unwrap().unwrap();
+    assert_eq!(frame, DecodedFrame::Streaming(StreamedFrame::new(FrameKind::Set)));
+    assert_eq!(amt, 4);
+    let _ = bytes.split_to(amt);
+    let mut streamed = frame.into_streaming_frame().unwrap();
+
+    let (frame, amt) = stream_decode(&bytes).unwrap().unwrap();
+    assert_eq!(
+      frame,
+      DecodedFrame::Complete(Frame::Number {
+        data: 1,
+        attributes: None
+      })
+    );
+    assert_eq!(amt, 4);
+    let _ = bytes.split_to(amt);
+    streamed.add_frame(frame.into_complete_frame().unwrap());
+
+    let (frame, amt) = stream_decode(&bytes).unwrap().unwrap();
+    assert_eq!(
+      frame,
+      DecodedFrame::Complete(Frame::Number {
+        data: 2,
+        attributes: None
+      })
+    );
+    assert_eq!(amt, 4);
+    let _ = bytes.split_to(amt);
+    streamed.add_frame(frame.into_complete_frame().unwrap());
+
+    let (frame, amt) = stream_decode(&bytes).unwrap().unwrap();
+    assert_eq!(
+      frame,
+      DecodedFrame::Complete(Frame::Number {
+        data: 3,
+        attributes: None
+      })
+    );
+    assert_eq!(amt, 4);
+    let _ = bytes.split_to(amt);
+    streamed.add_frame(frame.into_complete_frame().unwrap());
+
+    let (frame, amt) = stream_decode(&bytes).unwrap().unwrap();
+    assert_eq!(frame, DecodedFrame::Complete(Frame::new_end_stream()));
+    assert_eq!(amt, 3);
+    streamed.add_frame(frame.into_complete_frame().unwrap());
+
+    assert!(streamed.is_finished());
+    let actual = streamed.into_frame().unwrap();
+    let mut expected_result = resp3_utils::new_set(None);
+    expected_result.insert(Frame::Number {
+      data: 1,
+      attributes: None,
+    });
+    expected_result.insert(Frame::Number {
+      data: 2,
+      attributes: None,
+    });
+    expected_result.insert(Frame::Number {
+      data: 3,
+      attributes: None,
+    });
+
+    let expected = Frame::Set {
+      data: expected_result,
+      attributes: None,
+    };
+
+    assert_eq!(actual, expected);
+  }
+
+  #[test]
+  fn should_decode_streaming_map() {
+    let mut bytes: BytesMut = "%?\r\n+a\r\n:1\r\n+b\r\n:2\r\n.\r\n".into();
+
+    let (frame, amt) = stream_decode(&bytes).unwrap().unwrap();
+    assert_eq!(frame, DecodedFrame::Streaming(StreamedFrame::new(FrameKind::Map)));
+    assert_eq!(amt, 4);
+    let _ = bytes.split_to(amt);
+    let mut streamed = frame.into_streaming_frame().unwrap();
+
+    let (frame, amt) = stream_decode(&bytes).unwrap().unwrap();
+    assert_eq!(
+      frame,
+      DecodedFrame::Complete(Frame::SimpleString {
+        data: "a".into(),
+        attributes: None
+      })
+    );
+    assert_eq!(amt, 4);
+    let _ = bytes.split_to(amt);
+    streamed.add_frame(frame.into_complete_frame().unwrap());
+
+    let (frame, amt) = stream_decode(&bytes).unwrap().unwrap();
+    assert_eq!(
+      frame,
+      DecodedFrame::Complete(Frame::Number {
+        data: 1.into(),
+        attributes: None
+      })
+    );
+    assert_eq!(amt, 4);
+    let _ = bytes.split_to(amt);
+    streamed.add_frame(frame.into_complete_frame().unwrap());
+
+    let (frame, amt) = stream_decode(&bytes).unwrap().unwrap();
+    assert_eq!(
+      frame,
+      DecodedFrame::Complete(Frame::SimpleString {
+        data: "b".into(),
+        attributes: None
+      })
+    );
+    assert_eq!(amt, 4);
+    let _ = bytes.split_to(amt);
+    streamed.add_frame(frame.into_complete_frame().unwrap());
+
+    let (frame, amt) = stream_decode(&bytes).unwrap().unwrap();
+    assert_eq!(
+      frame,
+      DecodedFrame::Complete(Frame::Number {
+        data: 2.into(),
+        attributes: None
+      })
+    );
+    assert_eq!(amt, 4);
+    let _ = bytes.split_to(amt);
+    streamed.add_frame(frame.into_complete_frame().unwrap());
+
+    let (frame, amt) = stream_decode(&bytes).unwrap().unwrap();
+    assert_eq!(frame, DecodedFrame::Complete(Frame::new_end_stream()));
+    assert_eq!(amt, 3);
+    streamed.add_frame(frame.into_complete_frame().unwrap());
+
+    assert!(streamed.is_finished());
+    let actual = streamed.into_frame().unwrap();
+    let mut expected_result = resp3_utils::new_map(None);
+    expected_result.insert(
+      Frame::SimpleString {
+        data: "a".into(),
+        attributes: None,
+      },
+      Frame::Number {
+        data: 1,
+        attributes: None,
+      },
+    );
+    expected_result.insert(
+      Frame::SimpleString {
+        data: "b".into(),
+        attributes: None,
+      },
+      Frame::Number {
+        data: 2,
+        attributes: None,
+      },
+    );
+    let expected = Frame::Map {
+      data: expected_result,
+      attributes: None,
+    };
+
+    assert_eq!(actual, expected);
+  }
 }

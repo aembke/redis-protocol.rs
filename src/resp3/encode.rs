@@ -134,12 +134,12 @@ fn gen_bloberror<'a>(
 
 fn gen_verbatimstring<'a>(
   mut x: (&'a mut [u8], usize),
-  data: &str,
+  data: &[u8],
   format: &VerbatimStringFormat,
   attributes: &Option<Attributes>,
 ) -> Result<(&'a mut [u8], usize), GenError> {
   encode_attributes!(x, attributes);
-  let total_len = format.encode_len() + data.as_bytes().len();
+  let total_len = format.encode_len() + data.len();
 
   do_gen!(
     x,
@@ -148,7 +148,7 @@ fn gen_verbatimstring<'a>(
       >> gen_slice!(CRLF.as_bytes())
       >> gen_slice!(format.to_str().as_bytes())
       >> gen_be_u8!(VERBATIM_FORMAT_BYTE)
-      >> gen_slice!(data.as_bytes())
+      >> gen_slice!(data)
       >> gen_slice!(CRLF.as_bytes())
   )
 }
@@ -476,7 +476,8 @@ pub mod complete {
 /// async fn write_all(socket: &mut TcpStream, buf: &mut BytesMut) -> Result<usize, RedisProtocolError> {
 ///   let len = buf.len();
 ///   socket.write_all(&buf).await.expect("Failed to write to socket.");
-///   // we could just clear the buffer here, but normally you dont flush the socket each time so you have to split the buf instead
+///   // we could just clear the buffer here since we use `write_all`, but in many cases callers don't flush the socket on each `write` call.
+///   // in those scenarios the caller should split the buffer based on the result from `write`.
 ///   let _ = buf.split_to(len);
 ///
 ///   Ok(len)
@@ -494,6 +495,7 @@ pub mod complete {
 ///   loop {
 ///     let frame = match rx.recv().await {
 ///        Some(frame) => frame,
+///        // break out of the loop when the channel closes
 ///        None => break
 ///     };
 ///
@@ -513,7 +515,7 @@ pub mod complete {
 /// }
 ///
 /// fn generate_frames(tx: UnboundedSender<Frame>) -> Result<(), RedisProtocolError> {
-///   // read from another socket or generate frames somehow
+///   // read from another socket or somehow generate frames, writing them to `tx`
 ///   unimplemented!()
 /// }
 ///
@@ -606,7 +608,7 @@ pub mod streaming {
 
   /// Encode the bytes making up one chunk of a streaming blob string.
   ///
-  /// If `data` is empty this will do the same thing as [encode_end_streaming_string] to signal that the streamed string is finished.
+  /// If `data` is empty this will do the same thing as [encode_end_string] to signal that the streamed string is finished.
   pub fn encode_string_chunk(buf: &mut [u8], offset: usize, data: &[u8]) -> Result<usize, RedisProtocolError> {
     gen_streaming_string_chunk((buf, offset), data)
       .map(|(_, l)| l)
@@ -683,9 +685,7 @@ pub mod streaming {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::resp3::utils::{new_map, new_set};
   use crate::utils::ZEROED_KB;
-  use bytes::{BufMut, Bytes};
   use std::convert::TryInto;
   use std::str;
 
@@ -715,18 +715,6 @@ mod tests {
     let inner: Vec<Frame> = data
       .into_iter()
       .map(|s| (FrameKind::BlobString, s).try_into().unwrap())
-      .collect();
-
-    Frame::Array {
-      data: inner,
-      attributes: None,
-    }
-  }
-
-  fn simpletring_array(data: Vec<&'static str>) -> Frame {
-    let inner: Vec<Frame> = data
-      .into_iter()
-      .map(|s| (FrameKind::SimpleString, s).try_into().unwrap())
       .collect();
 
     Frame::Array {
@@ -800,7 +788,7 @@ mod tests {
   fn encode_and_verify_empty_with_attributes(input: &Frame, expected: &str) {
     let (attributes, encoded_attributes) = create_attributes();
     let mut frame = input.clone();
-    frame.add_attributes(attributes);
+    let _ = frame.add_attributes(attributes).unwrap();
     let mut buf = empty_bytes();
 
     let len = match complete::encode_bytes(&mut buf, &frame) {
@@ -823,7 +811,7 @@ mod tests {
   fn encode_and_verify_non_empty_with_attributes(input: &Frame, expected: &str) {
     let (attributes, encoded_attributes) = create_attributes();
     let mut frame = input.clone();
-    frame.add_attributes(attributes);
+    let _ = frame.add_attributes(attributes).unwrap();
 
     let mut buf = empty_bytes();
     buf.extend_from_slice(PADDING.as_bytes());
@@ -1143,11 +1131,26 @@ mod tests {
   }
 
   #[test]
-  fn should_encode_verbatimstring() {
+  fn should_encode_verbatimstring_txt() {
     let expected = "=15\r\ntxt:Some string\r\n";
     let input = Frame::VerbatimString {
       format: VerbatimStringFormat::Text,
-      data: "Some string".to_owned(),
+      data: "Some string".as_bytes().to_vec(),
+      attributes: None,
+    };
+
+    encode_and_verify_empty(&input, expected);
+    encode_and_verify_non_empty(&input, expected);
+    encode_and_verify_empty_with_attributes(&input, expected);
+    encode_and_verify_non_empty_with_attributes(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_verbatimstring_mkd() {
+    let expected = "=15\r\nmkd:Some string\r\n";
+    let input = Frame::VerbatimString {
+      format: VerbatimStringFormat::Markdown,
+      data: "Some string".as_bytes().to_vec(),
       attributes: None,
     };
 
@@ -1226,7 +1229,7 @@ mod tests {
   #[test]
   fn should_encode_simple_map() {
     let expected = "%2\r\n+first\r\n:1\r\n+second\r\n:2\r\n";
-    let mut inner = new_map(None);
+    let mut inner = resp3_utils::new_map(None);
     let k1: Frame = (FrameKind::SimpleString, "first").try_into().unwrap();
     let v1: Frame = 1.into();
     let k2: Frame = (FrameKind::SimpleString, "second").try_into().unwrap();
@@ -1248,14 +1251,14 @@ mod tests {
   #[test]
   fn should_encode_nested_map() {
     let expected = "%2\r\n+first\r\n:1\r\n+second\r\n%1\r\n+third\r\n:3\r\n";
-    let mut inner = new_map(None);
+    let mut inner = resp3_utils::new_map(None);
     let k1: Frame = (FrameKind::SimpleString, "first").try_into().unwrap();
     let v1: Frame = 1.into();
     let k2: Frame = (FrameKind::SimpleString, "second").try_into().unwrap();
     let k3: Frame = (FrameKind::SimpleString, "third").try_into().unwrap();
     let v3: Frame = 3.into();
 
-    let mut v2_inner = new_map(None);
+    let mut v2_inner = resp3_utils::new_map(None);
     v2_inner.insert(k3, v3);
     let v2 = Frame::Map {
       data: v2_inner,
@@ -1330,7 +1333,7 @@ mod tests {
       streaming::encode_string_chunk(buf, offset, chunk4.as_bytes())
     })
     .unwrap();
-    offset = streaming::extend_while_encoding(&mut buf, |buf| streaming::encode_end_string(buf, offset)).unwrap();
+    let _ = streaming::extend_while_encoding(&mut buf, |buf| streaming::encode_end_string(buf, offset)).unwrap();
 
     assert_eq!(buf, expected);
   }
@@ -1378,7 +1381,7 @@ mod tests {
       streaming::encode_aggregate_type_inner_value(buf, offset, &chunk4)
     })
     .unwrap();
-    offset =
+    let _ =
       streaming::extend_while_encoding(&mut buf, |buf| streaming::encode_end_aggregate_type(buf, offset)).unwrap();
 
     assert_eq!(buf, expected);
@@ -1427,7 +1430,7 @@ mod tests {
       streaming::encode_aggregate_type_inner_value(buf, offset, &chunk4)
     })
     .unwrap();
-    offset =
+    let _ =
       streaming::extend_while_encoding(&mut buf, |buf| streaming::encode_end_aggregate_type(buf, offset)).unwrap();
 
     assert_eq!(buf, expected);
@@ -1468,7 +1471,7 @@ mod tests {
       streaming::encode_aggregate_type_inner_kv_pair(buf, offset, &k2, &v2)
     })
     .unwrap();
-    offset =
+    let _ =
       streaming::extend_while_encoding(&mut buf, |buf| streaming::encode_end_aggregate_type(buf, offset)).unwrap();
 
     assert_eq!(buf, expected);

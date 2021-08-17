@@ -1,5 +1,7 @@
 #![feature(test)]
 
+extern crate test;
+
 use bytes::BufMut;
 use bytes::BytesMut;
 use rand::Rng;
@@ -48,7 +50,7 @@ pub fn rand_array(len: usize, null_every: usize, str_len: usize) -> BytesMut {
 mod tests {
   use super::*;
   use redis_protocol::resp2::decode::decode as resp2_decode;
-  use redis_protocol::resp3::decode::decode as resp3_decode;
+  use redis_protocol::resp3::decode::complete::decode as resp3_decode;
   use test::{black_box, Bencher};
 
   // bulkstring decoding

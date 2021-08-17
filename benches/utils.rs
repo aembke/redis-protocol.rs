@@ -1,30 +1,19 @@
 #![feature(test)]
 
 extern crate test;
-extern crate rand;
-extern crate redis_protocol;
-extern crate bytes;
 
-#[macro_use]
-extern crate lazy_static;
-
+use bytes::BufMut;
+use bytes::BytesMut;
 use rand::Rng;
 
-use redis_protocol::prelude::*;
-use bytes::BytesMut;
-use bytes::BufMut;
-
 pub fn rand_chars(len: usize) -> String {
-  rand::thread_rng()
-    .gen_ascii_chars()
-    .take(len)
-    .collect()
+  rand::thread_rng().gen_ascii_chars().take(len).collect()
 }
 
 #[cfg(test)]
 mod tests {
   use super::*;
-  use test::{Bencher, black_box};
+  use test::{black_box, Bencher};
 
   use redis_protocol::redis_keyslot;
 
@@ -81,5 +70,4 @@ mod tests {
       black_box(redis_keyslot(&k));
     });
   }
-
 }

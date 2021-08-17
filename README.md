@@ -1,12 +1,13 @@
 Redis Protocol
 ==============
 
-[![LICENSE](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Build Status](https://travis-ci.org/aembke/redis-protocol.rs.svg?branch=master)](https://travis-ci.org/aembke/redis-protocol.rs)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Build Status](https://travis-ci.com/aembke/redis-protocol.rs.svg?branch=main)](https://travis-ci.com/aembke/redis-protocol.rs)
 [![Crates.io](https://img.shields.io/crates/v/redis-protocol.svg)](https://crates.io/crates/redis-protocol)
 [![API docs](https://docs.rs/redis-protocol/badge.svg)](https://docs.rs/redis-protocol)
 
-Structs and functions for implementing the [Redis protocol](https://redis.io/topics/protocol), built on [nom](https://github.com/Geal/nom) and designed to work easily with [Tokio](https://github.com/tokio-rs/tokio).
+Structs and functions for implementing the [Redis protocol](https://redis.io/topics/protocol). 
 
 ## Install
 
@@ -23,13 +24,11 @@ cargo add redis-protocol
 * Parse publish-subscribe messages.
 * Support cluster redirection errors.
 * Implements cluster key hashing.
+* Utility functions for converting between RESP2 and RESP3.
 
 ## Examples
 
 ```rust
-extern crate redis_protocol;
-extern crate bytes;
-
 use redis_protocol::resp2::prelude::*;
 use bytes::BytesMut;
 
