@@ -20,25 +20,15 @@ repository = "aembke/redis-protocol.rs"
 [dependencies]
 bytes = "1"
 cookie-factory = "0.3"
-crc16 = "0.3"
-float-cmp = "0.8"
+crc16 = "0.4"
 indexmap = { version = "1.6", optional = true }
 log = "0.4"
 nom = "6.1"
-pretty_env_logger = "0.2"
 
 [dev-dependencies]
-futures = "0.3"
-lazy_static = "1.1"
 rand = "0.5"
-
-[dev-dependencies.tokio]
-features = ["full"]
-version = "1"
-
-[dev-dependencies.tokio-util]
-features = ["codec"]
-version = "0.6"
+tokio-util = { version = "0.6", features = ["codec"] }
+tokio = { version = "1.12", features = ["full"] }
 
 [features]
 index-map = ["indexmap"]

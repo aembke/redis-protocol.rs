@@ -454,10 +454,6 @@ fn d_parse_frame_or_attribute(input: &[u8]) -> IResult<&[u8], DecodedFrame, Redi
 /// Implement a [codec](https://docs.rs/tokio-util/0.6.6/tokio_util/codec/index.html) that only supports complete frames...
 ///
 /// ```edition2018 no_run
-/// # extern crate tokio_util;
-/// # extern crate tokio;
-/// # extern crate bytes;
-///
 /// use redis_protocol::resp3::types::*;
 /// use redis_protocol::types::{RedisProtocolError, RedisProtocolErrorKind};
 /// use redis_protocol::resp3::decode::complete::*;
@@ -522,10 +518,6 @@ pub mod complete {
 /// Implement a [codec](https://docs.rs/tokio-util/0.6.6/tokio_util/codec/index.html) that supports decoding streams...
 ///
 /// ```edition2018 no_run
-/// # extern crate tokio_util;
-/// # extern crate tokio;
-/// # extern crate bytes;
-///
 /// use redis_protocol::resp3::types::*;
 /// use redis_protocol::types::{RedisProtocolError, RedisProtocolErrorKind};
 /// use redis_protocol::resp3::decode::streaming::*;
