@@ -688,6 +688,7 @@ mod tests {
   use crate::utils::ZEROED_KB;
   use std::convert::TryInto;
   use std::str;
+  use itertools::Itertools;
 
   const PADDING: &'static str = "foobar";
 
@@ -729,6 +730,24 @@ mod tests {
     }
   }
 
+  fn unordered_assert_eq(data: BytesMut, expected_start: BytesMut, expected_middle: &[&str]) {
+    let mut exptected_permutations = vec![];
+    for middle_permutation in expected_middle.iter().permutations(expected_middle.len()) {
+      let mut expected = expected_start.clone();
+      for middle in middle_permutation {
+        expected.extend_from_slice(middle.as_bytes())
+      }
+      exptected_permutations.push(expected);
+    }
+
+    assert!(
+      exptected_permutations.contains(&data),
+      "No middle permutations matched: data {:?} needs to match with one of the following {:#?}",
+      data,
+      exptected_permutations
+    );
+  }
+
   fn encode_and_verify_empty(input: &Frame, expected: &str) {
     let mut buf = empty_bytes();
 
@@ -747,14 +766,26 @@ mod tests {
     assert_eq!(len, expected.as_bytes().len(), "empty expected len is correct");
   }
 
+  fn encode_and_verify_empty_unordered(input: &Frame, expected_start: &str, expected_middle: &[&str]) {
+    let mut buf = empty_bytes();
+
+    let len = complete::encode_bytes(&mut buf, input).unwrap();
+
+    unordered_assert_eq(buf, BytesMut::from(expected_start.as_bytes()), expected_middle);
+
+    let expected_middle_len: usize = expected_middle.iter().map(|x| x.as_bytes().len()).sum();
+    assert_eq!(
+      len,
+      expected_start.as_bytes().len() + expected_middle_len,
+      "empty expected len is correct"
+    );
+  }
+
   fn encode_and_verify_non_empty(input: &Frame, expected: &str) {
     let mut buf = empty_bytes();
     buf.extend_from_slice(PADDING.as_bytes());
 
-    let len = match complete::encode_bytes(&mut buf, input) {
-      Ok(l) => l,
-      Err(e) => panic!("{:?}", e),
-    };
+    let len = complete::encode_bytes(&mut buf, input).unwrap();
     let padded = vec![PADDING, expected].join("");
 
     assert_eq!(
@@ -765,6 +796,23 @@ mod tests {
       expected
     );
     assert_eq!(len, padded.as_bytes().len(), "padded expected len is correct");
+  }
+
+  fn encode_and_verify_non_empty_unordered(input: &Frame, expected_start: &str, expected_middle: &[&str]) {
+    let mut buf = empty_bytes();
+    buf.extend_from_slice(PADDING.as_bytes());
+
+    let len = complete::encode_bytes(&mut buf, input).unwrap();
+    let expected_start_padded = vec![PADDING, expected_start].join("");
+
+    unordered_assert_eq(buf, BytesMut::from(expected_start_padded.as_bytes()), expected_middle);
+
+    let expected_middle_len: usize = expected_middle.iter().map(|x| x.as_bytes().len()).sum();
+    assert_eq!(
+      len,
+      expected_start_padded.as_bytes().len() + expected_middle_len,
+      "padded expected len is correct"
+    );
   }
 
   fn encode_raw_and_verify_empty(input: &Frame, expected: &str) {
@@ -791,10 +839,7 @@ mod tests {
     let _ = frame.add_attributes(attributes).unwrap();
     let mut buf = empty_bytes();
 
-    let len = match complete::encode_bytes(&mut buf, &frame) {
-      Ok(l) => l,
-      Err(e) => panic!("{:?}", e),
-    };
+    let len = complete::encode_bytes(&mut buf, &frame).unwrap();
 
     let mut expected_bytes = empty_bytes();
     expected_bytes.extend_from_slice(&encoded_attributes);
@@ -808,6 +853,27 @@ mod tests {
     );
   }
 
+  fn encode_and_verify_empty_with_attributes_unordered(input: &Frame, expected_start: &str, expected_middle: &[&str]) {
+    let (attributes, encoded_attributes) = create_attributes();
+    let mut frame = input.clone();
+    let _ = frame.add_attributes(attributes).unwrap();
+    let mut buf = empty_bytes();
+
+    let len = complete::encode_bytes(&mut buf, &frame).unwrap();
+
+    let mut expected_start_bytes = empty_bytes();
+    expected_start_bytes.extend_from_slice(&encoded_attributes);
+    expected_start_bytes.extend_from_slice(expected_start.as_bytes());
+    unordered_assert_eq(buf, expected_start_bytes, expected_middle);
+
+    let expected_middle_len: usize = expected_middle.iter().map(|x| x.as_bytes().len()).sum();
+    assert_eq!(
+      len,
+      expected_start.as_bytes().len() + expected_middle_len + encoded_attributes.len(),
+      "non empty expected len is correct with attrs"
+    );
+  }
+
   fn encode_and_verify_non_empty_with_attributes(input: &Frame, expected: &str) {
     let (attributes, encoded_attributes) = create_attributes();
     let mut frame = input.clone();
@@ -816,10 +882,7 @@ mod tests {
     let mut buf = empty_bytes();
     buf.extend_from_slice(PADDING.as_bytes());
 
-    let len = match complete::encode_bytes(&mut buf, &frame) {
-      Ok(l) => l,
-      Err(e) => panic!("{:?}", e),
-    };
+    let len = complete::encode_bytes(&mut buf, &frame).unwrap();
     let mut expected_bytes = empty_bytes();
     expected_bytes.extend_from_slice(PADDING.as_bytes());
     expected_bytes.extend_from_slice(&encoded_attributes);
@@ -829,6 +892,33 @@ mod tests {
     assert_eq!(
       len,
       expected.as_bytes().len() + encoded_attributes.len() + PADDING.as_bytes().len(),
+      "empty expected len is correct with attrs"
+    );
+  }
+
+  fn encode_and_verify_non_empty_with_attributes_unordered(
+    input: &Frame,
+    expected_start: &str,
+    expected_middle: &[&str],
+  ) {
+    let (attributes, encoded_attributes) = create_attributes();
+    let mut frame = input.clone();
+    let _ = frame.add_attributes(attributes).unwrap();
+
+    let mut buf = empty_bytes();
+    buf.extend_from_slice(PADDING.as_bytes());
+
+    let len = complete::encode_bytes(&mut buf, &frame).unwrap();
+    let mut expected_start_bytes = empty_bytes();
+    expected_start_bytes.extend_from_slice(PADDING.as_bytes());
+    expected_start_bytes.extend_from_slice(&encoded_attributes);
+    expected_start_bytes.extend_from_slice(expected_start.as_bytes());
+    unordered_assert_eq(buf, expected_start_bytes, expected_middle);
+
+    let expected_middle_len: usize = expected_middle.iter().map(|x| x.as_bytes().len()).sum();
+    assert_eq!(
+      len,
+      expected_start.as_bytes().len() + expected_middle_len + encoded_attributes.len() + PADDING.as_bytes().len(),
       "empty expected len is correct with attrs"
     );
   }
@@ -1202,7 +1292,8 @@ mod tests {
 
   #[test]
   fn should_encode_simple_set() {
-    let expected = "~5\r\n+orange\r\n+apple\r\n#t\r\n:100\r\n:999\r\n";
+    let expected_start = "~5\r\n";
+    let expected_middle = ["+orange\r\n", "+apple\r\n", "#t\r\n", ":100\r\n", ":999\r\n"];
     let mut inner = resp3_utils::new_set(None);
     let v1: Frame = (FrameKind::SimpleString, "orange").try_into().unwrap();
     let v2: Frame = (FrameKind::SimpleString, "apple").try_into().unwrap();
@@ -1220,15 +1311,16 @@ mod tests {
       attributes: None,
     };
 
-    encode_and_verify_empty(&input, expected);
-    encode_and_verify_non_empty(&input, expected);
-    encode_and_verify_empty_with_attributes(&input, expected);
-    encode_and_verify_non_empty_with_attributes(&input, expected);
+    encode_and_verify_empty_unordered(&input, expected_start, &expected_middle);
+    encode_and_verify_non_empty_unordered(&input, expected_start, &expected_middle);
+    encode_and_verify_empty_with_attributes_unordered(&input, expected_start, &expected_middle);
+    encode_and_verify_non_empty_with_attributes_unordered(&input, expected_start, &expected_middle);
   }
 
   #[test]
   fn should_encode_simple_map() {
-    let expected = "%2\r\n+first\r\n:1\r\n+second\r\n:2\r\n";
+    let expected_start = "%2\r\n";
+    let expected_middle = ["+first\r\n:1\r\n", "+second\r\n:2\r\n"];
     let mut inner = resp3_utils::new_map(None);
     let k1: Frame = (FrameKind::SimpleString, "first").try_into().unwrap();
     let v1: Frame = 1.into();
@@ -1242,15 +1334,16 @@ mod tests {
       attributes: None,
     };
 
-    encode_and_verify_empty(&input, expected);
-    encode_and_verify_non_empty(&input, expected);
-    encode_and_verify_empty_with_attributes(&input, expected);
-    encode_and_verify_non_empty_with_attributes(&input, expected);
+    encode_and_verify_empty_unordered(&input, expected_start, &expected_middle);
+    encode_and_verify_non_empty_unordered(&input, expected_start, &expected_middle);
+    encode_and_verify_empty_with_attributes_unordered(&input, expected_start, &expected_middle);
+    encode_and_verify_non_empty_with_attributes_unordered(&input, expected_start, &expected_middle);
   }
 
   #[test]
   fn should_encode_nested_map() {
-    let expected = "%2\r\n+first\r\n:1\r\n+second\r\n%1\r\n+third\r\n:3\r\n";
+    let expected_start = "%2\r\n";
+    let expected_middle = ["+first\r\n:1\r\n", "+second\r\n%1\r\n+third\r\n:3\r\n"];
     let mut inner = resp3_utils::new_map(None);
     let k1: Frame = (FrameKind::SimpleString, "first").try_into().unwrap();
     let v1: Frame = 1.into();
@@ -1272,10 +1365,10 @@ mod tests {
       attributes: None,
     };
 
-    encode_and_verify_empty(&input, expected);
-    encode_and_verify_non_empty(&input, expected);
-    encode_and_verify_empty_with_attributes(&input, expected);
-    encode_and_verify_non_empty_with_attributes(&input, expected);
+    encode_and_verify_empty_unordered(&input, expected_start, &expected_middle);
+    encode_and_verify_non_empty_unordered(&input, expected_start, &expected_middle);
+    encode_and_verify_empty_with_attributes_unordered(&input, expected_start, &expected_middle);
+    encode_and_verify_non_empty_with_attributes_unordered(&input, expected_start, &expected_middle);
   }
 
   #[test]
