@@ -67,10 +67,12 @@ fn gen_array<'a>(x: (&'a mut [u8], usize), data: &Vec<Frame>) -> Result<(&'a mut
 
   for frame in data.iter() {
     x = match frame {
+      Frame::SimpleString(ref s) => gen_simplestring(x, &s)?,
       Frame::BulkString(ref b) => gen_bulkstring(x, &b)?,
       Frame::Null => gen_null(x)?,
+      Frame::Error(ref s) => gen_error(x, s)?,
       Frame::Array(ref frames) => gen_array(x, frames)?,
-      _ => return Err(GenError::CustomError(1)),
+      Frame::Integer(ref i) => gen_integer(x, i)?,
     };
   }
 
