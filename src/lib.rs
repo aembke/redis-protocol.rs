@@ -37,14 +37,10 @@
 
 #[macro_use]
 extern crate log;
-extern crate bytes;
-extern crate crc16;
-extern crate pretty_env_logger;
 #[macro_use]
 extern crate cookie_factory;
 #[macro_use]
 extern crate nom;
-extern crate float_cmp;
 
 #[cfg(feature = "index-map")]
 extern crate indexmap;
