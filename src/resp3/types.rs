@@ -74,6 +74,8 @@ pub const EMPTY_SPACE: &'static str = " ";
 /// Byte representation of `AUTH`.
 pub const AUTH: &'static str = "AUTH";
 
+pub use crate::utils::{PATTERN_PUBSUB_PREFIX, PUBSUB_PREFIX, PUBSUB_PUSH_PREFIX};
+
 /// A map struct for frames.
 #[cfg(not(feature = "index-map"))]
 pub type FrameMap = HashMap<Frame, Frame>;
@@ -966,6 +968,14 @@ impl Frame {
           FrameKind::ChunkedString
         }
       }
+    }
+  }
+
+  /// Whether or not the frame is a `Null` variant.
+  pub fn is_null(&self) -> bool {
+    match *self {
+      Frame::Null => true,
+      _ => false,
     }
   }
 
