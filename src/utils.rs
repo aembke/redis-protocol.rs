@@ -13,10 +13,16 @@ pub const ZEROED_KB: &'static [u8; 1024] = &[0; 1024];
 pub const REDIS_CLUSTER_SLOTS: u16 = 16384;
 
 /// Prefix on normal pubsub messages.
+///
+/// In RESP2 this may be the first inner frame, in RESP3 it may be the second inner frame.
 pub const PUBSUB_PREFIX: &'static str = "message";
 /// Prefix on pubsub messages from a pattern matching subscription.
+///
+/// In RESP2 this may be the first inner frame, in RESP3 it may be the second inner frame.
 pub const PATTERN_PUBSUB_PREFIX: &'static str = "pmessage";
-/// Prefix on push pubsub messages.
+/// Prefix on RESP3 push pubsub messages.
+///
+/// In RESP3 this is the first inner frame in a push pubsub message.
 pub const PUBSUB_PUSH_PREFIX: &'static str = "pubsub";
 
 macro_rules! unwrap_return(

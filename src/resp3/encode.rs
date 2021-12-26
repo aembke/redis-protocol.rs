@@ -261,24 +261,22 @@ fn gen_hello<'a>(
 ) -> Result<(&'a mut [u8], usize), GenError> {
   let mut x = do_gen!(
     x,
-    gen_slice!(HELLO.as_bytes())
-      >> gen_slice!(EMPTY_SPACE.as_bytes())
-      >> gen_be_u8!(version.to_byte())
-      >> gen_slice!(EMPTY_SPACE.as_bytes())
+    gen_slice!(HELLO.as_bytes()) >> gen_slice!(EMPTY_SPACE.as_bytes()) >> gen_be_u8!(version.to_byte())
   )?;
 
   if let Some(ref auth) = *auth {
     x = do_gen!(
       x,
-      gen_slice!(AUTH.as_bytes())
+      gen_slice!(EMPTY_SPACE.as_bytes())
+        >> gen_slice!(AUTH.as_bytes())
         >> gen_slice!(EMPTY_SPACE.as_bytes())
         >> gen_slice!(auth.username.as_bytes())
         >> gen_slice!(EMPTY_SPACE.as_bytes())
         >> gen_slice!(auth.password.as_bytes())
-        >> gen_slice!(EMPTY_SPACE.as_bytes())
     )?;
   }
 
+  let x = do_gen!(x, gen_slice!(CRLF.as_bytes()))?;
   Ok(x)
 }
 
@@ -686,9 +684,9 @@ pub mod streaming {
 mod tests {
   use super::*;
   use crate::utils::ZEROED_KB;
+  use itertools::Itertools;
   use std::convert::TryInto;
   use std::str;
-  use itertools::Itertools;
 
   const PADDING: &'static str = "foobar";
 
@@ -1373,9 +1371,18 @@ mod tests {
 
   #[test]
   fn should_encode_hello() {
-    let expected = "HELLO 3 ";
+    let expected = "HELLO 3\r\n";
     let input = Frame::Hello {
       version: RespVersion::RESP3,
+      auth: None,
+    };
+
+    encode_and_verify_empty(&input, expected);
+    encode_and_verify_non_empty(&input, expected);
+
+    let expected = "HELLO 2\r\n";
+    let input = Frame::Hello {
+      version: RespVersion::RESP2,
       auth: None,
     };
 
@@ -1385,7 +1392,7 @@ mod tests {
 
   #[test]
   fn should_encode_hello_with_auth() {
-    let expected = "HELLO 3 AUTH default mypassword ";
+    let expected = "HELLO 3 AUTH default mypassword\r\n";
     let input = Frame::Hello {
       version: RespVersion::RESP3,
       auth: Some(Auth {

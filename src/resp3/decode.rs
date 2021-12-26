@@ -16,7 +16,7 @@ use std::str;
 
 macro_rules! e (
   ($err:expr) => {
-    return Err($err.into_nom_error());
+    return Err($err.into_nom_error())
   }
 );
 
@@ -342,10 +342,8 @@ fn d_parse_hello(input: &[u8]) -> IResult<&[u8], Frame, RedisParseError<&[u8]>> 
       nom_terminated(nom_take_until(EMPTY_SPACE), nom_take(1_usize)),
       str::from_utf8,
     )(input)?;
-    let (input, password) = nom_map_res(
-      nom_terminated(nom_take_until(EMPTY_SPACE), nom_take(1_usize)),
-      str::from_utf8,
-    )(input)?;
+    let (input, password) =
+      nom_map_res(nom_terminated(nom_take_until(CRLF), nom_take(1_usize)), str::from_utf8)(input)?;
 
     (input, Some((username, password)))
   } else {

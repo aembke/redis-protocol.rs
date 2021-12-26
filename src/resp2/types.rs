@@ -18,6 +18,8 @@ pub const ARRAY_BYTE: u8 = b'*';
 /// The binary representation of NULL in RESP2.
 pub const NULL: &'static str = "$-1\r\n";
 
+pub use crate::utils::{PATTERN_PUBSUB_PREFIX, PUBSUB_PREFIX};
+
 /// An enum representing the kind of a Frame without references to any inner data.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FrameKind {
