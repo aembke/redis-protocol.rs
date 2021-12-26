@@ -24,7 +24,7 @@ jobs:
           command: cargo clean && eval `ssh-agent` && ssh-add ~/.ssh/id_rsa && cargo test --release --features index-map
 
 workflows:
-  version: 2
+  version: 2g
   build:
     jobs:
       - tests-default

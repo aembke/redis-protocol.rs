@@ -3,7 +3,7 @@ Redis Protocol
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Build Status](https://travis-ci.com/aembke/redis-protocol.rs.svg?branch=main)](https://travis-ci.com/aembke/redis-protocol.rs)
+[![CircleCI](https://circleci.com/gh/aembke/redis-protocol.rs/tree/main.svg?style=svg)](https://circleci.com/gh/aembke/redis-protocol.rs/tree/main)
 [![Crates.io](https://img.shields.io/crates/v/redis-protocol.svg)](https://crates.io/crates/redis-protocol)
 [![API docs](https://docs.rs/redis-protocol/badge.svg)](https://docs.rs/redis-protocol)
 
