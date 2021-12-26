@@ -27,5 +27,5 @@ workflows:
   version: 2
   build:
     jobs:
-      - test-default
-      - test-indexmap
+      - tests-default
+      - tests-indexmap
