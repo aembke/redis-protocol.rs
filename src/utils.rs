@@ -327,8 +327,8 @@ pub fn read_cluster_error(payload: &str) -> Option<Redirection> {
 }
 
 /// Perform a crc16 XMODEM operation against a string slice.
-fn crc16_xmodem(key: &str) -> u16 {
-  State::<XMODEM>::calculate(key.as_bytes()) % REDIS_CLUSTER_SLOTS
+fn crc16_xmodem(key: &[u8]) -> u16 {
+  State::<XMODEM>::calculate(key) % REDIS_CLUSTER_SLOTS
 }
 
 /// Map a Redis key to its cluster key slot.
@@ -340,13 +340,14 @@ fn crc16_xmodem(key: &str) -> u16 {
 ///
 /// ```no_run
 /// # use redis_protocol::redis_keyslot;
-/// assert_eq!(redis_keyslot("8xjx7vWrfPq54mKfFD3Y1CcjjofpnAcQ"), 5458);
+/// assert_eq!(redis_keyslot("8xjx7vWrfPq54mKfFD3Y1CcjjofpnAcQ".as_bytes()), 5458);
 /// ```
-pub fn redis_keyslot(key: &str) -> u16 {
+#[cfg(feature = "cluster-hash-bytes")]
+pub fn redis_keyslot(key: &[u8]) -> u16 {
   let (mut i, mut j): (Option<usize>, Option<usize>) = (None, None);
 
-  for (idx, c) in key.chars().enumerate() {
-    if c == '{' {
+  for (idx, c) in key.iter().enumerate() {
+    if *c == b'{' {
       i = Some(idx);
       break;
     }
@@ -357,8 +358,8 @@ pub fn redis_keyslot(key: &str) -> u16 {
   }
 
   let i = i.unwrap();
-  for (idx, c) in key[i + 1..].chars().enumerate() {
-    if c == '}' {
+  for (idx, c) in key[i + 1..].iter().enumerate() {
+    if *c == b'}' {
       j = Some(idx);
       break;
     }
@@ -375,6 +376,54 @@ pub fn redis_keyslot(key: &str) -> u16 {
     crc16_xmodem(&key[i + 1..i + j + 1])
   };
 
+  out
+}
+
+/// Map a Redis key to its cluster key slot.
+///
+/// ```ignore
+/// $ redis-cli -p 30001 cluster keyslot "8xjx7vWrfPq54mKfFD3Y1CcjjofpnAcQ"
+/// (integer) 5458
+/// ```
+///
+/// ```no_run
+/// # use redis_protocol::redis_keyslot;
+/// assert_eq!(redis_keyslot("8xjx7vWrfPq54mKfFD3Y1CcjjofpnAcQ"), 5458);
+/// ```
+#[cfg(not(feature = "cluster-hash-bytes"))]
+pub fn redis_keyslot(key: &str) -> u16 {
+  let (mut i, mut j): (Option<usize>, Option<usize>) = (None, None);
+
+  for (idx, c) in key.chars().enumerate() {
+    if c == '{' {
+      i = Some(idx);
+      break;
+    }
+  }
+
+  if i.is_none() || (i.is_some() && i.unwrap() == key.len() - 1) {
+    return crc16_xmodem(key.as_bytes());
+  }
+
+  let i = i.unwrap();
+  for (idx, c) in key[i + 1..].chars().enumerate() {
+    if c == '}' {
+      j = Some(idx);
+      break;
+    }
+  }
+
+  if j.is_none() {
+    return crc16_xmodem(key.as_bytes());
+  }
+
+  let j = j.unwrap();
+  let out = if i + j == key.len() || j == 0 {
+    crc16_xmodem(key.as_bytes())
+  } else {
+    crc16_xmodem(key[i + 1..i + j + 1].as_bytes())
+  };
+
   trace!("mapped {} to redis slot {}", key, out);
   out
 }
@@ -383,12 +432,27 @@ pub fn redis_keyslot(key: &str) -> u16 {
 mod tests {
   use super::*;
 
+  #[cfg(feature = "cluster-hash-bytes")]
+  fn _redis_keyslot(key: &str) -> u16 {
+    redis_keyslot(key.as_bytes())
+  }
+
+  #[cfg(not(feature = "cluster-hash-bytes"))]
+  fn _redis_keyslot(key: &str) -> u16 {
+    redis_keyslot(key)
+  }
+
+  #[cfg(feature = "cluster-hash-bytes")]
+  fn read_kitten_file() -> Vec<u8> {
+    include_bytes!("../tests/kitten.jpeg").to_vec()
+  }
+
   #[test]
   fn should_crc16_123456789() {
     let key = "123456789";
     // 31C3
     let expected: u16 = 12739;
-    let actual = redis_keyslot(key);
+    let actual = _redis_keyslot(key);
 
     assert_eq!(actual, expected);
   }
@@ -398,7 +462,7 @@ mod tests {
     let key = "foo{123456789}bar";
     // 31C3
     let expected: u16 = 12739;
-    let actual = redis_keyslot(key);
+    let actual = _redis_keyslot(key);
 
     assert_eq!(actual, expected);
   }
@@ -408,7 +472,7 @@ mod tests {
     let key = "{123456789}";
     // 31C3
     let expected: u16 = 12739;
-    let actual = redis_keyslot(key);
+    let actual = _redis_keyslot(key);
 
     assert_eq!(actual, expected);
   }
@@ -418,7 +482,7 @@ mod tests {
     let key = "foo{123456789";
     // 288A
     let expected: u16 = 10378;
-    let actual = redis_keyslot(key);
+    let actual = _redis_keyslot(key);
 
     assert_eq!(actual, expected);
   }
@@ -428,7 +492,7 @@ mod tests {
     let key = "foo}123456789";
     // 5B35 = 23349, 23349 % 16384 = 6965
     let expected: u16 = 6965;
-    let actual = redis_keyslot(key);
+    let actual = _redis_keyslot(key);
 
     assert_eq!(actual, expected);
   }
@@ -439,8 +503,55 @@ mod tests {
     // 127.0.0.1:30001> cluster keyslot 8xjx7vWrfPq54mKfFD3Y1CcjjofpnAcQ
     // (integer) 5458
     let expected: u16 = 5458;
-    let actual = redis_keyslot(key);
+    let actual = _redis_keyslot(key);
 
     assert_eq!(actual, expected);
+  }
+
+  #[cfg(feature = "cluster-hash-bytes")]
+  #[test]
+  fn should_hash_non_ascii_string_bytes() {
+    let key = "💩 👻 💀 ☠️ 👽 👾";
+    // 127.0.0.1:30001> cluster keyslot "💩 👻 💀 ☠️ 👽 👾"
+    // (integer) 13954
+    let expected: u16 = 13954;
+    let actual = redis_keyslot(key.as_bytes());
+
+    assert_eq!(actual, expected);
+  }
+
+  #[cfg(feature = "cluster-hash-bytes")]
+  #[test]
+  fn should_hash_non_ascii_string_bytes_with_tag() {
+    let key = "💩 👻 💀{123456789}☠️ 👽 👾";
+    // 127.0.0.1:30001> cluster keyslot "💩 👻 💀{123456789}☠️ 👽 👾"
+    // (integer) 12739
+    let expected: u16 = 12739;
+    let actual = redis_keyslot(key.as_bytes());
+
+    assert_eq!(actual, expected);
+  }
+
+  #[cfg(feature = "cluster-hash-bytes")]
+  #[test]
+  fn should_hash_non_utf8_string_bytes() {
+    let key = read_kitten_file();
+    let expected: u16 = 1589;
+    let actual = redis_keyslot(&key);
+
+    assert_eq!(actual, expected)
+  }
+
+  #[cfg(feature = "cluster-hash-bytes")]
+  #[test]
+  fn should_hash_non_utf8_string_bytes_with_tag() {
+    let mut key = read_kitten_file();
+    for (idx, c) in "{123456789}".as_bytes().iter().enumerate() {
+      key[242 + idx] = *c;
+    }
+
+    let expected: u16 = 12739;
+    let actual = redis_keyslot(&key);
+    assert_eq!(actual, expected)
   }
 }
