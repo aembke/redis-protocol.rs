@@ -5,9 +5,9 @@
 //!
 //! ## Examples
 //!
-//! ```rust
-//! extern crate redis_protocol;
-//! extern crate bytes;
+//! ```rust no_run ignore
+//! # extern crate redis_protocol;
+//! # extern crate bytes;
 //!
 //! use redis_protocol::resp2::prelude::*;
 //! use bytes::BytesMut;
