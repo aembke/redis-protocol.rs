@@ -271,7 +271,7 @@ impl Redirection {
       Redirection::Ask { ref slot, ref server } => format!("ASK {} {}", slot, server),
     };
 
-    Resp2Frame::Error(inner)
+    Resp2Frame::Error(inner.into())
   }
 
   pub fn to_resp3_frame(&self) -> Resp3Frame {
@@ -281,7 +281,7 @@ impl Redirection {
     };
 
     Resp3Frame::SimpleError {
-      data: inner,
+      data: inner.into(),
       attributes: None,
     }
   }

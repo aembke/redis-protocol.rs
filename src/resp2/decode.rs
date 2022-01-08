@@ -20,7 +20,7 @@ fn to_i64(s: &str) -> Result<i64, ParseIntError> {
 }
 
 fn map_error(s: &str) -> Frame {
-  Frame::Error(s.to_owned())
+  Frame::Error(s.into())
 }
 
 fn isize_to_usize<'a>(s: isize) -> Result<usize, RedisProtocolError> {
@@ -53,7 +53,7 @@ named!(
 
 named!(
   parse_simplestring<Frame>,
-  do_parse!(data: read_to_crlf_s >> (Frame::SimpleString(data.to_owned())))
+  do_parse!(data: read_to_crlf_s >> (Frame::SimpleString(data.into())))
 );
 
 named!(
@@ -70,7 +70,7 @@ named!(parse_error<Frame>, map!(read_to_crlf_s, map_error));
 named_args!(parse_bulkstring(len: isize) <Frame>,
   do_parse!(
     d: terminated!(take!(len), take!(2)) >>
-    (Frame::BulkString(Vec::from(d)))
+    (Frame::BulkString(d.into()))
   )
 );
 

@@ -55,4 +55,4 @@ pub mod resp3;
 /// Error types and general redis protocol types.
 pub mod types;
 
-pub use utils::{digits_in_number, redis_keyslot, resp2_frame_to_resp3, resp3_frame_to_resp2, ZEROED_KB};
+pub use utils::{digits_in_number, redis_keyslot, resp2_frame_to_resp3, ZEROED_KB};

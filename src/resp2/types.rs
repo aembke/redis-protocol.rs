@@ -1,6 +1,8 @@
 use crate::resp2::utils as resp2_utils;
 use crate::types::{Redirection, RedisProtocolError};
 use crate::utils;
+use bytes::BytesMut;
+use bytes_utils::Str;
 use std::mem;
 use std::str;
 
@@ -62,13 +64,13 @@ impl FrameKind {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Frame {
   /// A short non binary-safe string.
-  SimpleString(String),
+  SimpleString(Str),
   /// A short non binary-safe string representing an error.
-  Error(String),
+  Error(Str),
   /// A signed 64 bit integer.
   Integer(i64),
   /// A binary-safe string.
-  BulkString(Vec<u8>),
+  BulkString(BytesMut),
   /// An array of frames, arbitrarily nested.
   Array(Vec<Frame>),
   /// A null value.
@@ -181,7 +183,7 @@ impl Frame {
   // Copy and read the inner value as a string, if possible.
   pub fn to_string(&self) -> Option<String> {
     match *self {
-      Frame::SimpleString(ref s) => Some(s.clone()),
+      Frame::SimpleString(ref s) => Some(s.to_string()),
       Frame::BulkString(ref b) => String::from_utf8(b.to_vec()).ok(),
       _ => None,
     }
@@ -365,7 +367,7 @@ mod tests {
     assert!(!f.is_integer());
     assert!(!f.is_moved_or_ask_error());
 
-    let f = Frame::BulkString("foo".as_bytes().to_vec());
+    let f = Frame::BulkString("foo".as_bytes().into());
     assert!(!f.is_null());
     assert!(f.is_string());
     assert!(!f.is_error());

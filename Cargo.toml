@@ -2,12 +2,12 @@
 authors = ["Alec Embke <aembke@gmail.com>"]
 description = "Structs and functions to implement the Redis protocol."
 homepage = "https://github.com/aembke/redis-protocol.rs"
-keywords = ["redis", "protocol", "nom", "encode", "decode"]
+keywords = ["redis", "protocol", "nom", "encode", "decode", "resp"]
 license = "MIT"
 name = "redis-protocol"
 readme = "README.md"
 repository = "https://github.com/aembke/redis-protocol.rs"
-version = "3.1.0"
+version = "4.0.0"
 edition = "2018"
 
 [badges.maintenance]
@@ -18,7 +18,8 @@ branch = "main"
 repository = "aembke/redis-protocol.rs"
 
 [dependencies]
-bytes = "1"
+bytes = "1.1"
+bytes-utils = "0.1"
 cookie-factory = "0.3"
 crc16 = "0.4"
 indexmap = { version = "1.6", optional = true }
@@ -34,7 +35,6 @@ itertools = "0.10"
 [features]
 default = []
 index-map = ["indexmap"]
-cluster-hash-bytes = []
 
 [lib]
 doc = true

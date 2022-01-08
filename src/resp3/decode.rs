@@ -179,7 +179,7 @@ fn d_parse_simplestring(input: &[u8]) -> IResult<&[u8], Frame, RedisParseError<&
   Ok((
     input,
     Frame::SimpleString {
-      data: data.to_owned(),
+      data: data.into(),
       attributes: None,
     },
   ))
@@ -191,7 +191,7 @@ fn d_parse_simpleerror(input: &[u8]) -> IResult<&[u8], Frame, RedisParseError<&[
   Ok((
     input,
     Frame::SimpleError {
-      data: data.to_owned(),
+      data: data.into(),
       attributes: None,
     },
   ))
@@ -226,7 +226,7 @@ fn d_parse_blobstring(input: &[u8], len: usize) -> IResult<&[u8], Frame, RedisPa
   Ok((
     input,
     Frame::BlobString {
-      data: data.to_vec(),
+      data: data.into(),
       attributes: None,
     },
   ))
@@ -239,7 +239,7 @@ fn d_parse_bloberror(input: &[u8]) -> IResult<&[u8], Frame, RedisParseError<&[u8
   Ok((
     input,
     Frame::BlobError {
-      data: data.to_vec(),
+      data: data.into(),
       attributes: None,
     },
   ))
@@ -254,7 +254,7 @@ fn d_parse_verbatimstring(input: &[u8]) -> IResult<&[u8], Frame, RedisParseError
   Ok((
     input,
     Frame::VerbatimString {
-      data: data.to_vec(),
+      data: data.into(),
       format,
       attributes: None,
     },
@@ -267,7 +267,7 @@ fn d_parse_bignumber(input: &[u8]) -> IResult<&[u8], Frame, RedisParseError<&[u8
   Ok((
     input,
     Frame::BigNumber {
-      data: data.to_vec(),
+      data: data.into(),
       attributes: None,
     },
   ))
@@ -385,7 +385,7 @@ fn d_parse_chunked_string(input: &[u8]) -> IResult<&[u8], DecodedFrame, RedisPar
     (input, Frame::new_end_stream())
   } else {
     let (input, contents) = nom_terminated(nom_take(len), nom_take(2_usize))(input)?;
-    (input, Frame::ChunkedString(Vec::from(contents)))
+    (input, Frame::ChunkedString(contents.into()))
   };
 
   Ok((input, DecodedFrame::Complete(frame)))
@@ -1044,7 +1044,7 @@ mod tests {
   fn should_decode_bignumber() {
     let expected = (
       Some(Frame::BigNumber {
-        data: "3492890328409238509324850943850943825024385".as_bytes().to_vec(),
+        data: "3492890328409238509324850943850943825024385".into(),
         attributes: None,
       }),
       46,
@@ -1068,7 +1068,7 @@ mod tests {
   fn should_decode_verbatim_string_mkd() {
     let expected = (
       Some(Frame::VerbatimString {
-        data: "Some string".as_bytes().to_vec(),
+        data: "Some string".into(),
         format: VerbatimStringFormat::Markdown,
         attributes: None,
       }),
@@ -1084,7 +1084,7 @@ mod tests {
   fn should_decode_verbatim_string_txt() {
     let expected = (
       Some(Frame::VerbatimString {
-        data: "Some string".as_bytes().to_vec(),
+        data: "Some string".into(),
         format: VerbatimStringFormat::Text,
         attributes: None,
       }),

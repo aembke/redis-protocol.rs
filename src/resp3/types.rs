@@ -1,6 +1,8 @@
 use crate::resp3::utils as resp3_utils;
 use crate::types::{Redirection, RedisProtocolError, RedisProtocolErrorKind};
 use crate::utils;
+use bytes::BytesMut;
+use bytes_utils::Str;
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::convert::{TryFrom, TryInto};
@@ -10,6 +12,7 @@ use std::str;
 
 #[cfg(feature = "index-map")]
 use indexmap::{IndexMap, IndexSet};
+use nom::AsBytes;
 
 /// Byte prefix before a simple string type.
 pub const SIMPLE_STRING_BYTE: u8 = b'+';
@@ -292,24 +295,18 @@ impl FrameKind {
 pub enum Frame {
   /// A binary-safe blob.
   BlobString {
-    data: Vec<u8>,
+    data: BytesMut,
     attributes: Option<Attributes>,
   },
   /// A binary-safe blob representing an error.
   BlobError {
-    data: Vec<u8>,
+    data: BytesMut,
     attributes: Option<Attributes>,
   },
   /// A small non binary-safe string.
-  SimpleString {
-    data: String,
-    attributes: Option<Attributes>,
-  },
+  SimpleString { data: Str, attributes: Option<Attributes> },
   /// A small non binary-safe string representing an error.
-  SimpleError {
-    data: String,
-    attributes: Option<Attributes>,
-  },
+  SimpleError { data: Str, attributes: Option<Attributes> },
   /// A boolean type.
   Boolean { data: bool, attributes: Option<Attributes> },
   /// A null type.
@@ -322,12 +319,12 @@ pub enum Frame {
   ///
   /// This library does not attempt to parse this, nor does it offer any utilities to do so.
   BigNumber {
-    data: Vec<u8>,
+    data: BytesMut,
     attributes: Option<Attributes>,
   },
   /// A binary-safe string to be displayed without any escaping or filtering.
   VerbatimString {
-    data: Vec<u8>,
+    data: BytesMut,
     format: VerbatimStringFormat,
     attributes: Option<Attributes>,
   },
@@ -359,7 +356,7 @@ pub enum Frame {
   /// A special frame type used when first connecting to the server to describe the protocol version and optional credentials.
   Hello { version: RespVersion, auth: Option<Auth> },
   /// One chunk of a streaming string.
-  ChunkedString(Vec<u8>),
+  ChunkedString(BytesMut),
 }
 
 impl Hash for Frame {
@@ -586,24 +583,25 @@ impl PartialEq for Frame {
 
 impl Eq for Frame {}
 
+#[cfg(test)]
 impl TryFrom<(FrameKind, Vec<u8>)> for Frame {
   type Error = RedisProtocolError;
 
   fn try_from((kind, value): (FrameKind, Vec<u8>)) -> Result<Self, Self::Error> {
     let frame = match kind {
       FrameKind::BlobString => Frame::BlobString {
-        data: value,
+        data: value.as_bytes().into(),
         attributes: None,
       },
       FrameKind::BlobError => Frame::BlobError {
-        data: value,
+        data: value.as_bytes().into(),
         attributes: None,
       },
       FrameKind::BigNumber => Frame::BigNumber {
-        data: value,
+        data: value.as_bytes().into(),
         attributes: None,
       },
-      FrameKind::ChunkedString => Frame::ChunkedString(value),
+      FrameKind::ChunkedString => Frame::ChunkedString(value.as_bytes().into()),
       _ => {
         return Err(RedisProtocolError::new(
           RedisProtocolErrorKind::Unknown,
@@ -616,6 +614,7 @@ impl TryFrom<(FrameKind, Vec<u8>)> for Frame {
   }
 }
 
+#[cfg(test)]
 impl TryFrom<(FrameKind, Vec<Frame>)> for Frame {
   type Error = RedisProtocolError;
 
@@ -635,6 +634,7 @@ impl TryFrom<(FrameKind, Vec<Frame>)> for Frame {
   }
 }
 
+#[cfg(test)]
 impl TryFrom<(FrameKind, VecDeque<Frame>)> for Frame {
   type Error = RedisProtocolError;
 
@@ -738,32 +738,33 @@ impl TryFrom<f64> for Frame {
   }
 }
 
+#[cfg(test)]
 impl TryFrom<(FrameKind, String)> for Frame {
   type Error = RedisProtocolError;
 
   fn try_from((kind, value): (FrameKind, String)) -> Result<Self, Self::Error> {
     let frame = match kind {
       FrameKind::SimpleError => Frame::SimpleError {
-        data: value,
+        data: value.into(),
         attributes: None,
       },
       FrameKind::SimpleString => Frame::SimpleString {
-        data: value,
+        data: value.into(),
         attributes: None,
       },
       FrameKind::BlobError => Frame::BlobError {
-        data: value.into_bytes(),
+        data: value.as_bytes().into(),
         attributes: None,
       },
       FrameKind::BlobString => Frame::BlobString {
-        data: value.into_bytes(),
+        data: value.as_bytes().into(),
         attributes: None,
       },
       FrameKind::BigNumber => Frame::BigNumber {
-        data: value.into_bytes(),
+        data: value.as_bytes().into(),
         attributes: None,
       },
-      FrameKind::ChunkedString => Frame::ChunkedString(value.into_bytes()),
+      FrameKind::ChunkedString => Frame::ChunkedString(value.as_bytes().into()),
       _ => {
         return Err(RedisProtocolError::new(
           RedisProtocolErrorKind::Unknown,
@@ -776,6 +777,7 @@ impl TryFrom<(FrameKind, String)> for Frame {
   }
 }
 
+#[cfg(test)]
 impl<'a> TryFrom<(FrameKind, &'a str)> for Frame {
   type Error = RedisProtocolError;
 
@@ -907,7 +909,7 @@ impl Frame {
 
   /// Create a new `Frame` that terminates a stream.
   pub fn new_end_stream() -> Self {
-    Frame::ChunkedString(vec![])
+    Frame::ChunkedString(BytesMut::new())
   }
 
   /// A context-aware length function that returns the length of the inner frame contents.
@@ -1077,7 +1079,7 @@ impl Frame {
   /// Read the frame as a `String` if it can be parsed as a UTF-8 string.
   pub fn to_string(&self) -> Option<String> {
     match *self {
-      Frame::SimpleError { ref data, .. } | Frame::SimpleString { ref data, .. } => Some(data.to_owned()),
+      Frame::SimpleError { ref data, .. } | Frame::SimpleString { ref data, .. } => Some(data.to_string()),
       Frame::BlobError { ref data, .. } | Frame::BlobString { ref data, .. } | Frame::BigNumber { ref data, .. } => {
         String::from_utf8(data.to_vec()).ok()
       }
