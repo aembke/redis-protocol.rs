@@ -2,14 +2,14 @@
 //!
 //! <https://github.com/antirez/RESP3/blob/master/spec.md>
 
+use crate::nom_bytes::NomBytesMut;
 use crate::resp3::types::*;
 use crate::resp3::utils as resp3_utils;
 use crate::types::*;
 use crate::utils;
-use bytes_utils::{Str, StrMut};
+use bytes_utils::StrMut;
 use nom::bytes::streaming::{take as nom_take, take_until as nom_take_until};
 use nom::combinator::{map as nom_map, map_res as nom_map_res, opt as nom_opt};
-use nom::error::ErrorKind as NomErrorKind;
 use nom::multi::count as nom_count;
 use nom::number::streaming::be_u8;
 use nom::sequence::terminated as nom_terminated;
@@ -17,7 +17,6 @@ use nom::{Err as NomErr, IResult};
 use std::borrow::Cow;
 use std::fmt::Debug;
 use std::ops::Deref;
-use std::str;
 
 fn map_complete_frame(frame: Frame) -> DecodedFrame {
   DecodedFrame::Complete(frame)

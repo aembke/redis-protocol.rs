@@ -1,3 +1,4 @@
+use crate::nom_bytes::NomBytesMut;
 use crate::resp2::types::Frame as Resp2Frame;
 use crate::resp3::types::Frame as Resp3Frame;
 use crate::types::*;
@@ -328,7 +329,7 @@ where
 {
   let data_ref = data.as_ref();
   StrMut::from_inner(data_ref.clone().into_bytes())
-    .map_err(|error| RedisParseError::Nom(data_ref.clone(), NomErrorKind::ParseTo))
+    .map_err(|_| RedisParseError::Nom(data_ref.clone(), NomErrorKind::ParseTo))
 }
 
 #[cfg(test)]

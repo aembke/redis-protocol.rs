@@ -2,22 +2,18 @@
 //!
 //! <https://redis.io/topics/protocol#resp-protocol-description>
 
+use crate::nom_bytes::NomBytesMut;
 use crate::resp2::types::*;
 use crate::types::*;
 use crate::utils;
-use bytes::{Bytes, BytesMut};
-use bytes_utils::{Str, StrMut};
-use log::Level::Trace;
+use bytes::BytesMut;
+use bytes_utils::StrMut;
 use nom::bytes::streaming::{take as nom_take, take_until as nom_take_until};
-use nom::combinator::{map as nom_map, map_res as nom_map_res, opt as nom_opt};
-use nom::error::ErrorKind as NomErrorKind;
 use nom::multi::count as nom_count;
 use nom::number::streaming::be_u8;
 use nom::sequence::terminated as nom_terminated;
 use nom::{Err as NomErr, IResult};
-use std::num::ParseIntError;
 use std::str;
-use std::str::Utf8Error;
 
 const NULL_LEN: isize = -1;
 
@@ -324,8 +320,6 @@ mod tests {
 
   #[test]
   fn should_decode_moved_error() {
-    pretty_env_logger::try_init();
-
     let mut bytes: BytesMut = "-MOVED 3999 127.0.0.1:6381\r\n".into();
     let expected = (Some(Frame::Error("MOVED 3999 127.0.0.1:6381".into())), bytes.len());
 

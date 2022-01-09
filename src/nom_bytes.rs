@@ -1,12 +1,9 @@
 use bytes::buf::IntoIter;
 use bytes::BytesMut;
-use nom::bitvec::view::AsBits;
-use nom::error::{ErrorKind, ParseError};
-use nom::{AsBytes, CompareResult, IResult, InputLength, Needed};
-use std::iter::{Copied, Enumerate, Map};
-use std::marker::PhantomData;
+use nom::{AsBytes, Needed};
+use std::iter::Enumerate;
 use std::ops::{Deref, DerefMut, Range, RangeFrom, RangeFull, RangeTo};
-use std::slice::Iter;
+#[cfg(feature = "decode-logs")]
 use std::str;
 
 /// A wrapper type for `BytesMut` that implements the Nom traits necessary to operate on BytesMut slices directly with nom functions.

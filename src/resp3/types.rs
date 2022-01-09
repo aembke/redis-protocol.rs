@@ -2,17 +2,21 @@ use crate::resp3::utils as resp3_utils;
 use crate::types::{Redirection, RedisProtocolError, RedisProtocolErrorKind};
 use crate::utils;
 use bytes::BytesMut;
-use bytes_utils::{Str, StrMut};
+use bytes_utils::StrMut;
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::convert::{TryFrom, TryInto};
+use std::convert::TryFrom;
 use std::hash::{Hash, Hasher};
 use std::mem;
 use std::str;
 
 #[cfg(feature = "index-map")]
 use indexmap::{IndexMap, IndexSet};
+
+#[cfg(test)]
 use nom::AsBytes;
+#[cfg(test)]
+use std::convert::TryInto;
 
 /// Byte prefix before a simple string type.
 pub const SIMPLE_STRING_BYTE: u8 = b'+';

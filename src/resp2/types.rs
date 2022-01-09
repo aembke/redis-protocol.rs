@@ -2,7 +2,7 @@ use crate::resp2::utils as resp2_utils;
 use crate::types::{Redirection, RedisProtocolError};
 use crate::utils;
 use bytes::BytesMut;
-use bytes_utils::{Str, StrMut};
+use bytes_utils::StrMut;
 use std::mem;
 use std::str;
 
