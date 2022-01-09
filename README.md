@@ -20,11 +20,12 @@ cargo add redis-protocol
 ## Features
 
 * Supports RESP2 and RESP3, including streaming frames.
-* Encode and decode with `BytesMut` or slices.
 * Parse publish-subscribe messages.
 * Support cluster redirection errors.
 * Implements cluster key hashing.
-* Utility functions for converting between RESP2 and RESP3.
+* Utility functions for converting from RESP2 to RESP3.
+
+This library relies heavily on the `BytesMut` interface to implement parsing logic such that buffer contents never need to move or be copied. 
 
 ## Examples
 
@@ -55,14 +56,10 @@ fn main() {
 }
 ```
 
+## Decode Logs
+
+Use the `decode-logs` feature to enable special TRACE logs during the Frame decoding process.
+
 ## IndexMap
 
 Enable the `index-map` feature to use [IndexMap](https://crates.io/crates/indexmap) instead of `HashMap` and `HashSet`. This is useful for testing and may also be useful to callers.
-
-## Tests
-
-To run the unit tests:
-
-```
-cargo test --features index-map
-```
