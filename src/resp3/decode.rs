@@ -141,8 +141,9 @@ fn d_read_to_crlf<T>(input: T) -> IResult<NomBytesMut, NomBytesMut, RedisParseEr
 where
   T: AsRef<NomBytesMut> + Debug,
 {
-  decode_log!(input, "Parsing to CRLF. Remaining: {:?}", input);
-  nom_terminated(nom_take_until(CRLF.as_bytes()), nom_take(2_usize))(input.as_ref().clone())
+  let input_ref = input.as_ref();
+  decode_log!(input_ref, "Parsing to CRLF. Remaining: {:?}", input_ref);
+  nom_terminated(nom_take_until(CRLF.as_bytes()), nom_take(2_usize))(input_ref.clone())
 }
 
 fn d_read_to_crlf_s<T>(input: T) -> IResult<NomBytesMut, StrMut, RedisParseError<NomBytesMut>>

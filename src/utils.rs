@@ -68,7 +68,7 @@ macro_rules! etry (
 macro_rules! decode_log(
   ($buf:ident, $($arg:tt)*) => (
     if log_enabled!(log::Level::Trace) {
-      if let Some(s) = str::from_utf8(&$buf).ok() {
+      if let Some(s) = std::str::from_utf8(&$buf).ok() {
         let $buf = s;
         trace!($($arg)*)
       }else{

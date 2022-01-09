@@ -99,13 +99,6 @@ pub type FrameSet = IndexSet<Frame>;
 /// Additional information returned alongside a frame.
 pub type Attributes = FrameMap;
 
-/// Enum describing the byte ordering for numbers and doubles when cast to byte slices.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ByteOrder {
-  BigEndian,
-  LittleEndian,
-}
-
 /// The RESP version used in the `HELLO` request.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RespVersion {
@@ -1112,21 +1105,6 @@ impl Frame {
       }
       Frame::VerbatimString { ref data, .. } => Some(data),
       Frame::ChunkedString(ref b) => Some(b),
-      _ => None,
-    }
-  }
-
-  /// Attempt the read the frame as bytes if the inner type is an `i64` or `f64`.
-  pub fn number_or_double_as_bytes(&self, ordering: ByteOrder) -> Option<[u8; 8]> {
-    match *self {
-      Frame::Double { ref data, .. } => Some(match ordering {
-        ByteOrder::BigEndian => data.to_be_bytes(),
-        ByteOrder::LittleEndian => data.to_le_bytes(),
-      }),
-      Frame::Number { ref data, .. } => Some(match ordering {
-        ByteOrder::BigEndian => data.to_be_bytes(),
-        ByteOrder::LittleEndian => data.to_le_bytes(),
-      }),
       _ => None,
     }
   }
