@@ -1,6 +1,7 @@
 use crate::resp3::types::*;
 use crate::types::{RedisProtocolError, RedisProtocolErrorKind};
 use crate::utils::{digits_in_number, PATTERN_PUBSUB_PREFIX, PUBSUB_PREFIX, PUBSUB_PUSH_PREFIX};
+use bytes::BytesMut;
 use cookie_factory::GenError;
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -268,7 +269,7 @@ pub fn reconstruct_blobstring(
   attributes: Option<Attributes>,
 ) -> Result<Frame, RedisProtocolError> {
   let total_len = frames.iter().fold(0, |m, f| m + f.len());
-  let mut data = Vec::with_capacity(total_len);
+  let mut data = BytesMut::with_capacity(total_len);
 
   for frame in frames.into_iter() {
     data.extend_from_slice(match frame {
@@ -378,25 +379,25 @@ mod tests {
   #[test]
   fn should_reconstruct_blobstring() {
     let mut streamed_frame = StreamedFrame::new(FrameKind::BlobString);
-    streamed_frame.add_frame(Frame::ChunkedString("foo".as_bytes().to_vec()));
-    streamed_frame.add_frame(Frame::ChunkedString("bar".as_bytes().to_vec()));
-    streamed_frame.add_frame(Frame::ChunkedString("baz".as_bytes().to_vec()));
+    streamed_frame.add_frame(Frame::ChunkedString("foo".as_bytes().into()));
+    streamed_frame.add_frame(Frame::ChunkedString("bar".as_bytes().into()));
+    streamed_frame.add_frame(Frame::ChunkedString("baz".as_bytes().into()));
 
     let expected = Frame::BlobString {
-      data: "foobarbaz".as_bytes().to_vec(),
+      data: "foobarbaz".as_bytes().into(),
       attributes: None,
     };
     assert_eq!(streamed_frame.into_frame().unwrap(), expected);
 
     let mut streamed_frame = StreamedFrame::new(FrameKind::BlobString);
-    streamed_frame.add_frame(Frame::ChunkedString("foo".as_bytes().to_vec()));
-    streamed_frame.add_frame(Frame::ChunkedString("bar".as_bytes().to_vec()));
-    streamed_frame.add_frame(Frame::ChunkedString("baz".as_bytes().to_vec()));
+    streamed_frame.add_frame(Frame::ChunkedString("foo".as_bytes().into()));
+    streamed_frame.add_frame(Frame::ChunkedString("bar".as_bytes().into()));
+    streamed_frame.add_frame(Frame::ChunkedString("baz".as_bytes().into()));
     let (attributes, _) = create_attributes();
     streamed_frame.attributes = Some(attributes.clone());
 
     let expected = Frame::BlobString {
-      data: "foobarbaz".as_bytes().to_vec(),
+      data: "foobarbaz".as_bytes().into(),
       attributes: Some(attributes),
     };
     assert_eq!(streamed_frame.into_frame().unwrap(), expected);
@@ -484,7 +485,7 @@ mod tests {
       attributes: None,
     };
     let k2 = Frame::BlobString {
-      data: "b".as_bytes().to_vec(),
+      data: "b".as_bytes().into(),
       attributes: None,
     };
     let v2 = Frame::Boolean {
@@ -539,7 +540,7 @@ mod tests {
       attributes: None,
     };
     let k2 = Frame::BlobString {
-      data: "b".as_bytes().to_vec(),
+      data: "b".as_bytes().into(),
       attributes: None,
     };
 
@@ -562,7 +563,7 @@ mod tests {
       attributes: None,
     };
     let v3 = Frame::BlobString {
-      data: "b".as_bytes().to_vec(),
+      data: "b".as_bytes().into(),
       attributes: None,
     };
     let v4 = Frame::Boolean {
@@ -624,7 +625,7 @@ mod tests {
         },
         Frame::Null,
         Frame::BigNumber {
-          data: "123456789".as_bytes().to_vec(),
+          data: "123456789".as_bytes().into(),
           attributes: None,
         },
       ],
@@ -649,7 +650,7 @@ mod tests {
             },
             Frame::Null,
             Frame::BigNumber {
-              data: "123456789".as_bytes().to_vec(),
+              data: "123456789".as_bytes().into(),
               attributes: None,
             },
           ],
@@ -678,7 +679,7 @@ mod tests {
         },
         Frame::Null,
         Frame::BigNumber {
-          data: "123456789".as_bytes().to_vec(),
+          data: "123456789".as_bytes().into(),
           attributes: Some(attributes.clone()),
         },
       ],
@@ -704,7 +705,7 @@ mod tests {
             },
             Frame::Null,
             Frame::BigNumber {
-              data: "123456789".as_bytes().to_vec(),
+              data: "123456789".as_bytes().into(),
               attributes: Some(attributes.clone()),
             },
           ],
@@ -731,7 +732,7 @@ mod tests {
       attributes: None,
     };
     let k2 = Frame::BlobString {
-      data: "b".as_bytes().to_vec(),
+      data: "b".as_bytes().into(),
       attributes: None,
     };
     let inner_k1 = Frame::SimpleString {
@@ -739,7 +740,7 @@ mod tests {
       attributes: None,
     };
     let mut inner_v1 = Frame::BlobString {
-      data: "foobarbaz".as_bytes().to_vec(),
+      data: "foobarbaz".as_bytes().into(),
       attributes: None,
     };
     let mut inner_map = new_map(None);
@@ -794,7 +795,7 @@ mod tests {
   #[test]
   fn should_get_encode_len_blobstring() {
     let mut frame = Frame::BlobString {
-      data: "foobarbaz".to_string().into_bytes(),
+      data: "foobarbaz".as_bytes().into(),
       attributes: None,
     };
     let expected_len = 1 + 1 + 2 + 9 + 2;
@@ -808,7 +809,7 @@ mod tests {
   #[test]
   fn should_get_encode_len_bloberror() {
     let mut frame = Frame::BlobError {
-      data: "foobarbaz".to_string().into_bytes(),
+      data: "foobarbaz".as_bytes().into(),
       attributes: None,
     };
     let expected_len = 1 + 1 + 2 + 9 + 2;
@@ -822,7 +823,7 @@ mod tests {
   #[test]
   fn should_get_encode_len_bignumber() {
     let mut frame = Frame::BigNumber {
-      data: "123456789".to_string().into_bytes(),
+      data: "123456789".as_bytes().into(),
       attributes: None,
     };
     let expected_len = 1 + 9 + 2;
@@ -1002,7 +1003,7 @@ mod tests {
 
   #[test]
   fn should_get_encode_len_chunked_string() {
-    let frame = Frame::ChunkedString("foobarbaz".as_bytes().to_vec());
+    let frame = Frame::ChunkedString("foobarbaz".as_bytes().into());
     let expected_len = 1 + 1 + 2 + 9 + 2;
     assert_eq!(encode_len(&frame).unwrap(), expected_len);
   }

@@ -1,15 +1,22 @@
 use crate::resp3::utils as resp3_utils;
 use crate::types::{Redirection, RedisProtocolError, RedisProtocolErrorKind};
 use crate::utils;
+use bytes::BytesMut;
+use bytes_utils::StrMut;
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::convert::{TryFrom, TryInto};
+use std::convert::TryFrom;
 use std::hash::{Hash, Hasher};
 use std::mem;
 use std::str;
 
 #[cfg(feature = "index-map")]
 use indexmap::{IndexMap, IndexSet};
+
+#[cfg(test)]
+use nom::AsBytes;
+#[cfg(test)]
+use std::convert::TryInto;
 
 /// Byte prefix before a simple string type.
 pub const SIMPLE_STRING_BYTE: u8 = b'+';
@@ -91,13 +98,6 @@ pub type FrameSet = IndexSet<Frame>;
 
 /// Additional information returned alongside a frame.
 pub type Attributes = FrameMap;
-
-/// Enum describing the byte ordering for numbers and doubles when cast to byte slices.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ByteOrder {
-  BigEndian,
-  LittleEndian,
-}
 
 /// The RESP version used in the `HELLO` request.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -292,22 +292,22 @@ impl FrameKind {
 pub enum Frame {
   /// A binary-safe blob.
   BlobString {
-    data: Vec<u8>,
+    data: BytesMut,
     attributes: Option<Attributes>,
   },
   /// A binary-safe blob representing an error.
   BlobError {
-    data: Vec<u8>,
+    data: BytesMut,
     attributes: Option<Attributes>,
   },
   /// A small non binary-safe string.
   SimpleString {
-    data: String,
+    data: StrMut,
     attributes: Option<Attributes>,
   },
   /// A small non binary-safe string representing an error.
   SimpleError {
-    data: String,
+    data: StrMut,
     attributes: Option<Attributes>,
   },
   /// A boolean type.
@@ -322,12 +322,12 @@ pub enum Frame {
   ///
   /// This library does not attempt to parse this, nor does it offer any utilities to do so.
   BigNumber {
-    data: Vec<u8>,
+    data: BytesMut,
     attributes: Option<Attributes>,
   },
   /// A binary-safe string to be displayed without any escaping or filtering.
   VerbatimString {
-    data: Vec<u8>,
+    data: BytesMut,
     format: VerbatimStringFormat,
     attributes: Option<Attributes>,
   },
@@ -359,7 +359,7 @@ pub enum Frame {
   /// A special frame type used when first connecting to the server to describe the protocol version and optional credentials.
   Hello { version: RespVersion, auth: Option<Auth> },
   /// One chunk of a streaming string.
-  ChunkedString(Vec<u8>),
+  ChunkedString(BytesMut),
 }
 
 impl Hash for Frame {
@@ -586,24 +586,25 @@ impl PartialEq for Frame {
 
 impl Eq for Frame {}
 
+#[cfg(test)]
 impl TryFrom<(FrameKind, Vec<u8>)> for Frame {
   type Error = RedisProtocolError;
 
   fn try_from((kind, value): (FrameKind, Vec<u8>)) -> Result<Self, Self::Error> {
     let frame = match kind {
       FrameKind::BlobString => Frame::BlobString {
-        data: value,
+        data: value.as_bytes().into(),
         attributes: None,
       },
       FrameKind::BlobError => Frame::BlobError {
-        data: value,
+        data: value.as_bytes().into(),
         attributes: None,
       },
       FrameKind::BigNumber => Frame::BigNumber {
-        data: value,
+        data: value.as_bytes().into(),
         attributes: None,
       },
-      FrameKind::ChunkedString => Frame::ChunkedString(value),
+      FrameKind::ChunkedString => Frame::ChunkedString(value.as_bytes().into()),
       _ => {
         return Err(RedisProtocolError::new(
           RedisProtocolErrorKind::Unknown,
@@ -616,6 +617,7 @@ impl TryFrom<(FrameKind, Vec<u8>)> for Frame {
   }
 }
 
+#[cfg(test)]
 impl TryFrom<(FrameKind, Vec<Frame>)> for Frame {
   type Error = RedisProtocolError;
 
@@ -635,6 +637,7 @@ impl TryFrom<(FrameKind, Vec<Frame>)> for Frame {
   }
 }
 
+#[cfg(test)]
 impl TryFrom<(FrameKind, VecDeque<Frame>)> for Frame {
   type Error = RedisProtocolError;
 
@@ -738,32 +741,33 @@ impl TryFrom<f64> for Frame {
   }
 }
 
+#[cfg(test)]
 impl TryFrom<(FrameKind, String)> for Frame {
   type Error = RedisProtocolError;
 
   fn try_from((kind, value): (FrameKind, String)) -> Result<Self, Self::Error> {
     let frame = match kind {
       FrameKind::SimpleError => Frame::SimpleError {
-        data: value,
+        data: value.into(),
         attributes: None,
       },
       FrameKind::SimpleString => Frame::SimpleString {
-        data: value,
+        data: value.into(),
         attributes: None,
       },
       FrameKind::BlobError => Frame::BlobError {
-        data: value.into_bytes(),
+        data: value.as_bytes().into(),
         attributes: None,
       },
       FrameKind::BlobString => Frame::BlobString {
-        data: value.into_bytes(),
+        data: value.as_bytes().into(),
         attributes: None,
       },
       FrameKind::BigNumber => Frame::BigNumber {
-        data: value.into_bytes(),
+        data: value.as_bytes().into(),
         attributes: None,
       },
-      FrameKind::ChunkedString => Frame::ChunkedString(value.into_bytes()),
+      FrameKind::ChunkedString => Frame::ChunkedString(value.as_bytes().into()),
       _ => {
         return Err(RedisProtocolError::new(
           RedisProtocolErrorKind::Unknown,
@@ -776,6 +780,7 @@ impl TryFrom<(FrameKind, String)> for Frame {
   }
 }
 
+#[cfg(test)]
 impl<'a> TryFrom<(FrameKind, &'a str)> for Frame {
   type Error = RedisProtocolError;
 
@@ -907,7 +912,7 @@ impl Frame {
 
   /// Create a new `Frame` that terminates a stream.
   pub fn new_end_stream() -> Self {
-    Frame::ChunkedString(vec![])
+    Frame::ChunkedString(BytesMut::new())
   }
 
   /// A context-aware length function that returns the length of the inner frame contents.
@@ -1077,7 +1082,7 @@ impl Frame {
   /// Read the frame as a `String` if it can be parsed as a UTF-8 string.
   pub fn to_string(&self) -> Option<String> {
     match *self {
-      Frame::SimpleError { ref data, .. } | Frame::SimpleString { ref data, .. } => Some(data.to_owned()),
+      Frame::SimpleError { ref data, .. } | Frame::SimpleString { ref data, .. } => Some(data.to_string()),
       Frame::BlobError { ref data, .. } | Frame::BlobString { ref data, .. } | Frame::BigNumber { ref data, .. } => {
         String::from_utf8(data.to_vec()).ok()
       }
@@ -1100,21 +1105,6 @@ impl Frame {
       }
       Frame::VerbatimString { ref data, .. } => Some(data),
       Frame::ChunkedString(ref b) => Some(b),
-      _ => None,
-    }
-  }
-
-  /// Attempt the read the frame as bytes if the inner type is an `i64` or `f64`.
-  pub fn number_or_double_as_bytes(&self, ordering: ByteOrder) -> Option<[u8; 8]> {
-    match *self {
-      Frame::Double { ref data, .. } => Some(match ordering {
-        ByteOrder::BigEndian => data.to_be_bytes(),
-        ByteOrder::LittleEndian => data.to_le_bytes(),
-      }),
-      Frame::Number { ref data, .. } => Some(match ordering {
-        ByteOrder::BigEndian => data.to_be_bytes(),
-        ByteOrder::LittleEndian => data.to_le_bytes(),
-      }),
       _ => None,
     }
   }
@@ -1212,26 +1202,27 @@ impl Frame {
 /// A helper struct for reading and managing streaming data types.
 ///
 /// ```rust edition2018
+/// # use bytes::BytesMut;
 /// use redis_protocol::resp3::decode::streaming::decode;
 ///
 /// fn main() {
-///   let parts = vec!["*?\r\n", ":1\r\n", ":2\r\n:3\r\n", ".\r\n"];
+///   let parts: Vec<BytesMut> = vec!["*?\r\n".into(), ":1\r\n".into(), ":2\r\n".into(), ".\r\n".into()];
 ///
-///   let (frame, _) = decode(parts[0].as_bytes()).unwrap().unwrap();
+///   let (frame, _) = decode(&parts[0]).unwrap().unwrap();
 ///   assert!(frame.is_streaming());
 ///   let mut streaming = frame.into_streaming_frame().unwrap();
 ///   println!("Reading streaming {:?}", streaming.kind);
 ///
-///   let (frame, _) = decode(parts[1].as_bytes()).unwrap().unwrap();
+///   let (frame, _) = decode(&parts[1]).unwrap().unwrap();
 ///   assert!(frame.is_complete());
 ///   // add frames to the buffer until we reach the terminating byte sequence
 ///   streaming.add_frame(frame.into_complete_frame().unwrap());
 ///
-///   let (frame, _) = decode(parts[2].as_bytes()).unwrap().unwrap();
+///   let (frame, _) = decode(&parts[2]).unwrap().unwrap();
 ///   assert!(frame.is_complete());
 ///   streaming.add_frame(frame.into_complete_frame().unwrap());
 ///
-///   let (frame, _) = decode(parts[3].as_bytes()).unwrap().unwrap();
+///   let (frame, _) = decode(&parts[3]).unwrap().unwrap();
 ///   assert!(frame.is_complete());
 ///   streaming.add_frame(frame.into_complete_frame().unwrap());
 ///
@@ -1239,7 +1230,7 @@ impl Frame {
 ///   // convert the buffer into one frame
 ///   let result = streaming.into_frame().unwrap();
 ///
-///   // Frame::Array { data: [1, 2, 3], attributes: None }
+///   // Frame::Array { data: [1, 2], attributes: None }
 ///   println!("{:?}", result);
 /// }
 /// ```

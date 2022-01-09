@@ -1,6 +1,5 @@
 use crate::resp2::types::Frame as Resp2Frame;
 use crate::resp3::types::Frame as Resp3Frame;
-
 use cookie_factory::GenError;
 use nom::error::{ErrorKind, FromExternalError, ParseError};
 use nom::{Err as NomError, Needed};
@@ -8,7 +7,6 @@ use std::borrow::Borrow;
 use std::borrow::Cow;
 use std::fmt::{self, Debug};
 use std::io::Error as IoError;
-
 use std::str;
 
 /// Terminating bytes between frames.
@@ -271,7 +269,7 @@ impl Redirection {
       Redirection::Ask { ref slot, ref server } => format!("ASK {} {}", slot, server),
     };
 
-    Resp2Frame::Error(inner)
+    Resp2Frame::Error(inner.into())
   }
 
   pub fn to_resp3_frame(&self) -> Resp3Frame {
@@ -281,7 +279,7 @@ impl Redirection {
     };
 
     Resp3Frame::SimpleError {
-      data: inner,
+      data: inner.into(),
       attributes: None,
     }
   }

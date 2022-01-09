@@ -39,14 +39,16 @@
 extern crate log;
 #[macro_use]
 extern crate cookie_factory;
-#[macro_use]
-extern crate nom;
+
+#[cfg(test)]
+extern crate pretty_env_logger;
 
 #[cfg(feature = "index-map")]
 extern crate indexmap;
 
 #[macro_use]
 pub(crate) mod utils;
+pub(crate) mod nom_bytes;
 
 /// Types and functions for implementing the RESP2 protocol.
 pub mod resp2;
@@ -55,4 +57,4 @@ pub mod resp3;
 /// Error types and general redis protocol types.
 pub mod types;
 
-pub use utils::{digits_in_number, redis_keyslot, resp2_frame_to_resp3, resp3_frame_to_resp2, ZEROED_KB};
+pub use utils::{digits_in_number, redis_keyslot, resp2_frame_to_resp3, ZEROED_KB};

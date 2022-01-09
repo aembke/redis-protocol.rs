@@ -380,7 +380,7 @@ fn attempt_encoding<'a>(buf: &'a mut [u8], offset: usize, frame: &Frame) -> Resu
 ///
 /// async fn example(socket: &mut TcpStream, buf: &mut BytesMut) -> Result<(), RedisProtocolError> {
 ///   // in many cases the starting buffer wont be empty, so this example shows how to track the offset as well
-///   let frame = (FrameKind::BlobString, "foobarbaz").try_into()?;
+///   let frame = Frame::BlobString { data: "foobarbaz".into(), attributes: None };
 ///   let offset = encode_bytes(buf, &frame).expect("Failed to encode frame");
 ///   
 ///   let _ = socket.write_all(&buf).await.expect("Failed to write to socket");
@@ -1223,7 +1223,7 @@ mod tests {
     let expected = "=15\r\ntxt:Some string\r\n";
     let input = Frame::VerbatimString {
       format: VerbatimStringFormat::Text,
-      data: "Some string".as_bytes().to_vec(),
+      data: "Some string".as_bytes().into(),
       attributes: None,
     };
 
@@ -1238,7 +1238,7 @@ mod tests {
     let expected = "=15\r\nmkd:Some string\r\n";
     let input = Frame::VerbatimString {
       format: VerbatimStringFormat::Markdown,
-      data: "Some string".as_bytes().to_vec(),
+      data: "Some string".as_bytes().into(),
       attributes: None,
     };
 
@@ -1454,7 +1454,7 @@ mod tests {
       attributes: None,
     };
     let chunk4 = Frame::BlobString {
-      data: "foobarbaz".as_bytes().to_vec(),
+      data: "foobarbaz".as_bytes().into(),
       attributes: None,
     };
 
@@ -1503,7 +1503,7 @@ mod tests {
       attributes: None,
     };
     let chunk4 = Frame::BlobString {
-      data: "foobarbaz".as_bytes().to_vec(),
+      data: "foobarbaz".as_bytes().into(),
       attributes: None,
     };
 

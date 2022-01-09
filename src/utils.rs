@@ -1,9 +1,12 @@
+use crate::nom_bytes::NomBytesMut;
 use crate::resp2::types::Frame as Resp2Frame;
 use crate::resp3::types::Frame as Resp3Frame;
 use crate::types::*;
 use bytes::BytesMut;
+use bytes_utils::StrMut;
 use cookie_factory::GenError;
 use crc16::{State, XMODEM};
+use nom::error::ErrorKind as NomErrorKind;
 use std::str;
 
 pub const KB: usize = 1024;
@@ -46,6 +49,46 @@ macro_rules! encode_checks(
   }
 );
 
+macro_rules! e (
+  ($err:expr) => {
+    return Err($err.into_nom_error())
+  }
+);
+
+macro_rules! etry (
+  ($expr:expr) => {
+    match $expr {
+      Ok(result) => result,
+      Err(e) => return Err(e.into_nom_error())
+    }
+  }
+);
+
+#[cfg(feature = "decode-logs")]
+macro_rules! decode_log(
+  ($buf:ident, $($arg:tt)*) => (
+    if log_enabled!(log::Level::Trace) {
+      if let Some(s) = std::str::from_utf8(&$buf).ok() {
+        let $buf = s;
+        trace!($($arg)*)
+      }else{
+        trace!($($arg)*)
+      }
+    }
+  );
+  ($($arg:tt)*) => (
+    if log_enabled!(log::Level::Trace) {
+      trace!($($arg)*)
+    }
+  );
+);
+
+#[cfg(not(feature = "decode-logs"))]
+macro_rules! decode_log(
+  ($buf:ident, $($arg:tt)*) => ();
+  ($($arg:tt)*) => ();
+);
+
 /// Utility function to translate RESP2 frames to RESP3 frames.
 ///
 /// RESP2 frames and RESP3 frames are quite different, but RESP3 is largely a superset of RESP2 so this function will never return an error.
@@ -58,11 +101,11 @@ pub fn resp2_frame_to_resp3(frame: Resp2Frame) -> Resp3Frame {
   if frame.is_normal_pubsub() {
     let mut out = Vec::with_capacity(4);
     out.push(Resp3Frame::SimpleString {
-      data: PUBSUB_PUSH_PREFIX.to_owned(),
+      data: PUBSUB_PUSH_PREFIX.into(),
       attributes: None,
     });
     out.push(Resp3Frame::SimpleString {
-      data: PUBSUB_PREFIX.to_owned(),
+      data: PUBSUB_PREFIX.into(),
       attributes: None,
     });
     if let Resp2Frame::Array(mut inner) = frame {
@@ -83,11 +126,11 @@ pub fn resp2_frame_to_resp3(frame: Resp2Frame) -> Resp3Frame {
   if frame.is_pattern_pubsub_message() {
     let mut out = Vec::with_capacity(4);
     out.push(Resp3Frame::SimpleString {
-      data: PUBSUB_PUSH_PREFIX.to_owned(),
+      data: PUBSUB_PUSH_PREFIX.into(),
       attributes: None,
     });
     out.push(Resp3Frame::SimpleString {
-      data: PATTERN_PUBSUB_PREFIX.to_owned(),
+      data: PATTERN_PUBSUB_PREFIX.into(),
       attributes: None,
     });
     if let Resp2Frame::Array(mut inner) = frame {
@@ -159,104 +202,6 @@ pub fn resp2_frame_to_resp3(frame: Resp2Frame) -> Resp3Frame {
         attributes: None,
       }
     }
-  }
-}
-
-/// Utility function for converting RESP3 frames back to RESP2 frames.
-///
-/// RESP2 has no concept of attributes, maps, blob errors, or certain other frames. The following policy is used for translating new RESP3 frames back to RESP2:
-///
-/// * Push - If the Push frame corresponds to a pubsub message then it's converted to an array, otherwise an error is returned.
-/// * BlobError - An error is returned since the inner bytes might not be a UTF8 string, or they might be too large for a RESP2 SimpleError.
-/// * BigNumber - This is converted to a RESP2 BulkString
-/// * Boolean - This is converted to a BulkString with values of `true` or `false`. The associated [resp2_frame_to_resp3] function will convert back to Boolean from these values.
-/// * Double - The inner floating point value is converted to a `String` and sent as a BulkString.
-/// * VerbatimString - The inner data is sent as a BulkString. The format is discarded.
-/// * Set - The inner data is sent as an Array.
-/// * Map - An error is returned. RESP2 has no concept of a map.
-/// * Hello - An error is returned. If the caller wants to send Hello it needs to be encoded manually.
-/// * ChunkedString - An error is returned. RESP2 has no concept of streaming strings.
-///
-/// **Calling this with any RESP3 frame with attributes will result in an error.**
-///
-/// As seen above the conversion from RESP3 to RESP2 is lossy and error-prone, so callers are encouraged to use [resp2_frame_to_resp3] instead by exposing the RESP3 interface up
-/// the stack even if RESP2 decoding functions are used.
-pub fn resp3_frame_to_resp2(frame: Resp3Frame) -> Result<Resp2Frame, RedisProtocolError> {
-  if frame.attributes().is_some() {
-    return Err(RedisProtocolError::new(
-      RedisProtocolErrorKind::Unknown,
-      "Cannot convert RESP3 frame with attributes to RESP2.",
-    ));
-  }
-
-  if frame.is_pubsub_message() {
-    let mut out = Vec::with_capacity(3);
-    out.push(Resp2Frame::SimpleString(PUBSUB_PREFIX.to_owned()));
-
-    if let Resp3Frame::Push { mut data, .. } = frame {
-      // unwrap checked in is_normal_pubsub
-      let message = data.pop().unwrap();
-      let channel = data.pop().unwrap();
-
-      out.push(resp3_frame_to_resp2(channel)?);
-      out.push(resp3_frame_to_resp2(message)?);
-    } else {
-      panic!("Invalid pubsub frame converting to resp2 frame.");
-    }
-
-    return Ok(Resp2Frame::Array(out));
-  }
-
-  match frame {
-    Resp3Frame::Array { data, .. } => {
-      let mut out = Vec::with_capacity(data.len());
-      for frame in data.into_iter() {
-        out.push(resp3_frame_to_resp2(frame)?);
-      }
-      Ok(Resp2Frame::Array(out))
-    }
-    Resp3Frame::Push { data: _, .. } => Err(RedisProtocolError::new(
-      RedisProtocolErrorKind::Unknown,
-      "Cannot convert non-pubsub PUSH frame to RESP2 frame.",
-    )),
-    Resp3Frame::BlobString { data, .. } => Ok(Resp2Frame::BulkString(data)),
-    Resp3Frame::BlobError { data: _, .. } => Err(RedisProtocolError::new(
-      RedisProtocolErrorKind::Unknown,
-      "Cannot convert BlobError to RESP2 frame.",
-    )),
-    Resp3Frame::BigNumber { data, .. } => Ok(Resp2Frame::BulkString(data)),
-    Resp3Frame::Boolean { data, .. } => {
-      if data {
-        Ok(Resp2Frame::BulkString("true".into()))
-      } else {
-        Ok(Resp2Frame::BulkString("false".into()))
-      }
-    }
-    Resp3Frame::Number { data, .. } => Ok(Resp2Frame::Integer(data)),
-    Resp3Frame::Double { data, .. } => Ok(Resp2Frame::BulkString(data.to_string().into_bytes())),
-    Resp3Frame::VerbatimString { data, .. } => Ok(Resp2Frame::BulkString(data)),
-    Resp3Frame::SimpleError { data, .. } => Ok(Resp2Frame::Error(data)),
-    Resp3Frame::SimpleString { data, .. } => Ok(Resp2Frame::SimpleString(data)),
-    Resp3Frame::Set { data, .. } => {
-      let mut out = Vec::with_capacity(data.len());
-      for frame in data.into_iter() {
-        out.push(resp3_frame_to_resp2(frame)?);
-      }
-      Ok(Resp2Frame::Array(out))
-    }
-    Resp3Frame::Map { data: _, .. } => Err(RedisProtocolError::new(
-      RedisProtocolErrorKind::Unknown,
-      "Cannot convert Map to RESP2 frame.",
-    )),
-    Resp3Frame::Null => Ok(Resp2Frame::Null),
-    Resp3Frame::ChunkedString(_) => Err(RedisProtocolError::new(
-      RedisProtocolErrorKind::Unknown,
-      "Cannot convert ChunkedString to RESP2 frame.",
-    )),
-    Resp3Frame::Hello { .. } => Err(RedisProtocolError::new(
-      RedisProtocolErrorKind::Unknown,
-      "Cannot convert HELLO to RESP2 frame.",
-    )),
   }
 }
 
@@ -342,7 +287,6 @@ fn crc16_xmodem(key: &[u8]) -> u16 {
 /// # use redis_protocol::redis_keyslot;
 /// assert_eq!(redis_keyslot("8xjx7vWrfPq54mKfFD3Y1CcjjofpnAcQ".as_bytes()), 5458);
 /// ```
-#[cfg(feature = "cluster-hash-bytes")]
 pub fn redis_keyslot(key: &[u8]) -> u16 {
   let (mut i, mut j): (Option<usize>, Option<usize>) = (None, None);
 
@@ -379,70 +323,19 @@ pub fn redis_keyslot(key: &[u8]) -> u16 {
   out
 }
 
-/// Map a Redis key to its cluster key slot.
-///
-/// ```ignore
-/// $ redis-cli -p 30001 cluster keyslot "8xjx7vWrfPq54mKfFD3Y1CcjjofpnAcQ"
-/// (integer) 5458
-/// ```
-///
-/// ```no_run
-/// # use redis_protocol::redis_keyslot;
-/// assert_eq!(redis_keyslot("8xjx7vWrfPq54mKfFD3Y1CcjjofpnAcQ"), 5458);
-/// ```
-#[cfg(not(feature = "cluster-hash-bytes"))]
-pub fn redis_keyslot(key: &str) -> u16 {
-  let (mut i, mut j): (Option<usize>, Option<usize>) = (None, None);
-
-  for (idx, c) in key.chars().enumerate() {
-    if c == '{' {
-      i = Some(idx);
-      break;
-    }
-  }
-
-  if i.is_none() || (i.is_some() && i.unwrap() == key.len() - 1) {
-    return crc16_xmodem(key.as_bytes());
-  }
-
-  let i = i.unwrap();
-  for (idx, c) in key[i + 1..].chars().enumerate() {
-    if c == '}' {
-      j = Some(idx);
-      break;
-    }
-  }
-
-  if j.is_none() {
-    return crc16_xmodem(key.as_bytes());
-  }
-
-  let j = j.unwrap();
-  let out = if i + j == key.len() || j == 0 {
-    crc16_xmodem(key.as_bytes())
-  } else {
-    crc16_xmodem(key[i + 1..i + j + 1].as_bytes())
-  };
-
-  trace!("mapped {} to redis slot {}", key, out);
-  out
+pub(crate) fn to_strmut<T>(data: T) -> Result<StrMut, RedisParseError<NomBytesMut>>
+where
+  T: AsRef<NomBytesMut>,
+{
+  let data_ref = data.as_ref();
+  StrMut::from_inner(data_ref.clone().into_bytes())
+    .map_err(|_| RedisParseError::Nom(data_ref.clone(), NomErrorKind::ParseTo))
 }
 
 #[cfg(test)]
 mod tests {
   use super::*;
 
-  #[cfg(feature = "cluster-hash-bytes")]
-  fn _redis_keyslot(key: &str) -> u16 {
-    redis_keyslot(key.as_bytes())
-  }
-
-  #[cfg(not(feature = "cluster-hash-bytes"))]
-  fn _redis_keyslot(key: &str) -> u16 {
-    redis_keyslot(key)
-  }
-
-  #[cfg(feature = "cluster-hash-bytes")]
   fn read_kitten_file() -> Vec<u8> {
     include_bytes!("../tests/kitten.jpeg").to_vec()
   }
@@ -452,7 +345,7 @@ mod tests {
     let key = "123456789";
     // 31C3
     let expected: u16 = 12739;
-    let actual = _redis_keyslot(key);
+    let actual = redis_keyslot(key.as_bytes());
 
     assert_eq!(actual, expected);
   }
@@ -462,7 +355,7 @@ mod tests {
     let key = "foo{123456789}bar";
     // 31C3
     let expected: u16 = 12739;
-    let actual = _redis_keyslot(key);
+    let actual = redis_keyslot(key.as_bytes());
 
     assert_eq!(actual, expected);
   }
@@ -472,7 +365,7 @@ mod tests {
     let key = "{123456789}";
     // 31C3
     let expected: u16 = 12739;
-    let actual = _redis_keyslot(key);
+    let actual = redis_keyslot(key.as_bytes());
 
     assert_eq!(actual, expected);
   }
@@ -482,7 +375,7 @@ mod tests {
     let key = "foo{123456789";
     // 288A
     let expected: u16 = 10378;
-    let actual = _redis_keyslot(key);
+    let actual = redis_keyslot(key.as_bytes());
 
     assert_eq!(actual, expected);
   }
@@ -492,7 +385,7 @@ mod tests {
     let key = "foo}123456789";
     // 5B35 = 23349, 23349 % 16384 = 6965
     let expected: u16 = 6965;
-    let actual = _redis_keyslot(key);
+    let actual = redis_keyslot(key.as_bytes());
 
     assert_eq!(actual, expected);
   }
@@ -503,12 +396,11 @@ mod tests {
     // 127.0.0.1:30001> cluster keyslot 8xjx7vWrfPq54mKfFD3Y1CcjjofpnAcQ
     // (integer) 5458
     let expected: u16 = 5458;
-    let actual = _redis_keyslot(key);
+    let actual = redis_keyslot(key.as_bytes());
 
     assert_eq!(actual, expected);
   }
 
-  #[cfg(feature = "cluster-hash-bytes")]
   #[test]
   fn should_hash_non_ascii_string_bytes() {
     let key = "💩 👻 💀 ☠️ 👽 👾";
@@ -520,7 +412,6 @@ mod tests {
     assert_eq!(actual, expected);
   }
 
-  #[cfg(feature = "cluster-hash-bytes")]
   #[test]
   fn should_hash_non_ascii_string_bytes_with_tag() {
     let key = "💩 👻 💀{123456789}☠️ 👽 👾";
@@ -532,7 +423,6 @@ mod tests {
     assert_eq!(actual, expected);
   }
 
-  #[cfg(feature = "cluster-hash-bytes")]
   #[test]
   fn should_hash_non_utf8_string_bytes() {
     let key = read_kitten_file();
@@ -542,7 +432,6 @@ mod tests {
     assert_eq!(actual, expected)
   }
 
-  #[cfg(feature = "cluster-hash-bytes")]
   #[test]
   fn should_hash_non_utf8_string_bytes_with_tag() {
     let mut key = read_kitten_file();
