@@ -31,10 +31,12 @@ rand = "0.5"
 tokio-util = { version = "0.6", features = ["codec"] }
 tokio = { version = "1.12", features = ["full"] }
 itertools = "0.10"
+pretty_env_logger = "0.4"
 
 [features]
 default = []
 index-map = ["indexmap"]
+decode-logs = []
 
 [lib]
 doc = true

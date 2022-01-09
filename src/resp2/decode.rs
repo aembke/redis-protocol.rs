@@ -6,6 +6,7 @@ use crate::resp2::types::*;
 use crate::types::*;
 use bytes::{Bytes, BytesMut};
 use bytes_utils::{Str, StrMut};
+use log::Level::Trace;
 use nom::bytes::streaming::{take as nom_take, take_until as nom_take_until};
 use nom::combinator::{map as nom_map, map_res as nom_map_res, opt as nom_opt};
 use nom::error::ErrorKind as NomErrorKind;
@@ -43,21 +44,30 @@ fn to_strmut(data: &NomBytesMut) -> Result<StrMut, RedisParseError<NomBytesMut>>
 }
 
 fn d_read_to_crlf(input: &NomBytesMut) -> IResult<NomBytesMut, NomBytesMut, RedisParseError<NomBytesMut>> {
+  decode_log!(input, "Parsing to CRLF. Remaining: {:?}", input);
   nom_terminated(nom_take_until(CRLF.as_bytes()), nom_take(2_usize))(input.clone())
 }
 
 fn d_read_to_crlf_s(input: &NomBytesMut) -> IResult<NomBytesMut, StrMut, RedisParseError<NomBytesMut>> {
   let (input, data) = d_read_to_crlf(input)?;
+  decode_log!(data, "Parsing to StrMut. Data: {:?}", data);
   Ok((input, etry!(to_strmut(&data))))
 }
 
 fn d_read_prefix_len(input: &NomBytesMut) -> IResult<NomBytesMut, isize, RedisParseError<NomBytesMut>> {
   let (input, data) = d_read_to_crlf_s(input)?;
+  decode_log!("Reading prefix len. Data: {:?}", data.to_string());
   Ok((input, etry!(to_isize(&data))))
 }
 
 fn d_frame_type(input: &NomBytesMut) -> IResult<NomBytesMut, FrameKind, RedisParseError<NomBytesMut>> {
   let (input, byte) = be_u8(input.clone())?;
+  decode_log!(
+    input,
+    "Reading frame type. Kind byte: {:?}, remaining: {:?}",
+    byte,
+    input
+  );
   let kind = match byte {
     SIMPLESTRING_BYTE => FrameKind::SimpleString,
     ERROR_BYTE => FrameKind::Error,
@@ -99,6 +109,8 @@ fn d_parse_bulkstring(input: &NomBytesMut, len: usize) -> IResult<NomBytesMut, F
 
 fn d_parse_bulkstring_or_null(input: &NomBytesMut) -> IResult<NomBytesMut, Frame, RedisParseError<NomBytesMut>> {
   let (input, len) = d_read_prefix_len(input)?;
+  decode_log!(input, "Parsing bulkstring, Length: {:?}, remaining: {:?}", len, input);
+
   if len == NULL_LEN {
     d_parse_null(&input)
   } else {
@@ -110,11 +122,20 @@ fn d_parse_array_frames<T>(input: T, len: usize) -> IResult<NomBytesMut, Vec<Fra
 where
   T: AsRef<NomBytesMut>,
 {
-  nom_count(d_parse_frame, len)(input.as_ref().clone())
+  let input_ref = input.as_ref();
+  decode_log!(
+    input_ref,
+    "Parsing array frames. Length: {:?}, remaining: {:?}",
+    len,
+    input_ref
+  );
+  nom_count(d_parse_frame, len)(input_ref.clone())
 }
 
 fn d_parse_array(input: &NomBytesMut) -> IResult<NomBytesMut, Frame, RedisParseError<NomBytesMut>> {
   let (input, len) = d_read_prefix_len(input)?;
+  decode_log!(input, "Parsing array. Length: {:?}, remaining: {:?}", len, input);
+
   if len == NULL_LEN {
     d_parse_null(&input)
   } else {
@@ -129,6 +150,7 @@ where
   T: AsRef<NomBytesMut>,
 {
   let (input, kind) = d_frame_type(input.as_ref())?;
+  decode_log!(input, "Parsed kind: {:?}, remaining: {:?}", kind, input);
 
   match kind {
     FrameKind::SimpleString => d_parse_simplestring(&input),
@@ -306,6 +328,8 @@ mod tests {
 
   #[test]
   fn should_decode_moved_error() {
+    pretty_env_logger::try_init();
+
     let mut bytes: BytesMut = "-MOVED 3999 127.0.0.1:6381\r\n".into();
     let expected = (Some(Frame::Error("MOVED 3999 127.0.0.1:6381".into())), bytes.len());
 

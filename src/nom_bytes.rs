@@ -7,6 +7,7 @@ use std::iter::{Copied, Enumerate, Map};
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut, Range, RangeFrom, RangeFull, RangeTo};
 use std::slice::Iter;
+use std::str;
 
 #[derive(Eq, PartialEq, Debug, Clone)]
 pub(crate) struct NomBytesMut {
@@ -50,10 +51,12 @@ impl nom::InputTake for NomBytesMut {
     // operate on a shallow copy and split off the bytes to create a new shallow window into the bytes
     self.clone().split_to(count).into()
   }
+
   fn take_split(&self, count: usize) -> (Self, Self) {
     let mut right = self.clone();
     let left = right.split_to(count);
-    (left.into(), right)
+    // why...
+    (right, left.into())
   }
 }
 
@@ -65,6 +68,12 @@ impl nom::InputLength for NomBytesMut {
 
 impl<'a> nom::FindSubstring<&'a [u8]> for NomBytesMut {
   fn find_substring(&self, substr: &'a [u8]) -> Option<usize> {
+    decode_log!(
+      "FindSubstring in {:?}. Offset: {:?}, len: {}",
+      str::from_utf8(&self).ok(),
+      self.inner.as_bytes().find_substring(substr),
+      self.len()
+    );
     self.inner.as_bytes().find_substring(substr)
   }
 }

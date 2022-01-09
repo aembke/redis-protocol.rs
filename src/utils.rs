@@ -61,6 +61,31 @@ macro_rules! etry (
   }
 );
 
+#[cfg(feature = "decode-logs")]
+macro_rules! decode_log(
+  ($buf:ident, $($arg:tt)*) => (
+    if log_enabled!(log::Level::Trace) {
+      if let Some(s) = str::from_utf8(&$buf).ok() {
+        let $buf = s;
+        trace!($($arg)*)
+      }else{
+        trace!($($arg)*)
+      }
+    }
+  );
+  ($($arg:tt)*) => (
+    if log_enabled!(log::Level::Trace) {
+      trace!($($arg)*)
+    }
+  );
+);
+
+#[cfg(not(feature = "decode-logs"))]
+macro_rules! decode_log(
+  ($buf:ident, $($arg:tt)*) => ();
+  ($($arg:tt)*) => ();
+);
+
 /// Utility function to translate RESP2 frames to RESP3 frames.
 ///
 /// RESP2 frames and RESP3 frames are quite different, but RESP3 is largely a superset of RESP2 so this function will never return an error.
