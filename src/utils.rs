@@ -46,6 +46,21 @@ macro_rules! encode_checks(
   }
 );
 
+macro_rules! e (
+  ($err:expr) => {
+    return Err($err.into_nom_error())
+  }
+);
+
+macro_rules! etry (
+  ($expr:expr) => {
+    match $expr {
+      Ok(result) => result,
+      Err(e) => return Err(e.into_nom_error())
+    }
+  }
+);
+
 /// Utility function to translate RESP2 frames to RESP3 frames.
 ///
 /// RESP2 frames and RESP3 frames are quite different, but RESP3 is largely a superset of RESP2 so this function will never return an error.

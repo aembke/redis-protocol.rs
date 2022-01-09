@@ -8,8 +8,13 @@ use std::borrow::Borrow;
 use std::borrow::Cow;
 use std::fmt::{self, Debug};
 use std::io::Error as IoError;
+use std::ops::{Deref, DerefMut};
 
+use bytes::BytesMut;
+use bytes_utils::SegmentedBuf;
 use std::str;
+
+pub use crate::nom_bytes::*;
 
 /// Terminating bytes between frames.
 pub const CRLF: &'static str = "\r\n";

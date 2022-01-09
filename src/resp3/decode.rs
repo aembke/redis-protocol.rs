@@ -14,21 +14,6 @@ use nom::{Err as NomErr, IResult};
 use std::borrow::Cow;
 use std::str;
 
-macro_rules! e (
-  ($err:expr) => {
-    return Err($err.into_nom_error())
-  }
-);
-
-macro_rules! etry (
-  ($expr:expr) => {
-    match $expr {
-      Ok(result) => result,
-      Err(e) => return Err(e.into_nom_error())
-    }
-  }
-);
-
 fn map_complete_frame(frame: Frame) -> DecodedFrame {
   DecodedFrame::Complete(frame)
 }

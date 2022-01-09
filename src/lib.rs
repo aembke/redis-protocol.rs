@@ -47,6 +47,7 @@ extern crate indexmap;
 
 #[macro_use]
 pub(crate) mod utils;
+pub(crate) mod nom_bytes;
 
 /// Types and functions for implementing the RESP2 protocol.
 pub mod resp2;
