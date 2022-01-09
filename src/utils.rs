@@ -2,8 +2,10 @@ use crate::resp2::types::Frame as Resp2Frame;
 use crate::resp3::types::Frame as Resp3Frame;
 use crate::types::*;
 use bytes::BytesMut;
+use bytes_utils::StrMut;
 use cookie_factory::GenError;
 use crc16::{State, XMODEM};
+use nom::error::ErrorKind as NomErrorKind;
 use std::str;
 
 pub const KB: usize = 1024;
@@ -318,6 +320,15 @@ pub fn redis_keyslot(key: &[u8]) -> u16 {
   };
 
   out
+}
+
+pub(crate) fn to_strmut<T>(data: T) -> Result<StrMut, RedisParseError<NomBytesMut>>
+where
+  T: AsRef<NomBytesMut>,
+{
+  let data_ref = data.as_ref();
+  StrMut::from_inner(data_ref.clone().into_bytes())
+    .map_err(|error| RedisParseError::Nom(data_ref.clone(), NomErrorKind::ParseTo))
 }
 
 #[cfg(test)]

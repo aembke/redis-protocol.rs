@@ -5,32 +5,37 @@
 use crate::resp3::types::*;
 use crate::resp3::utils as resp3_utils;
 use crate::types::*;
+use crate::utils;
+use bytes_utils::{Str, StrMut};
 use nom::bytes::streaming::{take as nom_take, take_until as nom_take_until};
 use nom::combinator::{map as nom_map, map_res as nom_map_res, opt as nom_opt};
+use nom::error::ErrorKind as NomErrorKind;
 use nom::multi::count as nom_count;
 use nom::number::streaming::be_u8;
 use nom::sequence::terminated as nom_terminated;
 use nom::{Err as NomErr, IResult};
 use std::borrow::Cow;
+use std::fmt::Debug;
+use std::ops::Deref;
 use std::str;
 
 fn map_complete_frame(frame: Frame) -> DecodedFrame {
   DecodedFrame::Complete(frame)
 }
 
-fn unwrap_complete_frame<'a>(frame: DecodedFrame) -> Result<Frame, RedisParseError<&'a [u8]>> {
+fn unwrap_complete_frame(frame: DecodedFrame) -> Result<Frame, RedisParseError<NomBytesMut>> {
   frame
     .into_complete_frame()
     .map_err(|e| RedisParseError::new_custom("unwrap_complete_frame", format!("{:?}", e)))
 }
 
-fn to_usize(s: &str) -> Result<usize, RedisParseError<&[u8]>> {
+fn to_usize(s: &StrMut) -> Result<usize, RedisParseError<NomBytesMut>> {
   s.parse::<usize>()
     .map_err(|e| RedisParseError::new_custom("to_usize", format!("{:?}", e)))
 }
 
-fn to_isize(s: &str) -> Result<isize, RedisParseError<&[u8]>> {
-  if s == "?" {
+fn to_isize(s: &StrMut) -> Result<isize, RedisParseError<NomBytesMut>> {
+  if *s == "?" {
     Ok(-1)
   } else {
     s.parse::<isize>()
@@ -38,7 +43,7 @@ fn to_isize(s: &str) -> Result<isize, RedisParseError<&[u8]>> {
   }
 }
 
-fn isize_to_usize<'a>(n: isize) -> Result<usize, RedisParseError<&'a [u8]>> {
+fn isize_to_usize(n: isize) -> Result<usize, RedisParseError<NomBytesMut>> {
   if n.is_negative() {
     Err(RedisParseError::new_custom("isize_to_usize", "Invalid prefix length."))
   } else {
@@ -46,26 +51,26 @@ fn isize_to_usize<'a>(n: isize) -> Result<usize, RedisParseError<&'a [u8]>> {
   }
 }
 
-fn to_i64(s: &str) -> Result<i64, RedisParseError<&[u8]>> {
+fn to_i64(s: &StrMut) -> Result<i64, RedisParseError<NomBytesMut>> {
   s.parse::<i64>()
     .map_err(|e| RedisParseError::new_custom("to_i64", format!("{:?}", e)))
 }
 
-fn to_f64(s: &str) -> Result<f64, RedisParseError<&[u8]>> {
+fn to_f64(s: &StrMut) -> Result<f64, RedisParseError<NomBytesMut>> {
   s.parse::<f64>()
     .map_err(|e| RedisParseError::new_custom("to_f64", format!("{:?}", e)))
 }
 
-fn to_bool(s: &str) -> Result<bool, RedisParseError<&[u8]>> {
-  match s.as_ref() {
+fn to_bool(s: &StrMut) -> Result<bool, RedisParseError<NomBytesMut>> {
+  match s.deref().as_ref() {
     "t" => Ok(true),
     "f" => Ok(false),
     _ => Err(RedisParseError::new_custom("to_bool", "Invalid boolean value.")),
   }
 }
 
-fn to_verbatimstring_format(s: &str) -> Result<VerbatimStringFormat, RedisParseError<&[u8]>> {
-  match s.as_ref() {
+fn to_verbatimstring_format(s: &StrMut) -> Result<VerbatimStringFormat, RedisParseError<NomBytesMut>> {
+  match s.deref().as_ref() {
     "txt" => Ok(VerbatimStringFormat::Text),
     "mkd" => Ok(VerbatimStringFormat::Markdown),
     _ => Err(RedisParseError::new_custom(
@@ -75,7 +80,7 @@ fn to_verbatimstring_format(s: &str) -> Result<VerbatimStringFormat, RedisParseE
   }
 }
 
-fn to_map<'a>(mut data: Vec<Frame>) -> Result<FrameMap, RedisParseError<&'a [u8]>> {
+fn to_map(mut data: Vec<Frame>) -> Result<FrameMap, RedisParseError<NomBytesMut>> {
   if data.len() % 2 != 0 {
     return Err(RedisParseError::new_custom("to_map", "Invalid hashmap frame length."));
   }
@@ -91,7 +96,7 @@ fn to_map<'a>(mut data: Vec<Frame>) -> Result<FrameMap, RedisParseError<&'a [u8]
   Ok(out)
 }
 
-fn to_set<'a>(data: Vec<Frame>) -> Result<FrameSet, RedisParseError<&'a [u8]>> {
+fn to_set(data: Vec<Frame>) -> Result<FrameSet, RedisParseError<NomBytesMut>> {
   let mut out = resp3_utils::new_set(Some(data.len()));
 
   for frame in data.into_iter() {
@@ -101,7 +106,8 @@ fn to_set<'a>(data: Vec<Frame>) -> Result<FrameSet, RedisParseError<&'a [u8]>> {
   Ok(out)
 }
 
-fn to_hello<'a>(version: u8, auth: Option<(&str, &str)>) -> Result<Frame, RedisParseError<&'a [u8]>> {
+// TODO change auth fields to StrMut
+fn to_hello<'a>(version: u8, auth: Option<(StrMut, StrMut)>) -> Result<Frame, RedisParseError<NomBytesMut>> {
   let version = match version {
     2 => RespVersion::RESP2,
     3 => RespVersion::RESP3,
@@ -111,8 +117,8 @@ fn to_hello<'a>(version: u8, auth: Option<(&str, &str)>) -> Result<Frame, RedisP
   };
   let auth = if let Some((username, password)) = auth {
     Some(Auth {
-      username: Cow::Owned(username.to_owned()),
-      password: Cow::Owned(password.to_owned()),
+      username: Cow::Owned(username.to_string()),
+      password: Cow::Owned(password.to_string()),
     })
   } else {
     None
@@ -121,10 +127,10 @@ fn to_hello<'a>(version: u8, auth: Option<(&str, &str)>) -> Result<Frame, RedisP
   Ok(Frame::Hello { version, auth })
 }
 
-fn attach_attributes<'a>(
+fn attach_attributes(
   attributes: Attributes,
   mut frame: DecodedFrame,
-) -> Result<DecodedFrame, RedisParseError<&'a [u8]>> {
+) -> Result<DecodedFrame, RedisParseError<NomBytesMut>> {
   if let Err(e) = frame.add_attributes(attributes) {
     Err(RedisParseError::new_custom("attach_attributes", format!("{:?}", e)))
   } else {
@@ -132,157 +138,233 @@ fn attach_attributes<'a>(
   }
 }
 
-fn d_read_to_crlf(input: &[u8]) -> IResult<&[u8], &[u8], RedisParseError<&[u8]>> {
-  nom_terminated(nom_take_until(CRLF), nom_take(2_usize))(input)
+fn d_read_to_crlf<T>(input: T) -> IResult<NomBytesMut, NomBytesMut, RedisParseError<NomBytesMut>>
+where
+  T: AsRef<NomBytesMut> + Debug,
+{
+  decode_log!(input, "Parsing to CRLF. Remaining: {:?}", input);
+  nom_terminated(nom_take_until(CRLF.as_bytes()), nom_take(2_usize))(input.as_ref().clone())
 }
 
-fn d_read_to_crlf_s(input: &[u8]) -> IResult<&[u8], &str, RedisParseError<&[u8]>> {
-  nom_map_res(d_read_to_crlf, str::from_utf8)(input)
+fn d_read_to_crlf_s<T>(input: T) -> IResult<NomBytesMut, StrMut, RedisParseError<NomBytesMut>>
+where
+  T: AsRef<NomBytesMut> + Debug,
+{
+  let (input, data) = d_read_to_crlf(input)?;
+  decode_log!(data, "Parsing to StrMut. Data: {:?}", data);
+  Ok((input, etry!(utils::to_strmut(&data))))
 }
 
-fn d_read_prefix_len(input: &[u8]) -> IResult<&[u8], usize, RedisParseError<&[u8]>> {
-  nom_map_res(d_read_to_crlf_s, to_usize)(input)
+fn d_read_prefix_len<T>(input: T) -> IResult<NomBytesMut, usize, RedisParseError<NomBytesMut>>
+where
+  T: AsRef<NomBytesMut> + Debug,
+{
+  let (input, data) = d_read_to_crlf_s(input)?;
+  decode_log!("Reading prefix len. Data: {:?}", data.to_string());
+  Ok((input, etry!(to_usize(&data))))
 }
 
-fn d_read_prefix_len_signed(input: &[u8]) -> IResult<&[u8], isize, RedisParseError<&[u8]>> {
-  nom_map_res(d_read_to_crlf_s, to_isize)(input)
+fn d_read_prefix_len_signed<T>(input: T) -> IResult<NomBytesMut, isize, RedisParseError<NomBytesMut>>
+where
+  T: AsRef<NomBytesMut> + Debug,
+{
+  let (input, data) = d_read_to_crlf_s(input)?;
+  decode_log!("Reading prefix len. Data: {:?}", data.to_string());
+  Ok((input, etry!(to_isize(&data))))
 }
 
-fn d_frame_type(input: &[u8]) -> IResult<&[u8], FrameKind, RedisParseError<&[u8]>> {
-  let (input, byte) = be_u8(input)?;
+fn d_frame_type<T>(input: T) -> IResult<NomBytesMut, FrameKind, RedisParseError<NomBytesMut>>
+where
+  T: AsRef<NomBytesMut> + Debug,
+{
+  let (input, byte) = be_u8(input.as_ref().clone())?;
   let kind = match FrameKind::from_byte(byte) {
     Some(k) => k,
     None => e!(RedisParseError::new_custom("frame_type", "Invalid frame type prefix.")),
   };
+  decode_log!(input, "Parsed frame type {:?}, remaining: {:?}", kind, input);
 
   Ok((input, kind))
 }
 
-fn d_parse_simplestring(input: &[u8]) -> IResult<&[u8], Frame, RedisParseError<&[u8]>> {
+fn d_parse_simplestring<T>(input: T) -> IResult<NomBytesMut, Frame, RedisParseError<NomBytesMut>>
+where
+  T: AsRef<NomBytesMut> + Debug,
+{
   let (input, data) = d_read_to_crlf_s(input)?;
+  decode_log!(input, "Parsed simplestring {:?}, remaining: {:?}", data, input);
+  Ok((input, Frame::SimpleString { data, attributes: None }))
+}
 
+fn d_parse_simpleerror<T>(input: T) -> IResult<NomBytesMut, Frame, RedisParseError<NomBytesMut>>
+where
+  T: AsRef<NomBytesMut> + Debug,
+{
+  let (input, data) = d_read_to_crlf_s(input)?;
+  decode_log!(input, "Parsed simpleerror {:?}, remaining: {:?}", data, input);
+  Ok((input, Frame::SimpleError { data, attributes: None }))
+}
+
+fn d_parse_number<T>(input: T) -> IResult<NomBytesMut, Frame, RedisParseError<NomBytesMut>>
+where
+  T: AsRef<NomBytesMut> + Debug,
+{
+  let (input, data) = d_read_to_crlf_s(input)?;
+  let parsed = etry!(to_i64(&data));
+  decode_log!(input, "Parsed number {}, remaining {:?}", parsed, input);
   Ok((
     input,
-    Frame::SimpleString {
-      data: data.into(),
+    Frame::Number {
+      data: parsed,
       attributes: None,
     },
   ))
 }
 
-fn d_parse_simpleerror(input: &[u8]) -> IResult<&[u8], Frame, RedisParseError<&[u8]>> {
+fn d_parse_double<T>(input: T) -> IResult<NomBytesMut, Frame, RedisParseError<NomBytesMut>>
+where
+  T: AsRef<NomBytesMut> + Debug,
+{
   let (input, data) = d_read_to_crlf_s(input)?;
-
+  let parsed = etry!(to_f64(&data));
+  decode_log!(input, "Parsed double {}, remaining {:?}", parsed, input);
   Ok((
     input,
-    Frame::SimpleError {
-      data: data.into(),
+    Frame::Double {
+      data: parsed,
       attributes: None,
     },
   ))
 }
 
-fn d_parse_number(input: &[u8]) -> IResult<&[u8], Frame, RedisParseError<&[u8]>> {
-  let (input, data) = nom_map_res(d_read_to_crlf_s, to_i64)(input)?;
-
-  Ok((input, Frame::Number { data, attributes: None }))
+fn d_parse_boolean<T>(input: T) -> IResult<NomBytesMut, Frame, RedisParseError<NomBytesMut>>
+where
+  T: AsRef<NomBytesMut> + Debug,
+{
+  let (input, data) = d_read_to_crlf_s(input)?;
+  let parsed = etry!(to_bool(&data));
+  decode_log!(input, "Parsed bool {}, remaining: {:?}", parsed, input);
+  Ok((
+    input,
+    Frame::Boolean {
+      data: parsed,
+      attributes: None,
+    },
+  ))
 }
 
-fn d_parse_double(input: &[u8]) -> IResult<&[u8], Frame, RedisParseError<&[u8]>> {
-  let (input, data) = nom_map_res(d_read_to_crlf_s, to_f64)(input)?;
-
-  Ok((input, Frame::Double { data, attributes: None }))
-}
-
-fn d_parse_boolean(input: &[u8]) -> IResult<&[u8], Frame, RedisParseError<&[u8]>> {
-  let (input, data) = nom_map_res(d_read_to_crlf_s, to_bool)(input)?;
-
-  Ok((input, Frame::Boolean { data, attributes: None }))
-}
-
-fn d_parse_null(input: &[u8]) -> IResult<&[u8], Frame, RedisParseError<&[u8]>> {
+fn d_parse_null<T>(input: T) -> IResult<NomBytesMut, Frame, RedisParseError<NomBytesMut>>
+where
+  T: AsRef<NomBytesMut> + Debug,
+{
   let (input, _) = d_read_to_crlf_s(input)?;
   Ok((input, Frame::Null))
 }
 
-fn d_parse_blobstring(input: &[u8], len: usize) -> IResult<&[u8], Frame, RedisParseError<&[u8]>> {
-  let (input, data) = nom_terminated(nom_take(len), nom_take(2_usize))(input)?;
+fn d_parse_blobstring<T>(input: T, len: usize) -> IResult<NomBytesMut, Frame, RedisParseError<NomBytesMut>>
+where
+  T: AsRef<NomBytesMut> + Debug,
+{
+  let (input, data) = nom_terminated(nom_take(len), nom_take(2_usize))(input.as_ref().clone())?;
 
   Ok((
     input,
     Frame::BlobString {
-      data: data.into(),
+      data: data.into_bytes(),
       attributes: None,
     },
   ))
 }
 
-fn d_parse_bloberror(input: &[u8]) -> IResult<&[u8], Frame, RedisParseError<&[u8]>> {
+fn d_parse_bloberror<T>(input: T) -> IResult<NomBytesMut, Frame, RedisParseError<NomBytesMut>>
+where
+  T: AsRef<NomBytesMut> + Debug,
+{
   let (input, len) = d_read_prefix_len(input)?;
   let (input, data) = nom_terminated(nom_take(len), nom_take(2_usize))(input)?;
 
   Ok((
     input,
     Frame::BlobError {
-      data: data.into(),
+      data: data.into_bytes(),
       attributes: None,
     },
   ))
 }
 
-fn d_parse_verbatimstring(input: &[u8]) -> IResult<&[u8], Frame, RedisParseError<&[u8]>> {
+fn d_parse_verbatimstring<T>(input: T) -> IResult<NomBytesMut, Frame, RedisParseError<NomBytesMut>>
+where
+  T: AsRef<NomBytesMut> + Debug,
+{
   let (input, len) = d_read_prefix_len(input)?;
-  let (input, format) = nom_map_res(nom_terminated(nom_take(3_usize), nom_take(1_usize)), str::from_utf8)(input)?;
-  let format = etry!(to_verbatimstring_format(format));
+  let (input, format_bytes) = nom_terminated(nom_take(3_usize), nom_take(1_usize))(input)?;
+  let format = etry!(utils::to_strmut(&format_bytes));
+  let format = etry!(to_verbatimstring_format(&format));
   let (input, data) = nom_terminated(nom_take(len - 4), nom_take(2_usize))(input)?;
 
   Ok((
     input,
     Frame::VerbatimString {
-      data: data.into(),
+      data: data.into_bytes(),
       format,
       attributes: None,
     },
   ))
 }
 
-fn d_parse_bignumber(input: &[u8]) -> IResult<&[u8], Frame, RedisParseError<&[u8]>> {
+fn d_parse_bignumber<T>(input: T) -> IResult<NomBytesMut, Frame, RedisParseError<NomBytesMut>>
+where
+  T: AsRef<NomBytesMut> + Debug,
+{
   let (input, data) = d_read_to_crlf(input)?;
 
   Ok((
     input,
     Frame::BigNumber {
-      data: data.into(),
+      data: data.into_bytes(),
       attributes: None,
     },
   ))
 }
 
-fn d_parse_array_frames(input: &[u8], len: usize) -> IResult<&[u8], Vec<Frame>, RedisParseError<&[u8]>> {
-  nom_count(nom_map_res(d_parse_frame_or_attribute, unwrap_complete_frame), len)(input)
+fn d_parse_array_frames<T>(input: T, len: usize) -> IResult<NomBytesMut, Vec<Frame>, RedisParseError<NomBytesMut>>
+where
+  T: AsRef<NomBytesMut> + Debug,
+{
+  nom_count(nom_map_res(d_parse_frame_or_attribute, unwrap_complete_frame), len)(input.as_ref().clone())
 }
 
-fn d_parse_kv_pairs(input: &[u8], len: usize) -> IResult<&[u8], FrameMap, RedisParseError<&[u8]>> {
+fn d_parse_kv_pairs<T>(input: T, len: usize) -> IResult<NomBytesMut, FrameMap, RedisParseError<NomBytesMut>>
+where
+  T: AsRef<NomBytesMut> + Debug,
+{
   nom_map_res(
     nom_count(nom_map_res(d_parse_frame_or_attribute, unwrap_complete_frame), len * 2),
     to_map,
-  )(input)
+  )(input.as_ref().clone())
 }
 
-fn d_parse_array(input: &[u8], len: usize) -> IResult<&[u8], Frame, RedisParseError<&[u8]>> {
+fn d_parse_array<T>(input: T, len: usize) -> IResult<NomBytesMut, Frame, RedisParseError<NomBytesMut>>
+where
+  T: AsRef<NomBytesMut> + Debug,
+{
   let (input, data) = d_parse_array_frames(input, len)?;
-
   Ok((input, Frame::Array { data, attributes: None }))
 }
 
-fn d_parse_push(input: &[u8]) -> IResult<&[u8], Frame, RedisParseError<&[u8]>> {
+fn d_parse_push<T>(input: T) -> IResult<NomBytesMut, Frame, RedisParseError<NomBytesMut>>
+where
+  T: AsRef<NomBytesMut> + Debug,
+{
   let (input, len) = d_read_prefix_len(input)?;
   let (input, data) = d_parse_array_frames(input, len)?;
-
   Ok((input, Frame::Push { data, attributes: None }))
 }
 
-fn d_parse_set(input: &[u8], len: usize) -> IResult<&[u8], Frame, RedisParseError<&[u8]>> {
+fn d_parse_set<T>(input: T, len: usize) -> IResult<NomBytesMut, Frame, RedisParseError<NomBytesMut>>
+where
+  T: AsRef<NomBytesMut> + Debug,
+{
   let (input, frames) = d_parse_array_frames(input, len)?;
   let set = etry!(to_set(frames));
 
@@ -295,7 +377,10 @@ fn d_parse_set(input: &[u8], len: usize) -> IResult<&[u8], Frame, RedisParseErro
   ))
 }
 
-fn d_parse_map(input: &[u8], len: usize) -> IResult<&[u8], Frame, RedisParseError<&[u8]>> {
+fn d_parse_map<T>(input: T, len: usize) -> IResult<NomBytesMut, Frame, RedisParseError<NomBytesMut>>
+where
+  T: AsRef<NomBytesMut> + Debug,
+{
   let (input, frames) = d_parse_kv_pairs(input, len)?;
 
   Ok((
@@ -307,28 +392,39 @@ fn d_parse_map(input: &[u8], len: usize) -> IResult<&[u8], Frame, RedisParseErro
   ))
 }
 
-fn d_parse_attribute(input: &[u8]) -> IResult<&[u8], Attributes, RedisParseError<&[u8]>> {
+fn d_parse_attribute<T>(input: T) -> IResult<NomBytesMut, Attributes, RedisParseError<NomBytesMut>>
+where
+  T: AsRef<NomBytesMut> + Debug,
+{
   let (input, len) = d_read_prefix_len(input)?;
   let (input, attributes) = d_parse_kv_pairs(input, len)?;
 
   Ok((input, attributes))
 }
 
-fn d_parse_hello(input: &[u8]) -> IResult<&[u8], Frame, RedisParseError<&[u8]>> {
-  let (input, _) = nom_map_res(nom_terminated(nom_take_until(HELLO), nom_take(1_usize)), str::from_utf8)(input)?;
+fn d_parse_hello<T>(input: T) -> IResult<NomBytesMut, Frame, RedisParseError<NomBytesMut>>
+where
+  T: AsRef<NomBytesMut> + Debug,
+{
+  let (input, _) = nom_map_res(
+    nom_terminated(nom_take_until(HELLO.as_bytes()), nom_take(1_usize)),
+    utils::to_strmut,
+  )(input.as_ref().clone())?;
   let (input, version) = be_u8(input)?;
   let (input, auth) = nom_opt(nom_map_res(
-    nom_terminated(nom_take_until(AUTH), nom_take(1_usize)),
-    str::from_utf8,
+    nom_terminated(nom_take_until(AUTH.as_bytes()), nom_take(1_usize)),
+    utils::to_strmut,
   ))(input)?;
 
   let (input, auth) = if auth.is_some() {
     let (input, username) = nom_map_res(
-      nom_terminated(nom_take_until(EMPTY_SPACE), nom_take(1_usize)),
-      str::from_utf8,
+      nom_terminated(nom_take_until(EMPTY_SPACE.as_bytes()), nom_take(1_usize)),
+      utils::to_strmut,
     )(input)?;
-    let (input, password) =
-      nom_map_res(nom_terminated(nom_take_until(CRLF), nom_take(1_usize)), str::from_utf8)(input)?;
+    let (input, password) = nom_map_res(
+      nom_terminated(nom_take_until(CRLF.as_bytes()), nom_take(1_usize)),
+      utils::to_strmut,
+    )(input)?;
 
     (input, Some((username, password)))
   } else {
@@ -341,7 +437,10 @@ fn d_parse_hello(input: &[u8]) -> IResult<&[u8], Frame, RedisParseError<&[u8]>> 
 /// Check for a streaming variant of a frame, and if found then return the prefix bytes only, otherwise return the complete frame.
 ///
 /// Only supported for arrays, sets, maps, and blob strings.
-fn d_check_streaming(input: &[u8], kind: FrameKind) -> IResult<&[u8], DecodedFrame, RedisParseError<&[u8]>> {
+fn d_check_streaming<T>(input: T, kind: FrameKind) -> IResult<NomBytesMut, DecodedFrame, RedisParseError<NomBytesMut>>
+where
+  T: AsRef<NomBytesMut> + Debug,
+{
   let (input, len) = d_read_prefix_len_signed(input)?;
   let (input, frame) = if len == -1 {
     (input, DecodedFrame::Streaming(StreamedFrame::new(kind)))
@@ -364,24 +463,38 @@ fn d_check_streaming(input: &[u8], kind: FrameKind) -> IResult<&[u8], DecodedFra
   Ok((input, frame))
 }
 
-fn d_parse_chunked_string(input: &[u8]) -> IResult<&[u8], DecodedFrame, RedisParseError<&[u8]>> {
+fn d_parse_chunked_string<T>(input: T) -> IResult<NomBytesMut, DecodedFrame, RedisParseError<NomBytesMut>>
+where
+  T: AsRef<NomBytesMut> + Debug,
+{
   let (input, len) = d_read_prefix_len(input)?;
   let (input, frame) = if len == 0 {
     (input, Frame::new_end_stream())
   } else {
     let (input, contents) = nom_terminated(nom_take(len), nom_take(2_usize))(input)?;
-    (input, Frame::ChunkedString(contents.into()))
+    (input, Frame::ChunkedString(contents.into_bytes()))
   };
 
   Ok((input, DecodedFrame::Complete(frame)))
 }
 
-fn d_return_end_stream(input: &[u8]) -> IResult<&[u8], DecodedFrame, RedisParseError<&[u8]>> {
+fn d_return_end_stream<T>(input: T) -> IResult<NomBytesMut, DecodedFrame, RedisParseError<NomBytesMut>>
+where
+  T: AsRef<NomBytesMut> + Debug,
+{
   let (input, _) = d_read_to_crlf(input)?;
   Ok((input, DecodedFrame::Complete(Frame::new_end_stream())))
 }
 
-fn d_parse_non_attribute_frame(input: &[u8], kind: FrameKind) -> IResult<&[u8], DecodedFrame, RedisParseError<&[u8]>> {
+fn d_parse_non_attribute_frame<T>(
+  input: T,
+  kind: FrameKind,
+) -> IResult<NomBytesMut, DecodedFrame, RedisParseError<NomBytesMut>>
+where
+  T: AsRef<NomBytesMut> + Debug,
+{
+  let input = input.as_ref().clone();
+
   let (input, frame) = match kind {
     FrameKind::Array => d_check_streaming(input, kind)?,
     FrameKind::BlobString => d_check_streaming(input, kind)?,
@@ -412,7 +525,10 @@ fn d_parse_non_attribute_frame(input: &[u8], kind: FrameKind) -> IResult<&[u8], 
   Ok((input, frame))
 }
 
-fn d_parse_attribute_and_frame(input: &[u8]) -> IResult<&[u8], DecodedFrame, RedisParseError<&[u8]>> {
+fn d_parse_attribute_and_frame<T>(input: T) -> IResult<NomBytesMut, DecodedFrame, RedisParseError<NomBytesMut>>
+where
+  T: AsRef<NomBytesMut> + Debug,
+{
   let (input, attributes) = d_parse_attribute(input)?;
   let (input, kind) = d_frame_type(input)?;
   let (input, next_frame) = d_parse_non_attribute_frame(input, kind)?;
@@ -421,7 +537,10 @@ fn d_parse_attribute_and_frame(input: &[u8]) -> IResult<&[u8], DecodedFrame, Red
   Ok((input, frame))
 }
 
-fn d_parse_frame_or_attribute(input: &[u8]) -> IResult<&[u8], DecodedFrame, RedisParseError<&[u8]>> {
+fn d_parse_frame_or_attribute<T>(input: T) -> IResult<NomBytesMut, DecodedFrame, RedisParseError<NomBytesMut>>
+where
+  T: AsRef<NomBytesMut> + Debug,
+{
   let (input, kind) = d_frame_type(input)?;
   let (input, frame) = if let FrameKind::Attribute = kind {
     d_parse_attribute_and_frame(input)?
@@ -479,14 +598,16 @@ fn d_parse_frame_or_attribute(input: &[u8]) -> IResult<&[u8], DecodedFrame, Redi
 ///
 pub mod complete {
   use super::*;
+  use bytes::BytesMut;
 
   /// Attempt to parse the contents of `buf`, returning the first valid frame and the number of bytes consumed.
   ///
   /// If the byte slice contains an incomplete frame then `None` is returned.
-  pub fn decode(buf: &[u8]) -> Result<Option<(Frame, usize)>, RedisProtocolError> {
+  pub fn decode(buf: &BytesMut) -> Result<Option<(Frame, usize)>, RedisProtocolError> {
     let len = buf.len();
+    let buf: NomBytesMut = buf.clone().into();
 
-    match d_parse_frame_or_attribute(buf) {
+    match d_parse_frame_or_attribute(&buf) {
       Ok((remaining, frame)) => Ok(Some((frame.into_complete_frame()?, len - remaining.len()))),
       Err(NomErr::Incomplete(_)) => Ok(None),
       Err(e) => Err(RedisParseError::from(e).into()),
@@ -588,14 +709,16 @@ pub mod complete {
 ///
 pub mod streaming {
   use super::*;
+  use bytes::BytesMut;
 
   /// Attempt to parse the contents of `buf`, returning the first valid frame and the number of bytes consumed.
   ///
   /// If the byte slice contains an incomplete frame then `None` is returned.
-  pub fn decode(buf: &[u8]) -> Result<Option<(DecodedFrame, usize)>, RedisProtocolError> {
+  pub fn decode(buf: &BytesMut) -> Result<Option<(DecodedFrame, usize)>, RedisProtocolError> {
     let len = buf.len();
+    let buf: NomBytesMut = buf.clone().into();
 
-    match d_parse_frame_or_attribute(buf) {
+    match d_parse_frame_or_attribute(&buf) {
       Ok((remaining, frame)) => Ok(Some((frame, len - remaining.len()))),
       Err(NomErr::Incomplete(_)) => Ok(None),
       Err(e) => Err(RedisParseError::from(e).into()),

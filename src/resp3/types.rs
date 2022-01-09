@@ -1220,26 +1220,27 @@ impl Frame {
 /// A helper struct for reading and managing streaming data types.
 ///
 /// ```rust edition2018
+/// # use bytes::BytesMut;
 /// use redis_protocol::resp3::decode::streaming::decode;
 ///
 /// fn main() {
-///   let parts = vec!["*?\r\n", ":1\r\n", ":2\r\n:3\r\n", ".\r\n"];
+///   let parts: Vec<BytesMut> = vec!["*?\r\n".into(), ":1\r\n".into(), ":2\r\n".into(), ".\r\n".into()];
 ///
-///   let (frame, _) = decode(parts[0].as_bytes()).unwrap().unwrap();
+///   let (frame, _) = decode(&parts[0]).unwrap().unwrap();
 ///   assert!(frame.is_streaming());
 ///   let mut streaming = frame.into_streaming_frame().unwrap();
 ///   println!("Reading streaming {:?}", streaming.kind);
 ///
-///   let (frame, _) = decode(parts[1].as_bytes()).unwrap().unwrap();
+///   let (frame, _) = decode(&parts[1]).unwrap().unwrap();
 ///   assert!(frame.is_complete());
 ///   // add frames to the buffer until we reach the terminating byte sequence
 ///   streaming.add_frame(frame.into_complete_frame().unwrap());
 ///
-///   let (frame, _) = decode(parts[2].as_bytes()).unwrap().unwrap();
+///   let (frame, _) = decode(&parts[2]).unwrap().unwrap();
 ///   assert!(frame.is_complete());
 ///   streaming.add_frame(frame.into_complete_frame().unwrap());
 ///
-///   let (frame, _) = decode(parts[3].as_bytes()).unwrap().unwrap();
+///   let (frame, _) = decode(&parts[3]).unwrap().unwrap();
 ///   assert!(frame.is_complete());
 ///   streaming.add_frame(frame.into_complete_frame().unwrap());
 ///
@@ -1247,7 +1248,7 @@ impl Frame {
 ///   // convert the buffer into one frame
 ///   let result = streaming.into_frame().unwrap();
 ///
-///   // Frame::Array { data: [1, 2, 3], attributes: None }
+///   // Frame::Array { data: [1, 2], attributes: None }
 ///   println!("{:?}", result);
 /// }
 /// ```

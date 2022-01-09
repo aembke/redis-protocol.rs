@@ -9,7 +9,32 @@ use std::ops::{Deref, DerefMut, Range, RangeFrom, RangeFull, RangeTo};
 use std::slice::Iter;
 use std::str;
 
-#[derive(Eq, PartialEq, Debug, Clone)]
+/// A wrapper type for `BytesMut` that implements the Nom traits necessary to operate on BytesMut slices directly with nom functions.
+///
+/// This allows for the caller to read from BytesMut without copying any of the data as its being read. It also allows for parsing
+/// functions to return Frame types that contain "owned" views into sections of the buffer without copying or even moving any of the
+/// underlying data.
+///
+/// To do this we implement custom slicing functions that rely on the BytesMut `split_to` function and the fact that cloning a
+/// `BytesMut` simply increments a ref count in order to create a new view into the buffer.
+///
+/// What this means in practice - given the following input buffer:
+///
+/// "*2\r\n$3\r\nfoo\r\n$3\r\nbar\r\n"
+///
+/// and the corresponding frames in RESP2:
+///
+/// ```rust ignore
+/// Frame::Array(vec![
+///   Frame::BulkString("foo".into(),
+///   Frame::BulkString("bar".into()
+/// ])
+/// ```
+///
+/// If the above frames were produced by parsing a `BytesMut` containing the above input bytes then the `BytesMut` inside the first
+/// `BulkString` would simply be a shallow view into the input buffer starting at index 7, etc. This works because the relatively cheap
+/// `Clone` impl on `BytesMut` allows for removing any lifetimes and the issues that come with using those for this kind of use case.
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct NomBytesMut {
   inner: BytesMut,
 }
@@ -23,6 +48,12 @@ impl NomBytesMut {
 impl From<BytesMut> for NomBytesMut {
   fn from(buf: BytesMut) -> Self {
     NomBytesMut { inner: buf }
+  }
+}
+
+impl<'a> From<&'a BytesMut> for NomBytesMut {
+  fn from(buf: &'a BytesMut) -> Self {
+    NomBytesMut { inner: buf.clone() }
   }
 }
 
@@ -55,7 +86,7 @@ impl nom::InputTake for NomBytesMut {
   fn take_split(&self, count: usize) -> (Self, Self) {
     let mut right = self.clone();
     let left = right.split_to(count);
-    // why...
+    // i wish this was at least called out in the docs
     (right, left.into())
   }
 }
@@ -115,14 +146,14 @@ impl nom::Slice<Range<usize>> for NomBytesMut {
   fn slice(&self, range: Range<usize>) -> Self {
     let mut buf = self.clone();
     let _ = buf.split_to(range.start);
-    buf.split_to(range.end + 1).into()
+    buf.split_to(range.end).into()
   }
 }
 
 impl nom::Slice<RangeTo<usize>> for NomBytesMut {
   fn slice(&self, range: RangeTo<usize>) -> Self {
     let mut buf = self.clone();
-    buf.split_to(range.end + 1).into()
+    buf.split_to(range.end).into()
   }
 }
 

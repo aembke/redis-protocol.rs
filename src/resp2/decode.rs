@@ -4,6 +4,7 @@
 
 use crate::resp2::types::*;
 use crate::types::*;
+use crate::utils;
 use bytes::{Bytes, BytesMut};
 use bytes_utils::{Str, StrMut};
 use log::Level::Trace;
@@ -38,11 +39,6 @@ fn isize_to_usize<'a>(s: isize) -> Result<usize, RedisParseError<NomBytesMut>> {
   }
 }
 
-fn to_strmut(data: &NomBytesMut) -> Result<StrMut, RedisParseError<NomBytesMut>> {
-  StrMut::from_inner(data.clone().into_bytes())
-    .map_err(|error| RedisParseError::Nom(data.clone(), NomErrorKind::ParseTo))
-}
-
 fn d_read_to_crlf(input: &NomBytesMut) -> IResult<NomBytesMut, NomBytesMut, RedisParseError<NomBytesMut>> {
   decode_log!(input, "Parsing to CRLF. Remaining: {:?}", input);
   nom_terminated(nom_take_until(CRLF.as_bytes()), nom_take(2_usize))(input.clone())
@@ -51,7 +47,7 @@ fn d_read_to_crlf(input: &NomBytesMut) -> IResult<NomBytesMut, NomBytesMut, Redi
 fn d_read_to_crlf_s(input: &NomBytesMut) -> IResult<NomBytesMut, StrMut, RedisParseError<NomBytesMut>> {
   let (input, data) = d_read_to_crlf(input)?;
   decode_log!(data, "Parsing to StrMut. Data: {:?}", data);
-  Ok((input, etry!(to_strmut(&data))))
+  Ok((input, etry!(utils::to_strmut(&data))))
 }
 
 fn d_read_prefix_len(input: &NomBytesMut) -> IResult<NomBytesMut, isize, RedisParseError<NomBytesMut>> {
