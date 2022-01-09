@@ -2,7 +2,7 @@ use crate::resp3::utils as resp3_utils;
 use crate::types::{Redirection, RedisProtocolError, RedisProtocolErrorKind};
 use crate::utils;
 use bytes::BytesMut;
-use bytes_utils::Str;
+use bytes_utils::{Str, StrMut};
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::convert::{TryFrom, TryInto};
@@ -304,9 +304,15 @@ pub enum Frame {
     attributes: Option<Attributes>,
   },
   /// A small non binary-safe string.
-  SimpleString { data: Str, attributes: Option<Attributes> },
+  SimpleString {
+    data: StrMut,
+    attributes: Option<Attributes>,
+  },
   /// A small non binary-safe string representing an error.
-  SimpleError { data: Str, attributes: Option<Attributes> },
+  SimpleError {
+    data: StrMut,
+    attributes: Option<Attributes>,
+  },
   /// A boolean type.
   Boolean { data: bool, attributes: Option<Attributes> },
   /// A null type.
