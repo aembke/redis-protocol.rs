@@ -2,12 +2,12 @@
 authors = ["Alec Embke <aembke@gmail.com>"]
 description = "Structs and functions to implement the Redis protocol."
 homepage = "https://github.com/aembke/redis-protocol.rs"
-keywords = ["redis", "protocol", "nom", "encode", "decode", "resp"]
+keywords = ["redis", "protocol", "nom", "resp"]
 license = "MIT"
 name = "redis-protocol"
 readme = "README.md"
 repository = "https://github.com/aembke/redis-protocol.rs"
-version = "4.0.0"
+version = "4.0.1"
 edition = "2018"
 
 [badges.maintenance]

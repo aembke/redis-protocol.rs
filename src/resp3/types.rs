@@ -1,8 +1,8 @@
 use crate::resp3::utils as resp3_utils;
 use crate::types::{Redirection, RedisProtocolError, RedisProtocolErrorKind};
 use crate::utils;
-use bytes::BytesMut;
-use bytes_utils::StrMut;
+use bytes::{Bytes, BytesMut};
+use bytes_utils::{Str, StrMut};
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::convert::TryFrom;
@@ -292,24 +292,21 @@ impl FrameKind {
 pub enum Frame {
   /// A binary-safe blob.
   BlobString {
-    data: BytesMut,
+    data: Bytes,
     attributes: Option<Attributes>,
   },
   /// A binary-safe blob representing an error.
   BlobError {
-    data: BytesMut,
+    data: Bytes,
     attributes: Option<Attributes>,
   },
   /// A small non binary-safe string.
   SimpleString {
-    data: StrMut,
+    data: Bytes,
     attributes: Option<Attributes>,
   },
   /// A small non binary-safe string representing an error.
-  SimpleError {
-    data: StrMut,
-    attributes: Option<Attributes>,
-  },
+  SimpleError { data: Str, attributes: Option<Attributes> },
   /// A boolean type.
   Boolean { data: bool, attributes: Option<Attributes> },
   /// A null type.
@@ -322,12 +319,12 @@ pub enum Frame {
   ///
   /// This library does not attempt to parse this, nor does it offer any utilities to do so.
   BigNumber {
-    data: BytesMut,
+    data: Bytes,
     attributes: Option<Attributes>,
   },
   /// A binary-safe string to be displayed without any escaping or filtering.
   VerbatimString {
-    data: BytesMut,
+    data: Bytes,
     format: VerbatimStringFormat,
     attributes: Option<Attributes>,
   },
@@ -359,7 +356,7 @@ pub enum Frame {
   /// A special frame type used when first connecting to the server to describe the protocol version and optional credentials.
   Hello { version: RespVersion, auth: Option<Auth> },
   /// One chunk of a streaming string.
-  ChunkedString(BytesMut),
+  ChunkedString(Bytes),
 }
 
 impl Hash for Frame {
@@ -912,7 +909,7 @@ impl Frame {
 
   /// Create a new `Frame` that terminates a stream.
   pub fn new_end_stream() -> Self {
-    Frame::ChunkedString(BytesMut::new())
+    Frame::ChunkedString(Bytes::new())
   }
 
   /// A context-aware length function that returns the length of the inner frame contents.
