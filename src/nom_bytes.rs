@@ -4,14 +4,12 @@ use nom::{
   AsBytes, FindSubstring, InputIter, InputLength, InputTake, InputTakeAtPosition, Needed, Offset, Slice,
   UnspecializedInput,
 };
+use std::fmt::{Debug, Display};
 use std::io::IoSlice;
 use std::iter::Enumerate;
 use std::ops::{Deref, DerefMut, Range, RangeFrom, RangeFull, RangeTo};
 #[cfg(feature = "decode-logs")]
 use std::str;
-
-// TODO
-// need to make  this work so it works for byte slices, vec<u8>, and Bytes
 
 /// A wrapper type for `BytesMut` that implements the Nom traits necessary to operate on BytesMut slices directly with nom functions.
 ///
@@ -40,45 +38,6 @@ use std::str;
 /// `Clone` impl on `BytesMut` allows for removing any lifetimes and the issues that come with using those for this kind of use case.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NomBytes(Bytes);
-
-/// Helper trait for generic parser functions that operate on anything that can be used with nom, including `&[u8]` and `NomBytes`.
-///
-/// This trait also requires that the implementing type implement `AsRef<Self>` so it can work effectively with nom functions.
-pub trait CanParse<'a>:
-  InputIter
-  + InputTake
-  + AsRef<Self>
-  + UnspecializedInput
-  + InputLength
-  + InputTakeAtPosition
-  + FindSubstring<&'a [u8]>
-  + Offset
-  + Slice<Range<usize>>
-  + Slice<RangeTo<usize>>
-  + Slice<RangeFrom<usize>>
-  + Slice<RangeFull>
-where
-  Self: Sized,
-{
-}
-
-impl<'a, T> CanParse<'a> for T
-where
-  Self: Sized,
-  T: InputIter
-    + InputTake
-    + AsRef<Self>
-    + UnspecializedInput
-    + InputLength
-    + InputTakeAtPosition
-    + FindSubstring<&'a [u8]>
-    + Offset
-    + Slice<Range<usize>>
-    + Slice<RangeTo<usize>>
-    + Slice<RangeFrom<usize>>
-    + Slice<RangeFull>,
-{
-}
 
 impl NomBytes {
   pub fn into_bytes(self) -> Bytes {
@@ -179,7 +138,7 @@ impl InputIter for NomBytes {
 
 impl Offset for NomBytes {
   fn offset(&self, second: &Self) -> usize {
-    self.0.as_bytes().offset(second.inner.as_bytes())
+    self.0.as_bytes().offset(second.0.as_bytes())
   }
 }
 

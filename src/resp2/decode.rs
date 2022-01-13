@@ -74,7 +74,7 @@ fn d_frame_type(input: &NomBytes) -> IResult<NomBytes, FrameKind, RedisParseErro
 
 fn d_parse_simplestring(input: &NomBytes) -> IResult<NomBytes, Frame, RedisParseError<NomBytes>> {
   let (input, data) = d_read_to_crlf_s(input)?;
-  Ok((input, Frame::SimpleString(data)))
+  Ok((input, Frame::SimpleString(data.into_bytes())))
 }
 
 fn d_parse_integer(input: &NomBytes) -> IResult<NomBytes, Frame, RedisParseError<NomBytes>> {
@@ -91,6 +91,7 @@ fn d_parse_null(input: &NomBytes) -> IResult<NomBytes, Frame, RedisParseError<No
 
 fn d_parse_error(input: &NomBytes) -> IResult<NomBytes, Frame, RedisParseError<NomBytes>> {
   let (input, data) = d_read_to_crlf_s(input)?;
+  let data = etry!(utils::to_byte_str(data));
   Ok((input, Frame::Error(data)))
 }
 
@@ -159,14 +160,14 @@ where
 /// If the byte slice contains an incomplete frame then `None` is returned.
 ///
 /// The returned frame will contain
-pub fn decode(buf: &BytesMut) -> Result<Option<(Frame, usize)>, RedisProtocolError> {
+pub fn decode(buf: &Bytes) -> Result<Option<(Frame, usize)>, RedisProtocolError> {
   let len = buf.len();
   // operate on a shallow clone with a different cursor than `buf` since the parser will split the buffer while parsing
   // in order to avoid allocating as much as possible, and if a frame is later found to be incomplete we won't affect
   // the caller's buffer cursor
   let buffer: NomBytes = buf.clone().into();
 
-  match d_parse_frame(&buffer) {
+  match d_parse_frame(buffer) {
     Ok((remaining, frame)) => Ok(Some((frame, len - remaining.len()))),
     Err(NomErr::Incomplete(_)) => Ok(None),
     Err(NomErr::Error(e)) => Err(e.into()),
@@ -178,6 +179,7 @@ pub fn decode(buf: &BytesMut) -> Result<Option<(Frame, usize)>, RedisProtocolErr
 mod tests {
   use super::*;
   use bytes::BytesMut;
+  use nom::AsBytes;
   use std::str;
 
   const PADDING: &'static str = "FOOBARBAZ";
@@ -190,7 +192,7 @@ mod tests {
     panic!("Failed to decode bytes. None returned");
   }
 
-  fn decode_and_verify_some(bytes: &mut BytesMut, expected: &(Option<Frame>, usize)) {
+  fn decode_and_verify_some(bytes: &Bytes, expected: &(Option<Frame>, usize)) {
     let (frame, len) = match decode(&bytes) {
       Ok(Some((f, l))) => (Some(f), l),
       Ok(None) => return panic_no_decode(),
@@ -201,10 +203,12 @@ mod tests {
     assert_eq!(len, expected.1, "decoded frame len matched");
   }
 
-  fn decode_and_verify_padded_some(bytes: &mut BytesMut, expected: &(Option<Frame>, usize)) {
-    bytes.extend_from_slice(PADDING.as_bytes());
+  fn decode_and_verify_padded_some(bytes: &Bytes, expected: &(Option<Frame>, usize)) {
+    let mut buf = BytesMut::from(bytes.as_bytes());
+    buf.extend_from_slice(PADDING.as_bytes());
+    let buf = buf.freeze();
 
-    let (frame, len) = match decode(&bytes) {
+    let (frame, len) = match decode(&buf) {
       Ok(Some((f, l))) => (Some(f), l),
       Ok(None) => return panic_no_decode(),
       Err(e) => return pretty_print_panic(e),
@@ -214,7 +218,7 @@ mod tests {
     assert_eq!(len, expected.1, "decoded frame len matched");
   }
 
-  fn decode_and_verify_none(bytes: &mut BytesMut) {
+  fn decode_and_verify_none(bytes: &Bytes) {
     let (frame, len) = match decode(&bytes) {
       Ok(Some((f, l))) => (Some(f), l),
       Ok(None) => (None, 0),
@@ -228,48 +232,48 @@ mod tests {
   #[test]
   fn should_decode_llen_res_example() {
     let expected = (Some(Frame::Integer(48293)), 8);
-    let mut bytes: BytesMut = ":48293\r\n".into();
+    let mut bytes: Bytes = ":48293\r\n".into();
 
-    decode_and_verify_some(&mut bytes, &expected);
-    decode_and_verify_padded_some(&mut bytes, &expected);
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
   }
 
   #[test]
   fn should_decode_simple_string() {
     let expected = (Some(Frame::SimpleString("string".into())), 9);
-    let mut bytes: BytesMut = "+string\r\n".into();
+    let mut bytes: Bytes = "+string\r\n".into();
 
-    decode_and_verify_some(&mut bytes, &expected);
-    decode_and_verify_padded_some(&mut bytes, &expected);
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
   }
 
   #[test]
   #[should_panic]
   fn should_decode_simple_string_incomplete() {
     let expected = (Some(Frame::SimpleString("string".into())), 9);
-    let mut bytes: BytesMut = "+stri".into();
+    let mut bytes: Bytes = "+stri".into();
 
-    decode_and_verify_some(&mut bytes, &expected);
-    decode_and_verify_padded_some(&mut bytes, &expected);
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
   }
 
   #[test]
   fn should_decode_bulk_string() {
     let expected = (Some(Frame::BulkString("foo".into())), 9);
-    let mut bytes: BytesMut = "$3\r\nfoo\r\n".into();
+    let mut bytes: Bytes = "$3\r\nfoo\r\n".into();
 
-    decode_and_verify_some(&mut bytes, &expected);
-    decode_and_verify_padded_some(&mut bytes, &expected);
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
   }
 
   #[test]
   #[should_panic]
   fn should_decode_bulk_string_incomplete() {
     let expected = (Some(Frame::BulkString("foo".into())), 9);
-    let mut bytes: BytesMut = "$3\r\nfo".into();
+    let mut bytes: Bytes = "$3\r\nfo".into();
 
-    decode_and_verify_some(&mut bytes, &expected);
-    decode_and_verify_padded_some(&mut bytes, &expected);
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
   }
 
   #[test]
@@ -281,15 +285,15 @@ mod tests {
       ])),
       16,
     );
-    let mut bytes: BytesMut = "*2\r\n+Foo\r\n+Bar\r\n".into();
+    let mut bytes: Bytes = "*2\r\n+Foo\r\n+Bar\r\n".into();
 
-    decode_and_verify_some(&mut bytes, &expected);
-    decode_and_verify_padded_some(&mut bytes, &expected);
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
   }
 
   #[test]
   fn should_decode_array_nulls() {
-    let mut bytes: BytesMut = "*3\r\n$3\r\nFoo\r\n$-1\r\n$3\r\nBar\r\n".into();
+    let mut bytes: Bytes = "*3\r\n$3\r\nFoo\r\n$-1\r\n$3\r\nBar\r\n".into();
 
     let expected = (
       Some(Frame::Array(vec![
@@ -300,13 +304,13 @@ mod tests {
       bytes.len(),
     );
 
-    decode_and_verify_some(&mut bytes, &expected);
-    decode_and_verify_padded_some(&mut bytes, &expected);
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
   }
 
   #[test]
   fn should_decode_normal_error() {
-    let mut bytes: BytesMut = "-WRONGTYPE Operation against a key holding the wrong kind of value\r\n".into();
+    let mut bytes: Bytes = "-WRONGTYPE Operation against a key holding the wrong kind of value\r\n".into();
     let expected = (
       Some(Frame::Error(
         "WRONGTYPE Operation against a key holding the wrong kind of value".into(),
@@ -314,38 +318,38 @@ mod tests {
       bytes.len(),
     );
 
-    decode_and_verify_some(&mut bytes, &expected);
-    decode_and_verify_padded_some(&mut bytes, &expected);
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
   }
 
   #[test]
   fn should_decode_moved_error() {
-    let mut bytes: BytesMut = "-MOVED 3999 127.0.0.1:6381\r\n".into();
+    let mut bytes: Bytes = "-MOVED 3999 127.0.0.1:6381\r\n".into();
     let expected = (Some(Frame::Error("MOVED 3999 127.0.0.1:6381".into())), bytes.len());
 
-    decode_and_verify_some(&mut bytes, &expected);
-    decode_and_verify_padded_some(&mut bytes, &expected);
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
   }
 
   #[test]
   fn should_decode_ask_error() {
-    let mut bytes: BytesMut = "-ASK 3999 127.0.0.1:6381\r\n".into();
+    let mut bytes: Bytes = "-ASK 3999 127.0.0.1:6381\r\n".into();
     let expected = (Some(Frame::Error("ASK 3999 127.0.0.1:6381".into())), bytes.len());
 
-    decode_and_verify_some(&mut bytes, &expected);
-    decode_and_verify_padded_some(&mut bytes, &expected);
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
   }
 
   #[test]
   fn should_decode_incomplete() {
-    let mut bytes: BytesMut = "*3\r\n$3\r\nFoo\r\n$-1\r\n$3\r\nBar".into();
-    decode_and_verify_none(&mut bytes);
+    let mut bytes: Bytes = "*3\r\n$3\r\nFoo\r\n$-1\r\n$3\r\nBar".into();
+    decode_and_verify_none(&bytes);
   }
 
   #[test]
   #[should_panic]
   fn should_error_on_junk() {
-    let bytes: BytesMut = "foobarbazwibblewobble".into();
+    let bytes: Bytes = "foobarbazwibblewobble".into();
     let _ = decode(&bytes).map_err(|e| pretty_print_panic(e));
   }
 }

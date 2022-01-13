@@ -50,6 +50,8 @@ extern crate indexmap;
 pub(crate) mod utils;
 pub(crate) mod nom_bytes;
 
+#[cfg(feature = "decode-mut")]
+mod decode_mut;
 /// Types and functions for implementing the RESP2 protocol.
 pub mod resp2;
 /// Types and functions for implementing the RESP3 protocol.

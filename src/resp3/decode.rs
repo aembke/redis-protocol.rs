@@ -7,7 +7,7 @@ use crate::resp3::types::*;
 use crate::resp3::utils as resp3_utils;
 use crate::types::*;
 use crate::utils;
-use bytes_utils::StrMut;
+use bytes_utils::Str;
 use nom::bytes::streaming::{take as nom_take, take_until as nom_take_until};
 use nom::combinator::{map as nom_map, map_res as nom_map_res, opt as nom_opt};
 use nom::multi::count as nom_count;
@@ -28,12 +28,12 @@ fn unwrap_complete_frame(frame: DecodedFrame) -> Result<Frame, RedisParseError<N
     .map_err(|e| RedisParseError::new_custom("unwrap_complete_frame", format!("{:?}", e)))
 }
 
-fn to_usize(s: &StrMut) -> Result<usize, RedisParseError<NomBytes>> {
+fn to_usize(s: &Str) -> Result<usize, RedisParseError<NomBytes>> {
   s.parse::<usize>()
     .map_err(|e| RedisParseError::new_custom("to_usize", format!("{:?}", e)))
 }
 
-fn to_isize(s: &StrMut) -> Result<isize, RedisParseError<NomBytes>> {
+fn to_isize(s: &Str) -> Result<isize, RedisParseError<NomBytes>> {
   if *s == "?" {
     Ok(-1)
   } else {
@@ -50,17 +50,17 @@ fn isize_to_usize(n: isize) -> Result<usize, RedisParseError<NomBytes>> {
   }
 }
 
-fn to_i64(s: &StrMut) -> Result<i64, RedisParseError<NomBytes>> {
+fn to_i64(s: &Str) -> Result<i64, RedisParseError<NomBytes>> {
   s.parse::<i64>()
     .map_err(|e| RedisParseError::new_custom("to_i64", format!("{:?}", e)))
 }
 
-fn to_f64(s: &StrMut) -> Result<f64, RedisParseError<NomBytes>> {
+fn to_f64(s: &Str) -> Result<f64, RedisParseError<NomBytes>> {
   s.parse::<f64>()
     .map_err(|e| RedisParseError::new_custom("to_f64", format!("{:?}", e)))
 }
 
-fn to_bool(s: &StrMut) -> Result<bool, RedisParseError<NomBytes>> {
+fn to_bool(s: &Str) -> Result<bool, RedisParseError<NomBytes>> {
   match s.deref().as_ref() {
     "t" => Ok(true),
     "f" => Ok(false),
@@ -68,7 +68,7 @@ fn to_bool(s: &StrMut) -> Result<bool, RedisParseError<NomBytes>> {
   }
 }
 
-fn to_verbatimstring_format(s: &StrMut) -> Result<VerbatimStringFormat, RedisParseError<NomBytes>> {
+fn to_verbatimstring_format(s: &Str) -> Result<VerbatimStringFormat, RedisParseError<NomBytes>> {
   match s.deref().as_ref() {
     "txt" => Ok(VerbatimStringFormat::Text),
     "mkd" => Ok(VerbatimStringFormat::Markdown),
@@ -106,7 +106,7 @@ fn to_set(data: Vec<Frame>) -> Result<FrameSet, RedisParseError<NomBytes>> {
 }
 
 // TODO change auth fields to StrMut
-fn to_hello<'a>(version: u8, auth: Option<(StrMut, StrMut)>) -> Result<Frame, RedisParseError<NomBytes>> {
+fn to_hello<'a>(version: u8, auth: Option<(Str, Str)>) -> Result<Frame, RedisParseError<NomBytes>> {
   let version = match version {
     2 => RespVersion::RESP2,
     3 => RespVersion::RESP3,
@@ -146,13 +146,13 @@ where
   nom_terminated(nom_take_until(CRLF.as_bytes()), nom_take(2_usize))(input_ref.clone())
 }
 
-fn d_read_to_crlf_s<T>(input: T) -> IResult<NomBytes, StrMut, RedisParseError<NomBytes>>
+fn d_read_to_crlf_s<T>(input: T) -> IResult<NomBytes, Str, RedisParseError<NomBytes>>
 where
   T: AsRef<NomBytes> + Debug,
 {
   let (input, data) = d_read_to_crlf(input)?;
   decode_log!(data, "Parsing to StrMut. Data: {:?}", data);
-  Ok((input, etry!(utils::to_strmut(&data))))
+  Ok((input, etry!(utils::to_byte_str(&data))))
 }
 
 fn d_read_prefix_len<T>(input: T) -> IResult<NomBytes, usize, RedisParseError<NomBytes>>
@@ -191,9 +191,15 @@ fn d_parse_simplestring<T>(input: T) -> IResult<NomBytes, Frame, RedisParseError
 where
   T: AsRef<NomBytes> + Debug,
 {
-  let (input, data) = d_read_to_crlf_s(input)?;
+  let (input, data) = d_read_to_crlf(input)?;
   decode_log!(input, "Parsed simplestring {:?}, remaining: {:?}", data, input);
-  Ok((input, Frame::SimpleString { data, attributes: None }))
+  Ok((
+    input,
+    Frame::SimpleString {
+      data: data.into_bytes(),
+      attributes: None,
+    },
+  ))
 }
 
 fn d_parse_simpleerror<T>(input: T) -> IResult<NomBytes, Frame, RedisParseError<NomBytes>>
@@ -298,7 +304,7 @@ where
 {
   let (input, len) = d_read_prefix_len(input)?;
   let (input, format_bytes) = nom_terminated(nom_take(3_usize), nom_take(1_usize))(input)?;
-  let format = etry!(utils::to_strmut(&format_bytes));
+  let format = etry!(utils::to_byte_str(&format_bytes));
   let format = etry!(to_verbatimstring_format(&format));
   let (input, data) = nom_terminated(nom_take(len - 4), nom_take(2_usize))(input)?;
 
@@ -408,22 +414,22 @@ where
 {
   let (input, _) = nom_map_res(
     nom_terminated(nom_take_until(HELLO.as_bytes()), nom_take(1_usize)),
-    utils::to_strmut,
+    utils::to_byte_str,
   )(input.as_ref().clone())?;
   let (input, version) = be_u8(input)?;
   let (input, auth) = nom_opt(nom_map_res(
     nom_terminated(nom_take_until(AUTH.as_bytes()), nom_take(1_usize)),
-    utils::to_strmut,
+    utils::to_byte_str,
   ))(input)?;
 
   let (input, auth) = if auth.is_some() {
     let (input, username) = nom_map_res(
       nom_terminated(nom_take_until(EMPTY_SPACE.as_bytes()), nom_take(1_usize)),
-      utils::to_strmut,
+      utils::to_byte_str,
     )(input)?;
     let (input, password) = nom_map_res(
       nom_terminated(nom_take_until(CRLF.as_bytes()), nom_take(1_usize)),
-      utils::to_strmut,
+      utils::to_byte_str,
     )(input)?;
 
     (input, Some((username, password)))

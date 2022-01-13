@@ -301,6 +301,8 @@ pub enum Frame {
     attributes: Option<Attributes>,
   },
   /// A small non binary-safe string.
+  ///
+  /// The internal data type is `Bytes` in order to support callers that use this interface to parse a `MONITOR` stream.
   SimpleString {
     data: Bytes,
     attributes: Option<Attributes>,

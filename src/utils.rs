@@ -323,7 +323,7 @@ pub fn redis_keyslot(key: &[u8]) -> u16 {
   out
 }
 
-pub(crate) fn to_strmut<T>(data: T) -> Result<Str, RedisParseError<NomBytes>>
+pub(crate) fn to_byte_str<T>(data: T) -> Result<Str, RedisParseError<NomBytes>>
 where
   T: AsRef<NomBytes>,
 {
