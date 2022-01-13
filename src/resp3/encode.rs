@@ -19,14 +19,14 @@ macro_rules! encode_attributes (
 
 fn gen_simplestring<'a>(
   mut x: (&'a mut [u8], usize),
-  data: &str,
+  data: &[u8],
   attributes: &Option<Attributes>,
 ) -> Result<(&'a mut [u8], usize), GenError> {
   encode_attributes!(x, attributes);
 
   do_gen!(
     x,
-    gen_be_u8!(FrameKind::SimpleString.to_byte()) >> gen_slice!(data.as_bytes()) >> gen_slice!(CRLF.as_bytes())
+    gen_be_u8!(FrameKind::SimpleString.to_byte()) >> gen_slice!(data) >> gen_slice!(CRLF.as_bytes())
   )
 }
 

@@ -183,8 +183,7 @@ impl Frame {
   // Copy and read the inner value as a string, if possible.
   pub fn to_string(&self) -> Option<String> {
     match *self {
-      Frame::SimpleString(ref s) => Some(s.to_string()),
-      Frame::BulkString(ref b) => String::from_utf8(b.to_vec()).ok(),
+      Frame::BulkString(ref b) | Frame::SimpleString(ref b) => String::from_utf8(b.to_vec()).ok(),
       _ => None,
     }
   }

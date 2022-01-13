@@ -1,5 +1,6 @@
 use crate::resp2::types::Frame as Resp2Frame;
 use crate::resp3::types::Frame as Resp3Frame;
+use bytes_utils::string::Utf8Error as BytesUtf8Error;
 use cookie_factory::GenError;
 use nom::error::{ErrorKind, FromExternalError, ParseError};
 use nom::{Err as NomError, Needed};
@@ -8,6 +9,7 @@ use std::borrow::Cow;
 use std::fmt::{self, Debug};
 use std::io::Error as IoError;
 use std::str;
+use std::str::Utf8Error;
 
 /// Terminating bytes between frames.
 pub const CRLF: &'static str = "\r\n";
@@ -250,6 +252,18 @@ impl<I> From<nom::Err<RedisParseError<I>>> for RedisParseError<I> {
       NomError::Incomplete(n) => RedisParseError::Incomplete(n),
       NomError::Failure(e) | NomError::Error(e) => e,
     }
+  }
+}
+
+impl<B, I> From<BytesUtf8Error<B>> for RedisParseError<I> {
+  fn from(e: BytesUtf8Error<B>) -> Self {
+    e.utf8_error().into()
+  }
+}
+
+impl<I> From<Utf8Error> for RedisParseError<I> {
+  fn from(e: Utf8Error) -> Self {
+    RedisParseError::new_custom("parse_utf8", format!("{}", e))
   }
 }
 

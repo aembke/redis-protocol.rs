@@ -14,12 +14,12 @@ pub fn array_encode_len(frames: &Vec<Frame>) -> Result<usize, GenError> {
     .fold(Ok(padding), |m, f| m.and_then(|s| encode_len(f).map(|l| s + l)))
 }
 
-pub fn simplestring_encode_len(s: &str) -> usize {
+pub fn simplestring_encode_len(s: &[u8]) -> usize {
   1 + s.len() + 2
 }
 
 pub fn error_encode_len(s: &str) -> usize {
-  1 + s.len() + 2
+  1 + s.as_bytes().len() + 2
 }
 
 pub fn integer_encode_len(i: &i64) -> usize {
@@ -67,9 +67,9 @@ mod tests {
     let ss2 = "FooBarBaz";
     let ss3 = "-&#$@9232";
 
-    assert_eq!(simplestring_encode_len(ss1), 5);
-    assert_eq!(simplestring_encode_len(ss2), 12);
-    assert_eq!(simplestring_encode_len(ss3), 12);
+    assert_eq!(simplestring_encode_len(ss1.as_bytes()), 5);
+    assert_eq!(simplestring_encode_len(ss2.as_bytes()), 12);
+    assert_eq!(simplestring_encode_len(ss3.as_bytes()), 12);
   }
 
   #[test]

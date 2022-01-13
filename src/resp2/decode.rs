@@ -17,13 +17,15 @@ use std::str;
 
 const NULL_LEN: isize = -1;
 
-fn to_isize(s: &str) -> Result<isize, RedisParseError<NomBytes>> {
-  s.parse::<isize>()
+fn to_isize(s: &NomBytes) -> Result<isize, RedisParseError<NomBytes>> {
+  str::from_utf8(s)?
+    .parse::<isize>()
     .map_err(|_| RedisParseError::new_custom("to_isize", "Failed to parse as integer."))
 }
 
-fn to_i64(s: &str) -> Result<i64, RedisParseError<NomBytes>> {
-  s.parse::<i64>()
+fn to_i64(s: &NomBytes) -> Result<i64, RedisParseError<NomBytes>> {
+  str::from_utf8(s)?
+    .parse::<i64>()
     .map_err(|_| RedisParseError::new_custom("to_i64", "Failed to parse as integer."))
 }
 

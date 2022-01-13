@@ -9,12 +9,12 @@ use crate::utils;
 use bytes::BytesMut;
 use cookie_factory::GenError;
 
-fn gen_simplestring<'a>(x: (&'a mut [u8], usize), data: &str) -> Result<(&'a mut [u8], usize), GenError> {
+fn gen_simplestring<'a>(x: (&'a mut [u8], usize), data: &[u8]) -> Result<(&'a mut [u8], usize), GenError> {
   encode_checks!(x, resp2_utils::simplestring_encode_len(data));
 
   do_gen!(
     x,
-    gen_be_u8!(FrameKind::SimpleString.to_byte()) >> gen_slice!(data.as_bytes()) >> gen_slice!(CRLF.as_bytes())
+    gen_be_u8!(FrameKind::SimpleString.to_byte()) >> gen_slice!(data) >> gen_slice!(CRLF.as_bytes())
   )
 }
 

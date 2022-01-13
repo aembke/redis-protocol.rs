@@ -17,6 +17,7 @@ use nom::{Err as NomErr, IResult};
 use std::borrow::Cow;
 use std::fmt::Debug;
 use std::ops::Deref;
+use std::str;
 
 fn map_complete_frame(frame: Frame) -> DecodedFrame {
   DecodedFrame::Complete(frame)
@@ -562,6 +563,7 @@ where
 /// Implement a [codec](https://docs.rs/tokio-util/0.6.6/tokio_util/codec/index.html) that only supports complete frames...
 ///
 /// ```edition2018 no_run
+/// /*
 /// use redis_protocol::resp3::types::*;
 /// use redis_protocol::types::{RedisProtocolError, RedisProtocolErrorKind};
 /// use redis_protocol::resp3::decode::complete::*;
@@ -600,18 +602,19 @@ where
 ///     }
 ///   }
 /// }
+/// */
 /// ```
 ///
 pub mod complete {
   use super::*;
-  use bytes::BytesMut;
+  use bytes::Bytes;
 
   /// Attempt to parse the contents of `buf`, returning the first valid frame and the number of bytes consumed.
   ///
   /// If the byte slice contains an incomplete frame then `None` is returned.
-  pub fn decode(buf: &BytesMut) -> Result<Option<(Frame, usize)>, RedisProtocolError> {
+  pub fn decode(buf: &Bytes) -> Result<Option<(Frame, usize)>, RedisProtocolError> {
     let len = buf.len();
-    let buf: NomBytes = buf.clone().into();
+    let buf: NomBytes = buf.into();
 
     match d_parse_frame_or_attribute(&buf) {
       Ok((remaining, frame)) => Ok(Some((frame.into_complete_frame()?, len - remaining.len()))),
@@ -628,6 +631,7 @@ pub mod complete {
 /// Implement a [codec](https://docs.rs/tokio-util/0.6.6/tokio_util/codec/index.html) that supports decoding streams...
 ///
 /// ```edition2018 no_run
+/// /*
 /// use redis_protocol::resp3::types::*;
 /// use redis_protocol::types::{RedisProtocolError, RedisProtocolErrorKind};
 /// use redis_protocol::resp3::decode::streaming::*;
@@ -711,16 +715,17 @@ pub mod complete {
 ///     }
 ///   }
 /// }
+/// */
 /// ```
 ///
 pub mod streaming {
   use super::*;
-  use bytes::BytesMut;
+  use bytes::Bytes;
 
   /// Attempt to parse the contents of `buf`, returning the first valid frame and the number of bytes consumed.
   ///
   /// If the byte slice contains an incomplete frame then `None` is returned.
-  pub fn decode(buf: &BytesMut) -> Result<Option<(DecodedFrame, usize)>, RedisProtocolError> {
+  pub fn decode(buf: &Bytes) -> Result<Option<(DecodedFrame, usize)>, RedisProtocolError> {
     let len = buf.len();
     let buf: NomBytes = buf.clone().into();
 
@@ -737,7 +742,8 @@ mod tests {
   use super::*;
   use crate::resp3::decode::complete::decode;
   use crate::resp3::decode::streaming::decode as stream_decode;
-  use bytes::BytesMut;
+  use bytes::{Bytes, BytesMut};
+  use nom::AsBytes;
   use std::str;
 
   const PADDING: &'static str = "FOOBARBAZ";
@@ -750,7 +756,7 @@ mod tests {
     panic!("Failed to decode bytes. None returned.")
   }
 
-  fn decode_and_verify_some(bytes: &mut BytesMut, expected: &(Option<Frame>, usize)) {
+  fn decode_and_verify_some(bytes: &Bytes, expected: &(Option<Frame>, usize)) {
     let (frame, len) = match complete::decode(&bytes) {
       Ok(Some((f, l))) => (Some(f), l),
       Ok(None) => return panic_no_decode(),
@@ -761,8 +767,10 @@ mod tests {
     assert_eq!(len, expected.1, "decoded frame len matched");
   }
 
-  fn decode_and_verify_padded_some(bytes: &mut BytesMut, expected: &(Option<Frame>, usize)) {
+  fn decode_and_verify_padded_some(bytes: &Bytes, expected: &(Option<Frame>, usize)) {
+    let mut bytes = BytesMut::from(bytes.as_bytes());
     bytes.extend_from_slice(PADDING.as_bytes());
+    let bytes = bytes.freeze();
 
     let (frame, len) = match complete::decode(&bytes) {
       Ok(Some((f, l))) => (Some(f), l),
@@ -774,7 +782,7 @@ mod tests {
     assert_eq!(len, expected.1, "decoded frame len matched");
   }
 
-  fn decode_and_verify_none(bytes: &mut BytesMut) {
+  fn decode_and_verify_none(bytes: &Bytes) {
     let (frame, len) = match complete::decode(&bytes) {
       Ok(Some((f, l))) => (Some(f), l),
       Ok(None) => (None, 0),
@@ -796,10 +804,10 @@ mod tests {
       }),
       8,
     );
-    let mut bytes: BytesMut = ":48293\r\n".into();
+    let bytes: Bytes = ":48293\r\n".into();
 
-    decode_and_verify_some(&mut bytes, &expected);
-    decode_and_verify_padded_some(&mut bytes, &expected);
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
   }
 
   #[test]
@@ -811,10 +819,10 @@ mod tests {
       }),
       9,
     );
-    let mut bytes: BytesMut = "+string\r\n".into();
+    let bytes: Bytes = "+string\r\n".into();
 
-    decode_and_verify_some(&mut bytes, &expected);
-    decode_and_verify_padded_some(&mut bytes, &expected);
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
   }
 
   #[test]
@@ -827,10 +835,10 @@ mod tests {
       }),
       9,
     );
-    let mut bytes: BytesMut = "+stri".into();
+    let bytes: Bytes = "+stri".into();
 
-    decode_and_verify_some(&mut bytes, &expected);
-    decode_and_verify_padded_some(&mut bytes, &expected);
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
   }
 
   #[test]
@@ -842,10 +850,10 @@ mod tests {
       }),
       9,
     );
-    let mut bytes: BytesMut = "$3\r\nfoo\r\n".into();
+    let bytes: Bytes = "$3\r\nfoo\r\n".into();
 
-    decode_and_verify_some(&mut bytes, &expected);
-    decode_and_verify_padded_some(&mut bytes, &expected);
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
   }
 
   #[test]
@@ -858,10 +866,10 @@ mod tests {
       }),
       9,
     );
-    let mut bytes: BytesMut = "$3\r\nfo".into();
+    let bytes: Bytes = "$3\r\nfo".into();
 
-    decode_and_verify_some(&mut bytes, &expected);
-    decode_and_verify_padded_some(&mut bytes, &expected);
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
   }
 
   #[test]
@@ -882,15 +890,15 @@ mod tests {
       }),
       16,
     );
-    let mut bytes: BytesMut = "*2\r\n+Foo\r\n+Bar\r\n".into();
+    let bytes: Bytes = "*2\r\n+Foo\r\n+Bar\r\n".into();
 
-    decode_and_verify_some(&mut bytes, &expected);
-    decode_and_verify_padded_some(&mut bytes, &expected);
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
   }
 
   #[test]
   fn should_decode_array_nulls() {
-    let mut bytes: BytesMut = "*3\r\n$3\r\nFoo\r\n_\r\n$3\r\nBar\r\n".into();
+    let bytes: Bytes = "*3\r\n$3\r\nFoo\r\n_\r\n$3\r\nBar\r\n".into();
 
     let expected = (
       Some(Frame::Array {
@@ -910,13 +918,13 @@ mod tests {
       bytes.len(),
     );
 
-    decode_and_verify_some(&mut bytes, &expected);
-    decode_and_verify_padded_some(&mut bytes, &expected);
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
   }
 
   #[test]
   fn should_decode_normal_error() {
-    let mut bytes: BytesMut = "-WRONGTYPE Operation against a key holding the wrong kind of value\r\n".into();
+    let bytes: Bytes = "-WRONGTYPE Operation against a key holding the wrong kind of value\r\n".into();
     let expected = (
       Some(Frame::SimpleError {
         data: "WRONGTYPE Operation against a key holding the wrong kind of value".into(),
@@ -925,13 +933,13 @@ mod tests {
       bytes.len(),
     );
 
-    decode_and_verify_some(&mut bytes, &expected);
-    decode_and_verify_padded_some(&mut bytes, &expected);
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
   }
 
   #[test]
   fn should_decode_moved_error() {
-    let mut bytes: BytesMut = "-MOVED 3999 127.0.0.1:6381\r\n".into();
+    let bytes: Bytes = "-MOVED 3999 127.0.0.1:6381\r\n".into();
     let expected = (
       Some(Frame::SimpleError {
         data: "MOVED 3999 127.0.0.1:6381".into(),
@@ -940,13 +948,13 @@ mod tests {
       bytes.len(),
     );
 
-    decode_and_verify_some(&mut bytes, &expected);
-    decode_and_verify_padded_some(&mut bytes, &expected);
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
   }
 
   #[test]
   fn should_decode_ask_error() {
-    let mut bytes: BytesMut = "-ASK 3999 127.0.0.1:6381\r\n".into();
+    let bytes: Bytes = "-ASK 3999 127.0.0.1:6381\r\n".into();
     let expected = (
       Some(Frame::SimpleError {
         data: "ASK 3999 127.0.0.1:6381".into(),
@@ -955,20 +963,20 @@ mod tests {
       bytes.len(),
     );
 
-    decode_and_verify_some(&mut bytes, &expected);
-    decode_and_verify_padded_some(&mut bytes, &expected);
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
   }
 
   #[test]
   fn should_decode_incomplete() {
-    let mut bytes: BytesMut = "*3\r\n$3\r\nFoo\r\n_\r\n$3\r\nBar".into();
-    decode_and_verify_none(&mut bytes);
+    let bytes: Bytes = "*3\r\n$3\r\nFoo\r\n_\r\n$3\r\nBar".into();
+    decode_and_verify_none(&bytes);
   }
 
   #[test]
   #[should_panic]
   fn should_error_on_junk() {
-    let bytes: BytesMut = "foobarbazwibblewobble".into();
+    let bytes: Bytes = "foobarbazwibblewobble".into();
     let _ = complete::decode(&bytes).map_err(|e| pretty_print_panic(e));
   }
 
@@ -983,10 +991,10 @@ mod tests {
       }),
       9,
     );
-    let mut bytes: BytesMut = "!3\r\nfoo\r\n".into();
+    let bytes: Bytes = "!3\r\nfoo\r\n".into();
 
-    decode_and_verify_some(&mut bytes, &expected);
-    decode_and_verify_padded_some(&mut bytes, &expected);
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
   }
 
   #[test]
@@ -999,10 +1007,10 @@ mod tests {
       }),
       9,
     );
-    let mut bytes: BytesMut = "!3\r\nfo".into();
+    let bytes: Bytes = "!3\r\nfo".into();
 
-    decode_and_verify_some(&mut bytes, &expected);
-    decode_and_verify_padded_some(&mut bytes, &expected);
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
   }
 
   #[test]
@@ -1014,10 +1022,10 @@ mod tests {
       }),
       9,
     );
-    let mut bytes: BytesMut = "-string\r\n".into();
+    let bytes: Bytes = "-string\r\n".into();
 
-    decode_and_verify_some(&mut bytes, &expected);
-    decode_and_verify_padded_some(&mut bytes, &expected);
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
   }
 
   #[test]
@@ -1030,10 +1038,10 @@ mod tests {
       }),
       9,
     );
-    let mut bytes: BytesMut = "-strin".into();
+    let bytes: Bytes = "-strin".into();
 
-    decode_and_verify_some(&mut bytes, &expected);
-    decode_and_verify_padded_some(&mut bytes, &expected);
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
   }
 
   #[test]
@@ -1045,10 +1053,10 @@ mod tests {
       }),
       4,
     );
-    let mut bytes: BytesMut = "#t\r\n".into();
+    let bytes: Bytes = "#t\r\n".into();
 
-    decode_and_verify_some(&mut bytes, &expected);
-    decode_and_verify_padded_some(&mut bytes, &expected);
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
   }
 
   #[test]
@@ -1060,10 +1068,10 @@ mod tests {
       }),
       4,
     );
-    let mut bytes: BytesMut = "#f\r\n".into();
+    let bytes: Bytes = "#f\r\n".into();
 
-    decode_and_verify_some(&mut bytes, &expected);
-    decode_and_verify_padded_some(&mut bytes, &expected);
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
   }
 
   #[test]
@@ -1075,10 +1083,10 @@ mod tests {
       }),
       5,
     );
-    let mut bytes: BytesMut = ":42\r\n".into();
+    let bytes: Bytes = ":42\r\n".into();
 
-    decode_and_verify_some(&mut bytes, &expected);
-    decode_and_verify_padded_some(&mut bytes, &expected);
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
   }
 
   #[test]
@@ -1090,10 +1098,10 @@ mod tests {
       }),
       6,
     );
-    let mut bytes: BytesMut = ",inf\r\n".into();
+    let bytes: Bytes = ",inf\r\n".into();
 
-    decode_and_verify_some(&mut bytes, &expected);
-    decode_and_verify_padded_some(&mut bytes, &expected);
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
   }
 
   #[test]
@@ -1105,10 +1113,10 @@ mod tests {
       }),
       7,
     );
-    let mut bytes: BytesMut = ",-inf\r\n".into();
+    let bytes: Bytes = ",-inf\r\n".into();
 
-    decode_and_verify_some(&mut bytes, &expected);
-    decode_and_verify_padded_some(&mut bytes, &expected);
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
   }
 
   #[test]
@@ -1121,10 +1129,10 @@ mod tests {
       }),
       7,
     );
-    let mut bytes: BytesMut = ",foo\r\n".into();
+    let bytes: Bytes = ",foo\r\n".into();
 
-    decode_and_verify_some(&mut bytes, &expected);
-    decode_and_verify_padded_some(&mut bytes, &expected);
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
   }
 
   #[test]
@@ -1136,10 +1144,10 @@ mod tests {
       }),
       10,
     );
-    let mut bytes: BytesMut = ",4.59193\r\n".into();
+    let bytes: Bytes = ",4.59193\r\n".into();
 
-    decode_and_verify_some(&mut bytes, &expected);
-    decode_and_verify_padded_some(&mut bytes, &expected);
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
 
     let expected = (
       Some(Frame::Double {
@@ -1148,10 +1156,10 @@ mod tests {
       }),
       4,
     );
-    let mut bytes: BytesMut = ",4\r\n".into();
+    let bytes: Bytes = ",4\r\n".into();
 
-    decode_and_verify_some(&mut bytes, &expected);
-    decode_and_verify_padded_some(&mut bytes, &expected);
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
   }
 
   #[test]
@@ -1163,19 +1171,19 @@ mod tests {
       }),
       46,
     );
-    let mut bytes: BytesMut = "(3492890328409238509324850943850943825024385\r\n".into();
+    let bytes: Bytes = "(3492890328409238509324850943850943825024385\r\n".into();
 
-    decode_and_verify_some(&mut bytes, &expected);
-    decode_and_verify_padded_some(&mut bytes, &expected);
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
   }
 
   #[test]
   fn should_decode_null() {
     let expected = (Some(Frame::Null), 3);
-    let mut bytes: BytesMut = "_\r\n".into();
+    let bytes: Bytes = "_\r\n".into();
 
-    decode_and_verify_some(&mut bytes, &expected);
-    decode_and_verify_padded_some(&mut bytes, &expected);
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
   }
 
   #[test]
@@ -1188,10 +1196,10 @@ mod tests {
       }),
       22,
     );
-    let mut bytes: BytesMut = "=15\r\nmkd:Some string\r\n".into();
+    let bytes: Bytes = "=15\r\nmkd:Some string\r\n".into();
 
-    decode_and_verify_some(&mut bytes, &expected);
-    decode_and_verify_padded_some(&mut bytes, &expected);
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
   }
 
   #[test]
@@ -1204,10 +1212,10 @@ mod tests {
       }),
       22,
     );
-    let mut bytes: BytesMut = "=15\r\ntxt:Some string\r\n".into();
+    let bytes: Bytes = "=15\r\ntxt:Some string\r\n".into();
 
-    decode_and_verify_some(&mut bytes, &expected);
-    decode_and_verify_padded_some(&mut bytes, &expected);
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
   }
 
   #[test]
@@ -1239,10 +1247,10 @@ mod tests {
       }),
       34,
     );
-    let mut bytes: BytesMut = "%2\r\n+first\r\n:1\r\n$6\r\nsecond\r\n,4.2\r\n".into();
+    let bytes: Bytes = "%2\r\n+first\r\n:1\r\n$6\r\nsecond\r\n,4.2\r\n".into();
 
-    decode_and_verify_some(&mut bytes, &expected);
-    decode_and_verify_padded_some(&mut bytes, &expected);
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
   }
 
   #[test]
@@ -1280,10 +1288,10 @@ mod tests {
       }),
       41,
     );
-    let mut bytes: BytesMut = "%3\r\n+first\r\n:1\r\n:2\r\n_\r\n$6\r\nsecond\r\n,4.2\r\n".into();
+    let bytes: Bytes = "%3\r\n+first\r\n:1\r\n:2\r\n_\r\n$6\r\nsecond\r\n,4.2\r\n".into();
 
-    decode_and_verify_some(&mut bytes, &expected);
-    decode_and_verify_padded_some(&mut bytes, &expected);
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
   }
 
   #[test]
@@ -1312,10 +1320,10 @@ mod tests {
       }),
       30,
     );
-    let mut bytes: BytesMut = "~4\r\n:1\r\n+2\r\n$6\r\nfoobar\r\n,4.2\r\n".into();
+    let bytes: Bytes = "~4\r\n:1\r\n+2\r\n$6\r\nfoobar\r\n,4.2\r\n".into();
 
-    decode_and_verify_some(&mut bytes, &expected);
-    decode_and_verify_padded_some(&mut bytes, &expected);
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
   }
 
   #[test]
@@ -1341,10 +1349,10 @@ mod tests {
       }),
       21,
     );
-    let mut bytes: BytesMut = "~4\r\n:1\r\n+2\r\n_\r\n,4.2\r\n".into();
+    let bytes: Bytes = "~4\r\n:1\r\n+2\r\n_\r\n,4.2\r\n".into();
 
-    decode_and_verify_some(&mut bytes, &expected);
-    decode_and_verify_padded_some(&mut bytes, &expected);
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
   }
 
   #[test]
@@ -1373,10 +1381,10 @@ mod tests {
       }),
       59,
     );
-    let mut bytes: BytesMut = ">4\r\n+pubsub\r\n+message\r\n+somechannel\r\n+this is the message\r\n".into();
+    let bytes: Bytes = ">4\r\n+pubsub\r\n+message\r\n+somechannel\r\n+this is the message\r\n".into();
 
-    decode_and_verify_some(&mut bytes, &expected);
-    decode_and_verify_padded_some(&mut bytes, &expected);
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
 
     let (frame, _) = decode(&bytes).unwrap().unwrap();
     assert!(frame.is_pubsub_message());
@@ -1409,10 +1417,10 @@ mod tests {
       }),
       60,
     );
-    let mut bytes: BytesMut = ">4\r\n+pubsub\r\n+pmessage\r\n+somechannel\r\n+this is the message\r\n".into();
+    let bytes: Bytes = ">4\r\n+pubsub\r\n+pmessage\r\n+somechannel\r\n+this is the message\r\n".into();
 
-    decode_and_verify_some(&mut bytes, &expected);
-    decode_and_verify_padded_some(&mut bytes, &expected);
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
 
     let (frame, _) = decode(&bytes).unwrap().unwrap();
     assert!(frame.is_pattern_pubsub_message());
@@ -1449,10 +1457,10 @@ mod tests {
       }),
       60,
     );
-    let mut bytes: BytesMut = ">5\r\n+pubsub\r\n+pmessage\r\n+__key*\r\n+__keyevent@0__:set\r\n+foo\r\n".into();
+    let bytes: Bytes = ">5\r\n+pubsub\r\n+pmessage\r\n+__key*\r\n+__keyevent@0__:set\r\n+foo\r\n".into();
 
-    decode_and_verify_some(&mut bytes, &expected);
-    decode_and_verify_padded_some(&mut bytes, &expected);
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
 
     let (frame, _) = decode(&bytes).unwrap().unwrap();
     assert!(frame.is_pattern_pubsub_message());
@@ -1513,12 +1521,12 @@ mod tests {
       81,
     );
 
-    let mut bytes: BytesMut =
+    let bytes: Bytes =
       "|1\r\n+key-popularity\r\n%2\r\n$1\r\na\r\n,0.1923\r\n$1\r\nb\r\n,0.0012\r\n*2\r\n:2039123\r\n:9543892\r\n"
         .into();
 
-    decode_and_verify_some(&mut bytes, &expected);
-    decode_and_verify_padded_some(&mut bytes, &expected);
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
   }
 
   #[test]
@@ -1555,22 +1563,22 @@ mod tests {
       }),
       33,
     );
-    let mut bytes: BytesMut = "*3\r\n:1\r\n:2\r\n|1\r\n+ttl\r\n:3600\r\n:3\r\n".into();
+    let bytes: Bytes = "*3\r\n:1\r\n:2\r\n|1\r\n+ttl\r\n:3600\r\n:3\r\n".into();
 
-    decode_and_verify_some(&mut bytes, &expected);
-    decode_and_verify_padded_some(&mut bytes, &expected);
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
   }
 
   #[test]
   fn should_decode_end_stream() {
-    let bytes: BytesMut = ";0\r\n".into();
+    let bytes: Bytes = ";0\r\n".into();
     let (frame, _) = stream_decode(&bytes).unwrap().unwrap();
     assert_eq!(frame, DecodedFrame::Complete(Frame::new_end_stream()))
   }
 
   #[test]
   fn should_decode_streaming_string() {
-    let mut bytes: BytesMut = "$?\r\n;4\r\nHell\r\n;6\r\no worl\r\n;1\r\nd\r\n;0\r\n".into();
+    let mut bytes: Bytes = "$?\r\n;4\r\nHell\r\n;6\r\no worl\r\n;1\r\nd\r\n;0\r\n".into();
 
     let (frame, amt) = stream_decode(&bytes).unwrap().unwrap();
     assert_eq!(
@@ -1602,7 +1610,7 @@ mod tests {
 
   #[test]
   fn should_decode_streaming_array() {
-    let mut bytes: BytesMut = "*?\r\n:1\r\n:2\r\n:3\r\n.\r\n".into();
+    let mut bytes: Bytes = "*?\r\n:1\r\n:2\r\n:3\r\n.\r\n".into();
 
     let (frame, amt) = stream_decode(&bytes).unwrap().unwrap();
     assert_eq!(frame, DecodedFrame::Streaming(StreamedFrame::new(FrameKind::Array)));
@@ -1676,7 +1684,7 @@ mod tests {
 
   #[test]
   fn should_decode_streaming_set() {
-    let mut bytes: BytesMut = "~?\r\n:1\r\n:2\r\n:3\r\n.\r\n".into();
+    let mut bytes: Bytes = "~?\r\n:1\r\n:2\r\n:3\r\n.\r\n".into();
 
     let (frame, amt) = stream_decode(&bytes).unwrap().unwrap();
     assert_eq!(frame, DecodedFrame::Streaming(StreamedFrame::new(FrameKind::Set)));
@@ -1751,7 +1759,7 @@ mod tests {
 
   #[test]
   fn should_decode_streaming_map() {
-    let mut bytes: BytesMut = "%?\r\n+a\r\n:1\r\n+b\r\n:2\r\n.\r\n".into();
+    let mut bytes: Bytes = "%?\r\n+a\r\n:1\r\n+b\r\n:2\r\n.\r\n".into();
 
     let (frame, amt) = stream_decode(&bytes).unwrap().unwrap();
     assert_eq!(frame, DecodedFrame::Streaming(StreamedFrame::new(FrameKind::Map)));

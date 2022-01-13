@@ -1,5 +1,7 @@
+use crate::types::RedisParseError;
 use bytes::buf::{Chain, IntoIter, Reader, Take};
 use bytes::{Buf, Bytes, BytesMut};
+use bytes_utils::Str;
 use nom::{
   AsBytes, FindSubstring, InputIter, InputLength, InputTake, InputTakeAtPosition, Needed, Offset, Slice,
   UnspecializedInput,
@@ -42,6 +44,10 @@ pub struct NomBytes(Bytes);
 impl NomBytes {
   pub fn into_bytes(self) -> Bytes {
     self.0
+  }
+
+  pub fn as_str<T>(&self) -> Result<Str, RedisParseError<T>> {
+    Ok(Str::from_inner(self.0.clone())?)
   }
 }
 
