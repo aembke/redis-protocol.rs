@@ -16,7 +16,6 @@ use nom::sequence::terminated as nom_terminated;
 use nom::{Err as NomErr, IResult};
 use std::borrow::Cow;
 use std::fmt::Debug;
-use std::ops::Deref;
 use std::str;
 
 fn map_complete_frame(frame: Frame) -> DecodedFrame {
@@ -51,26 +50,28 @@ fn isize_to_usize(n: isize) -> Result<usize, RedisParseError<NomBytes>> {
   }
 }
 
-fn to_i64(s: &Str) -> Result<i64, RedisParseError<NomBytes>> {
-  s.parse::<i64>()
+fn to_i64(s: &NomBytes) -> Result<i64, RedisParseError<NomBytes>> {
+  str::from_utf8(s)?
+    .parse::<i64>()
     .map_err(|e| RedisParseError::new_custom("to_i64", format!("{:?}", e)))
 }
 
-fn to_f64(s: &Str) -> Result<f64, RedisParseError<NomBytes>> {
-  s.parse::<f64>()
+fn to_f64(s: &NomBytes) -> Result<f64, RedisParseError<NomBytes>> {
+  str::from_utf8(s)?
+    .parse::<f64>()
     .map_err(|e| RedisParseError::new_custom("to_f64", format!("{:?}", e)))
 }
 
-fn to_bool(s: &Str) -> Result<bool, RedisParseError<NomBytes>> {
-  match s.deref().as_ref() {
+fn to_bool(s: &NomBytes) -> Result<bool, RedisParseError<NomBytes>> {
+  match str::from_utf8(s)?.as_ref() {
     "t" => Ok(true),
     "f" => Ok(false),
     _ => Err(RedisParseError::new_custom("to_bool", "Invalid boolean value.")),
   }
 }
 
-fn to_verbatimstring_format(s: &Str) -> Result<VerbatimStringFormat, RedisParseError<NomBytes>> {
-  match s.deref().as_ref() {
+fn to_verbatimstring_format(s: &NomBytes) -> Result<VerbatimStringFormat, RedisParseError<NomBytes>> {
+  match str::from_utf8(s)?.as_ref() {
     "txt" => Ok(VerbatimStringFormat::Text),
     "mkd" => Ok(VerbatimStringFormat::Markdown),
     _ => Err(RedisParseError::new_custom(
@@ -147,13 +148,14 @@ where
   nom_terminated(nom_take_until(CRLF.as_bytes()), nom_take(2_usize))(input_ref.clone())
 }
 
-fn d_read_to_crlf_s<T>(input: T) -> IResult<NomBytes, Str, RedisParseError<NomBytes>>
+// this returns bytes instead of str because MONITOR frames will use this prefix and they can contain bulk strings
+fn d_read_to_crlf_s<T>(input: T) -> IResult<NomBytes, NomBytes, RedisParseError<NomBytes>>
 where
   T: AsRef<NomBytes> + Debug,
 {
   let (input, data) = d_read_to_crlf(input)?;
-  decode_log!(data, "Parsing to StrMut. Data: {:?}", data);
-  Ok((input, etry!(utils::to_byte_str(&data))))
+  decode_log!(data, "Parsing as str: Data: {:?}", data);
+  Ok((input, data))
 }
 
 fn d_read_prefix_len<T>(input: T) -> IResult<NomBytes, usize, RedisParseError<NomBytes>>
@@ -161,6 +163,7 @@ where
   T: AsRef<NomBytes> + Debug,
 {
   let (input, data) = d_read_to_crlf_s(input)?;
+  let data = etry!(Str::from_inner(data.into_bytes()));
   decode_log!("Reading prefix len. Data: {:?}", data.to_string());
   Ok((input, etry!(to_usize(&data))))
 }
@@ -170,6 +173,7 @@ where
   T: AsRef<NomBytes> + Debug,
 {
   let (input, data) = d_read_to_crlf_s(input)?;
+  let data = etry!(Str::from_inner(data.into_bytes()));
   decode_log!("Reading prefix len. Data: {:?}", data.to_string());
   Ok((input, etry!(to_isize(&data))))
 }
@@ -208,6 +212,7 @@ where
   T: AsRef<NomBytes> + Debug,
 {
   let (input, data) = d_read_to_crlf_s(input)?;
+  let data = etry!(Str::from_inner(data.into_bytes()));
   decode_log!(input, "Parsed simpleerror {:?}, remaining: {:?}", data, input);
   Ok((input, Frame::SimpleError { data, attributes: None }))
 }
@@ -305,8 +310,7 @@ where
 {
   let (input, len) = d_read_prefix_len(input)?;
   let (input, format_bytes) = nom_terminated(nom_take(3_usize), nom_take(1_usize))(input)?;
-  let format = etry!(utils::to_byte_str(&format_bytes));
-  let format = etry!(to_verbatimstring_format(&format));
+  let format = etry!(to_verbatimstring_format(&format_bytes));
   let (input, data) = nom_terminated(nom_take(len - 4), nom_take(2_usize))(input)?;
 
   Ok((
@@ -622,6 +626,10 @@ pub mod complete {
       Err(e) => Err(RedisParseError::from(e).into()),
     }
   }
+
+  #[cfg(feature = "decode-mut")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "decode-mut")))]
+  pub use crate::decode_mut::resp3::complete::decode_mut;
 }
 
 /// Decoding structs and functions that support streaming frames. The caller is responsible for managing any returned state for streaming frames.
@@ -735,6 +743,10 @@ pub mod streaming {
       Err(e) => Err(RedisParseError::from(e).into()),
     }
   }
+
+  #[cfg(feature = "decode-mut")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "decode-mut")))]
+  pub use crate::decode_mut::resp3::streaming::decode_mut;
 }
 
 #[cfg(test)]

@@ -7,7 +7,6 @@ use crate::resp2::types::*;
 use crate::types::*;
 use crate::utils;
 use bytes::Bytes;
-use bytes_utils::Str;
 use nom::bytes::streaming::{take as nom_take, take_until as nom_take_until};
 use nom::multi::count as nom_count;
 use nom::number::streaming::be_u8;
@@ -15,7 +14,7 @@ use nom::sequence::terminated as nom_terminated;
 use nom::{Err as NomErr, IResult};
 use std::str;
 
-const NULL_LEN: isize = -1;
+pub(crate) const NULL_LEN: isize = -1;
 
 fn to_isize(s: &NomBytes) -> Result<isize, RedisParseError<NomBytes>> {
   str::from_utf8(s)?
@@ -29,7 +28,7 @@ fn to_i64(s: &NomBytes) -> Result<i64, RedisParseError<NomBytes>> {
     .map_err(|_| RedisParseError::new_custom("to_i64", "Failed to parse as integer."))
 }
 
-fn isize_to_usize<'a>(s: isize) -> Result<usize, RedisParseError<NomBytes>> {
+pub fn isize_to_usize<'a, T>(s: isize) -> Result<usize, RedisParseError<T>> {
   if s >= 0 {
     Ok(s as usize)
   } else {
@@ -50,7 +49,7 @@ fn d_read_to_crlf_s(input: &NomBytes) -> IResult<NomBytes, NomBytes, RedisParseE
 
 fn d_read_prefix_len(input: &NomBytes) -> IResult<NomBytes, isize, RedisParseError<NomBytes>> {
   let (input, data) = d_read_to_crlf_s(input)?;
-  decode_log!("Reading prefix len. Data: {:?}", data.to_string());
+  decode_log!("Reading prefix len. Data: {:?}", str::from_utf8(&data));
   Ok((input, etry!(to_isize(&data))))
 }
 
@@ -160,8 +159,6 @@ where
 /// Attempt to parse the contents of `buf`, returning the first valid frame and the number of bytes consumed.
 ///
 /// If the byte slice contains an incomplete frame then `None` is returned.
-///
-/// The returned frame will contain
 pub fn decode(buf: &Bytes) -> Result<Option<(Frame, usize)>, RedisProtocolError> {
   let len = buf.len();
   // operate on a shallow clone with a different cursor than `buf` since the parser will split the buffer while parsing
@@ -177,20 +174,29 @@ pub fn decode(buf: &Bytes) -> Result<Option<(Frame, usize)>, RedisProtocolError>
   }
 }
 
+#[cfg(feature = "decode-mut")]
+#[cfg_attr(docsrs, doc(cfg(feature = "decode-mut")))]
+pub use crate::decode_mut::resp2::decode_mut;
+
 #[cfg(test)]
-mod tests {
+pub mod tests {
   use super::*;
   use bytes::BytesMut;
   use nom::AsBytes;
   use std::str;
 
-  const PADDING: &'static str = "FOOBARBAZ";
+  #[test]
+  fn enable_logs() {
+    pretty_env_logger::try_init();
+  }
 
-  fn pretty_print_panic(e: RedisProtocolError) {
+  pub const PADDING: &'static str = "FOOBARBAZ";
+
+  pub fn pretty_print_panic(e: RedisProtocolError) {
     panic!("{:?}", e);
   }
 
-  fn panic_no_decode() {
+  pub fn panic_no_decode() {
     panic!("Failed to decode bytes. None returned");
   }
 
@@ -234,7 +240,7 @@ mod tests {
   #[test]
   fn should_decode_llen_res_example() {
     let expected = (Some(Frame::Integer(48293)), 8);
-    let mut bytes: Bytes = ":48293\r\n".into();
+    let bytes: Bytes = ":48293\r\n".into();
 
     decode_and_verify_some(&bytes, &expected);
     decode_and_verify_padded_some(&bytes, &expected);
@@ -243,7 +249,7 @@ mod tests {
   #[test]
   fn should_decode_simple_string() {
     let expected = (Some(Frame::SimpleString("string".into())), 9);
-    let mut bytes: Bytes = "+string\r\n".into();
+    let bytes: Bytes = "+string\r\n".into();
 
     decode_and_verify_some(&bytes, &expected);
     decode_and_verify_padded_some(&bytes, &expected);
@@ -253,7 +259,7 @@ mod tests {
   #[should_panic]
   fn should_decode_simple_string_incomplete() {
     let expected = (Some(Frame::SimpleString("string".into())), 9);
-    let mut bytes: Bytes = "+stri".into();
+    let bytes: Bytes = "+stri".into();
 
     decode_and_verify_some(&bytes, &expected);
     decode_and_verify_padded_some(&bytes, &expected);
@@ -262,7 +268,7 @@ mod tests {
   #[test]
   fn should_decode_bulk_string() {
     let expected = (Some(Frame::BulkString("foo".into())), 9);
-    let mut bytes: Bytes = "$3\r\nfoo\r\n".into();
+    let bytes: Bytes = "$3\r\nfoo\r\n".into();
 
     decode_and_verify_some(&bytes, &expected);
     decode_and_verify_padded_some(&bytes, &expected);
@@ -272,7 +278,7 @@ mod tests {
   #[should_panic]
   fn should_decode_bulk_string_incomplete() {
     let expected = (Some(Frame::BulkString("foo".into())), 9);
-    let mut bytes: Bytes = "$3\r\nfo".into();
+    let bytes: Bytes = "$3\r\nfo".into();
 
     decode_and_verify_some(&bytes, &expected);
     decode_and_verify_padded_some(&bytes, &expected);
@@ -287,7 +293,7 @@ mod tests {
       ])),
       16,
     );
-    let mut bytes: Bytes = "*2\r\n+Foo\r\n+Bar\r\n".into();
+    let bytes: Bytes = "*2\r\n+Foo\r\n+Bar\r\n".into();
 
     decode_and_verify_some(&bytes, &expected);
     decode_and_verify_padded_some(&bytes, &expected);
@@ -295,7 +301,7 @@ mod tests {
 
   #[test]
   fn should_decode_array_nulls() {
-    let mut bytes: Bytes = "*3\r\n$3\r\nFoo\r\n$-1\r\n$3\r\nBar\r\n".into();
+    let bytes: Bytes = "*3\r\n$3\r\nFoo\r\n$-1\r\n$3\r\nBar\r\n".into();
 
     let expected = (
       Some(Frame::Array(vec![
@@ -312,7 +318,7 @@ mod tests {
 
   #[test]
   fn should_decode_normal_error() {
-    let mut bytes: Bytes = "-WRONGTYPE Operation against a key holding the wrong kind of value\r\n".into();
+    let bytes: Bytes = "-WRONGTYPE Operation against a key holding the wrong kind of value\r\n".into();
     let expected = (
       Some(Frame::Error(
         "WRONGTYPE Operation against a key holding the wrong kind of value".into(),
@@ -326,7 +332,7 @@ mod tests {
 
   #[test]
   fn should_decode_moved_error() {
-    let mut bytes: Bytes = "-MOVED 3999 127.0.0.1:6381\r\n".into();
+    let bytes: Bytes = "-MOVED 3999 127.0.0.1:6381\r\n".into();
     let expected = (Some(Frame::Error("MOVED 3999 127.0.0.1:6381".into())), bytes.len());
 
     decode_and_verify_some(&bytes, &expected);
@@ -335,7 +341,7 @@ mod tests {
 
   #[test]
   fn should_decode_ask_error() {
-    let mut bytes: Bytes = "-ASK 3999 127.0.0.1:6381\r\n".into();
+    let bytes: Bytes = "-ASK 3999 127.0.0.1:6381\r\n".into();
     let expected = (Some(Frame::Error("ASK 3999 127.0.0.1:6381".into())), bytes.len());
 
     decode_and_verify_some(&bytes, &expected);
@@ -344,7 +350,7 @@ mod tests {
 
   #[test]
   fn should_decode_incomplete() {
-    let mut bytes: Bytes = "*3\r\n$3\r\nFoo\r\n$-1\r\n$3\r\nBar".into();
+    let bytes: Bytes = "*3\r\n$3\r\nFoo\r\n$-1\r\n$3\r\nBar".into();
     decode_and_verify_none(&bytes);
   }
 

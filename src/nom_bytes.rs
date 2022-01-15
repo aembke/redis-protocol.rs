@@ -1,53 +1,19 @@
-use crate::types::RedisParseError;
-use bytes::buf::{Chain, IntoIter, Reader, Take};
-use bytes::{Buf, Bytes, BytesMut};
-use bytes_utils::Str;
-use nom::{
-  AsBytes, FindSubstring, InputIter, InputLength, InputTake, InputTakeAtPosition, Needed, Offset, Slice,
-  UnspecializedInput,
-};
-use std::fmt::{Debug, Display};
-use std::io::IoSlice;
+use bytes::buf::IntoIter;
+use bytes::Bytes;
+use nom::{AsBytes, FindSubstring, InputIter, InputLength, InputTake, Needed, Offset, Slice, UnspecializedInput};
+use std::fmt::Debug;
 use std::iter::Enumerate;
 use std::ops::{Deref, DerefMut, Range, RangeFrom, RangeFull, RangeTo};
 #[cfg(feature = "decode-logs")]
 use std::str;
 
-/// A wrapper type for `BytesMut` that implements the Nom traits necessary to operate on BytesMut slices directly with nom functions.
-///
-/// This allows for the caller to read from BytesMut without copying any of the data as its being read. It also allows for parsing
-/// functions to return Frame types that contain "owned" views into sections of the buffer without copying or even moving any of the
-/// underlying data.
-///
-/// To do this we implement custom slicing functions that rely on the BytesMut `split_to` function and the fact that cloning a
-/// `BytesMut` simply increments a ref count in order to create a new view into the buffer.
-///
-/// What this means in practice - given the following input buffer:
-///
-/// "*2\r\n$3\r\nfoo\r\n$3\r\nbar\r\n"
-///
-/// and the corresponding frames in RESP2:
-///
-/// ```rust ignore
-/// Frame::Array(vec![
-///   Frame::BulkString("foo".into(),
-///   Frame::BulkString("bar".into()
-/// ])
-/// ```
-///
-/// If the above frames were produced by parsing a `BytesMut` containing the above input bytes then the `BytesMut` inside the first
-/// `BulkString` would simply be a shallow view into the input buffer starting at index 7, etc. This works because the relatively cheap
-/// `Clone` impl on `BytesMut` allows for removing any lifetimes and the issues that come with using those for this kind of use case.
+/// A wrapper type for `Bytes` that implements the Nom traits necessary to operate on Bytes slices directly with nom functions.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct NomBytes(Bytes);
+pub(crate) struct NomBytes(Bytes);
 
 impl NomBytes {
   pub fn into_bytes(self) -> Bytes {
     self.0
-  }
-
-  pub fn as_str<T>(&self) -> Result<Str, RedisParseError<T>> {
-    Ok(Str::from_inner(self.0.clone())?)
   }
 }
 
@@ -150,24 +116,19 @@ impl Offset for NomBytes {
 
 impl Slice<Range<usize>> for NomBytes {
   fn slice(&self, range: Range<usize>) -> Self {
-    let mut buf = self.clone();
-    let _ = buf.split_to(range.start);
-    buf.split_to(range.end).into()
+    self.0.slice(range).into()
   }
 }
 
 impl Slice<RangeTo<usize>> for NomBytes {
   fn slice(&self, range: RangeTo<usize>) -> Self {
-    let mut buf = self.clone();
-    buf.split_to(range.end).into()
+    self.0.slice(0..range.end).into()
   }
 }
 
 impl Slice<RangeFrom<usize>> for NomBytes {
   fn slice(&self, range: RangeFrom<usize>) -> Self {
-    let mut buf = self.clone();
-    let _ = buf.split_to(range.start);
-    buf
+    self.0.slice(range.start..).into()
   }
 }
 

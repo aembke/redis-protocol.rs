@@ -188,6 +188,18 @@ where
   }
 }
 
+impl<B> From<BytesUtf8Error<B>> for RedisProtocolError {
+  fn from(e: BytesUtf8Error<B>) -> Self {
+    e.utf8_error().into()
+  }
+}
+
+impl From<Utf8Error> for RedisProtocolError {
+  fn from(e: Utf8Error) -> Self {
+    RedisProtocolError::new(RedisProtocolErrorKind::DecodeError, format!("{}", e))
+  }
+}
+
 /// A struct defining parse errors when decoding frames.
 pub enum RedisParseError<I> {
   Custom {
@@ -236,6 +248,16 @@ impl<I> ParseError<I> for RedisParseError<I> {
   }
 
   fn append(_: I, _: ErrorKind, other: Self) -> Self {
+    other
+  }
+}
+
+impl<I, O> ParseError<(I, O)> for RedisParseError<I> {
+  fn from_error_kind(input: (I, O), kind: ErrorKind) -> Self {
+    RedisParseError::Nom(input.0, kind)
+  }
+
+  fn append(_: (I, O), _: ErrorKind, other: Self) -> Self {
     other
   }
 }

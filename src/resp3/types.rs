@@ -1,8 +1,8 @@
 use crate::resp3::utils as resp3_utils;
 use crate::types::{Redirection, RedisProtocolError, RedisProtocolErrorKind};
 use crate::utils;
-use bytes::{Bytes, BytesMut};
-use bytes_utils::{Str, StrMut};
+use bytes::Bytes;
+use bytes_utils::Str;
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::convert::TryFrom;
@@ -13,8 +13,6 @@ use std::str;
 #[cfg(feature = "index-map")]
 use indexmap::{IndexMap, IndexSet};
 
-#[cfg(test)]
-use nom::AsBytes;
 #[cfg(test)]
 use std::convert::TryInto;
 
@@ -405,8 +403,8 @@ impl PartialEq for Frame {
         match *other {
           Array {
             ref data,
-            attributes: _,
-          } => data == _data && _attributes == _attributes,
+            ref attributes,
+          } => data == _data && attributes == _attributes,
           _ => false,
         }
       }
@@ -418,8 +416,8 @@ impl PartialEq for Frame {
         match *other {
           BlobString {
             ref data,
-            attributes: _,
-          } => data == _data && _attributes == _attributes,
+            ref attributes,
+          } => data == _data && attributes == _attributes,
           _ => false,
         }
       }
@@ -431,8 +429,8 @@ impl PartialEq for Frame {
         match *other {
           SimpleString {
             ref data,
-            attributes: _,
-          } => data == _data && _attributes == _attributes,
+            ref attributes,
+          } => data == _data && attributes == _attributes,
           _ => false,
         }
       }
@@ -444,8 +442,8 @@ impl PartialEq for Frame {
         match *other {
           SimpleError {
             ref data,
-            attributes: _,
-          } => data == _data && _attributes == _attributes,
+            ref attributes,
+          } => data == _data && attributes == _attributes,
           _ => false,
         }
       }
@@ -457,8 +455,8 @@ impl PartialEq for Frame {
         match *other {
           Number {
             ref data,
-            attributes: _,
-          } => data == _data && _attributes == _attributes,
+            ref attributes,
+          } => data == _data && attributes == _attributes,
           _ => false,
         }
       }
@@ -474,8 +472,8 @@ impl PartialEq for Frame {
         match *other {
           Boolean {
             ref data,
-            attributes: _,
-          } => data == _data && _attributes == _attributes,
+            ref attributes,
+          } => data == _data && attributes == _attributes,
           _ => false,
         }
       }
@@ -487,8 +485,8 @@ impl PartialEq for Frame {
         match *other {
           Double {
             ref data,
-            attributes: _,
-          } => data == _data && _attributes == _attributes,
+            ref attributes,
+          } => data == _data && attributes == _attributes,
           _ => false,
         }
       }
@@ -500,8 +498,8 @@ impl PartialEq for Frame {
         match *other {
           BlobError {
             ref data,
-            attributes: _,
-          } => data == _data && _attributes == _attributes,
+            ref attributes,
+          } => data == _data && attributes == _attributes,
           _ => false,
         }
       }
@@ -528,8 +526,8 @@ impl PartialEq for Frame {
         match *other {
           Map {
             ref data,
-            attributes: _,
-          } => data == _data && _attributes == _attributes,
+            ref attributes,
+          } => data == _data && attributes == _attributes,
           _ => false,
         }
       }
@@ -541,8 +539,8 @@ impl PartialEq for Frame {
         match *other {
           Set {
             ref data,
-            attributes: _,
-          } => data == _data && _attributes == _attributes,
+            ref attributes,
+          } => data == _data && attributes == _attributes,
           _ => false,
         }
       }
@@ -554,8 +552,8 @@ impl PartialEq for Frame {
         match *other {
           Push {
             ref data,
-            attributes: _,
-          } => data == _data && _attributes == _attributes,
+            ref attributes,
+          } => data == _data && attributes == _attributes,
           _ => false,
         }
       }
@@ -574,8 +572,8 @@ impl PartialEq for Frame {
         match *other {
           BigNumber {
             ref data,
-            attributes: _,
-          } => data == _data && _attributes == _attributes,
+            ref attributes,
+          } => data == _data && attributes == _attributes,
           _ => false,
         }
       }
