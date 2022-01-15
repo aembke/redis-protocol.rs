@@ -171,7 +171,7 @@ fn d_parse_frame(input: (&[u8], usize)) -> IResult<(&[u8], usize), Resp2IndexFra
   }
 }
 
-fn make_bytes_frame(buf: &Bytes, frame: Resp2IndexFrame) -> Result<Resp2Frame, RedisProtocolError> {
+fn build_bytes_frame(buf: &Bytes, frame: Resp2IndexFrame) -> Result<Resp2Frame, RedisProtocolError> {
   let out = match frame {
     Resp2IndexFrame::Error { start, end } => {
       let bytes = range_to_bytes(buf, start, end)?;
@@ -190,7 +190,7 @@ fn make_bytes_frame(buf: &Bytes, frame: Resp2IndexFrame) -> Result<Resp2Frame, R
     Resp2IndexFrame::Array(frames) => {
       let mut out = Vec::with_capacity(frames.len());
       for frame in frames.into_iter() {
-        out.push(make_bytes_frame(buf, frame)?);
+        out.push(build_bytes_frame(buf, frame)?);
       }
       Resp2Frame::Array(out)
     }
@@ -212,7 +212,7 @@ fn freeze_parse(
   }
 
   let buffer = buf.split_to(amt).freeze();
-  let frame = make_bytes_frame(&buffer, frame)?;
+  let frame = build_bytes_frame(&buffer, frame)?;
   Ok((frame, amt, buffer))
 }
 

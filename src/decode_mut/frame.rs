@@ -1,8 +1,12 @@
 use crate::decode_mut::utils::hash_tuple;
 use crate::resp3::types::{Auth, FrameKind, RespVersion, VerbatimStringFormat, NULL};
+use crate::types::{RedisProtocolError, RedisProtocolErrorKind};
 use bytes::Bytes;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
+
+pub type IndexFrameMap = HashMap<Resp3IndexFrame, Resp3IndexFrame>;
+pub type IndexAttributes = Option<IndexFrameMap>;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Resp2IndexFrame {
@@ -18,57 +22,57 @@ pub enum Resp2IndexFrame {
 pub enum Resp3IndexFrame {
   BlobString {
     data: (usize, usize),
-    attributes: Option<(usize, usize)>,
+    attributes: IndexAttributes,
   },
   BlobError {
     data: (usize, usize),
-    attributes: Option<(usize, usize)>,
+    attributes: IndexAttributes,
   },
   SimpleString {
     data: (usize, usize),
-    attributes: Option<(usize, usize)>,
+    attributes: IndexAttributes,
   },
   SimpleError {
     data: (usize, usize),
-    attributes: Option<(usize, usize)>,
+    attributes: IndexAttributes,
   },
   Boolean {
     data: bool,
-    attributes: Option<(usize, usize)>,
+    attributes: IndexAttributes,
   },
   Null,
   Number {
     data: i64,
-    attributes: Option<(usize, usize)>,
+    attributes: IndexAttributes,
   },
   Double {
     data: f64,
-    attributes: Option<(usize, usize)>,
+    attributes: IndexAttributes,
   },
   BigNumber {
     data: (usize, usize),
-    attributes: Option<(usize, usize)>,
+    attributes: IndexAttributes,
   },
   VerbatimString {
     data: (usize, usize),
-    attributes: Option<(usize, usize)>,
+    attributes: IndexAttributes,
     format: VerbatimStringFormat,
   },
   Array {
     data: Vec<Resp3IndexFrame>,
-    attributes: Option<(usize, usize)>,
+    attributes: IndexAttributes,
   },
   Map {
-    data: HashMap<Resp3IndexFrame, Resp3IndexFrame>,
-    attributes: Option<(usize, usize)>,
+    data: IndexFrameMap,
+    attributes: IndexAttributes,
   },
   Set {
     data: HashSet<Resp3IndexFrame>,
-    attributes: Option<(usize, usize)>,
+    attributes: IndexAttributes,
   },
   Push {
     data: Vec<Resp3IndexFrame>,
-    attributes: Option<(usize, usize)>,
+    attributes: IndexAttributes,
   },
   Hello {
     version: RespVersion,
@@ -330,5 +334,62 @@ impl Resp3IndexFrame {
         }
       }
     }
+  }
+}
+
+pub struct StreamedIndexFrame {
+  pub kind: FrameKind,
+  pub attributes: IndexAttributes,
+}
+
+pub enum DecodedIndexFrame {
+  Complete(Resp3IndexFrame),
+  Streaming(StreamedIndexFrame),
+}
+
+impl DecodedIndexFrame {
+  /// Add attributes to the decoded frame, if possible.
+  pub fn add_attributes(&mut self, attributes: IndexFrameMap) -> Result<(), RedisProtocolError> {
+    let _ = match *self {
+      DecodedIndexFrame::Streaming(ref mut inner) => inner.attributes = Some(attributes),
+      DecodedIndexFrame::Complete(ref mut inner) => inner.add_attributes(attributes)?,
+    };
+
+    Ok(())
+  }
+
+  /// Convert the decoded frame to a complete frame, returning an error if a streaming variant is found.
+  pub fn into_complete_frame(self) -> Result<Resp3IndexFrame, RedisProtocolError> {
+    match self {
+      DecodedIndexFrame::Complete(frame) => Ok(frame),
+      DecodedIndexFrame::Streaming(_) => Err(RedisProtocolError::new(
+        RedisProtocolErrorKind::DecodeError,
+        "Expected complete frame.",
+      )),
+    }
+  }
+
+  /// Convert the decoded frame into a streaming frame, returning an error if a complete variant is found.
+  pub fn into_streaming_frame(self) -> Result<StreamedIndexFrame, RedisProtocolError> {
+    match self {
+      DecodedIndexFrame::Streaming(frame) => Ok(frame),
+      DecodedIndexFrame::Complete(_) => Err(RedisProtocolError::new(
+        RedisProtocolErrorKind::DecodeError,
+        "Expected streamed frame.",
+      )),
+    }
+  }
+
+  /// Whether or not the decoded frame starts a stream.
+  pub fn is_streaming(&self) -> bool {
+    match *self {
+      DecodedIndexFrame::Streaming(_) => true,
+      _ => false,
+    }
+  }
+
+  /// Whether or not the decoded frame is a complete frame.
+  pub fn is_complete(&self) -> bool {
+    !self.is_streaming()
   }
 }

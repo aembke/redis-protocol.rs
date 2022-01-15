@@ -2,6 +2,7 @@
 //!
 //! <https://github.com/antirez/RESP3/blob/master/spec.md>
 
+use crate::decode_mut::frame::{IndexAttributes, IndexFrameMap, Resp3IndexFrame};
 use crate::nom_bytes::NomBytes;
 use crate::resp3::types::*;
 use crate::resp3::utils as resp3_utils;
@@ -15,25 +16,29 @@ use nom::number::streaming::be_u8;
 use nom::sequence::terminated as nom_terminated;
 use nom::{Err as NomErr, IResult};
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::fmt::Debug;
 use std::str;
 
-fn map_complete_frame(frame: Frame) -> DecodedFrame {
+pub(crate) fn map_complete_frame(frame: Frame) -> DecodedFrame {
   DecodedFrame::Complete(frame)
 }
 
-fn unwrap_complete_frame(frame: DecodedFrame) -> Result<Frame, RedisParseError<NomBytes>> {
+pub(crate) fn unwrap_complete_frame<T>(frame: DecodedFrame) -> Result<Frame, RedisParseError<T>> {
   frame
     .into_complete_frame()
     .map_err(|e| RedisParseError::new_custom("unwrap_complete_frame", format!("{:?}", e)))
 }
 
-fn to_usize(s: &Str) -> Result<usize, RedisParseError<NomBytes>> {
-  s.parse::<usize>()
+pub(crate) fn to_usize<T>(s: &[u8]) -> Result<usize, RedisParseError<T>> {
+  str::from_utf8(s)?
+    .parse::<usize>()
     .map_err(|e| RedisParseError::new_custom("to_usize", format!("{:?}", e)))
 }
 
-fn to_isize(s: &Str) -> Result<isize, RedisParseError<NomBytes>> {
+pub(crate) fn to_isize<T>(s: &[u8]) -> Result<isize, RedisParseError<T>> {
+  let s = str::from_utf8(s)?;
+
   if *s == "?" {
     Ok(-1)
   } else {
@@ -42,7 +47,7 @@ fn to_isize(s: &Str) -> Result<isize, RedisParseError<NomBytes>> {
   }
 }
 
-fn isize_to_usize(n: isize) -> Result<usize, RedisParseError<NomBytes>> {
+pub(crate) fn isize_to_usize<T>(n: isize) -> Result<usize, RedisParseError<T>> {
   if n.is_negative() {
     Err(RedisParseError::new_custom("isize_to_usize", "Invalid prefix length."))
   } else {
@@ -50,19 +55,19 @@ fn isize_to_usize(n: isize) -> Result<usize, RedisParseError<NomBytes>> {
   }
 }
 
-fn to_i64(s: &NomBytes) -> Result<i64, RedisParseError<NomBytes>> {
+pub(crate) fn to_i64<T>(s: &[u8]) -> Result<i64, RedisParseError<T>> {
   str::from_utf8(s)?
     .parse::<i64>()
     .map_err(|e| RedisParseError::new_custom("to_i64", format!("{:?}", e)))
 }
 
-fn to_f64(s: &NomBytes) -> Result<f64, RedisParseError<NomBytes>> {
+pub(crate) fn to_f64<T>(s: &[u8]) -> Result<f64, RedisParseError<T>> {
   str::from_utf8(s)?
     .parse::<f64>()
     .map_err(|e| RedisParseError::new_custom("to_f64", format!("{:?}", e)))
 }
 
-fn to_bool(s: &NomBytes) -> Result<bool, RedisParseError<NomBytes>> {
+pub(crate) fn to_bool<T>(s: &[u8]) -> Result<bool, RedisParseError<T>> {
   match str::from_utf8(s)?.as_ref() {
     "t" => Ok(true),
     "f" => Ok(false),
@@ -70,7 +75,7 @@ fn to_bool(s: &NomBytes) -> Result<bool, RedisParseError<NomBytes>> {
   }
 }
 
-fn to_verbatimstring_format(s: &NomBytes) -> Result<VerbatimStringFormat, RedisParseError<NomBytes>> {
+pub(crate) fn to_verbatimstring_format<T>(s: &[u8]) -> Result<VerbatimStringFormat, RedisParseError<T>> {
   match str::from_utf8(s)?.as_ref() {
     "txt" => Ok(VerbatimStringFormat::Text),
     "mkd" => Ok(VerbatimStringFormat::Markdown),
@@ -81,34 +86,8 @@ fn to_verbatimstring_format(s: &NomBytes) -> Result<VerbatimStringFormat, RedisP
   }
 }
 
-fn to_map(mut data: Vec<Frame>) -> Result<FrameMap, RedisParseError<NomBytes>> {
-  if data.len() % 2 != 0 {
-    return Err(RedisParseError::new_custom("to_map", "Invalid hashmap frame length."));
-  }
-
-  let mut out = resp3_utils::new_map(Some(data.len() / 2));
-  while data.len() >= 2 {
-    let value = data.pop().unwrap();
-    let key = data.pop().unwrap();
-
-    out.insert(key, value);
-  }
-
-  Ok(out)
-}
-
-fn to_set(data: Vec<Frame>) -> Result<FrameSet, RedisParseError<NomBytes>> {
-  let mut out = resp3_utils::new_set(Some(data.len()));
-
-  for frame in data.into_iter() {
-    out.insert(frame);
-  }
-
-  Ok(out)
-}
-
-// TODO change auth fields to StrMut
-fn to_hello<'a>(version: u8, auth: Option<(Str, Str)>) -> Result<Frame, RedisParseError<NomBytes>> {
+// TODO change auth fields to Str
+pub(crate) fn to_hello<T>(version: u8, auth: Option<(Str, Str)>) -> Result<Frame, RedisParseError<T>> {
   let version = match version {
     2 => RespVersion::RESP2,
     3 => RespVersion::RESP3,
@@ -128,10 +107,36 @@ fn to_hello<'a>(version: u8, auth: Option<(Str, Str)>) -> Result<Frame, RedisPar
   Ok(Frame::Hello { version, auth })
 }
 
-fn attach_attributes(
-  attributes: Attributes,
+fn to_map<'a>(mut data: Vec<Resp3IndexFrame>) -> Result<IndexFrameMap, RedisParseError<&'a [u8]>> {
+  if data.len() % 2 != 0 {
+    return Err(RedisParseError::new_custom("to_map", "Invalid hashmap frame length."));
+  }
+
+  let mut out = HashMap::with_capacity(data.len() / 2);
+  while data.len() >= 2 {
+    let value = data.pop().unwrap();
+    let key = data.pop().unwrap();
+
+    out.insert(key, value);
+  }
+
+  Ok(out)
+}
+
+fn to_set<'a>(data: Vec<Frame>) -> Result<FrameSet, RedisParseError<&'a [u8]>> {
+  let mut out = resp3_utils::new_set(Some(data.len()));
+
+  for frame in data.into_iter() {
+    out.insert(frame);
+  }
+
+  Ok(out)
+}
+
+fn attach_attributes<'a>(
+  attributes: IndexAttributes,
   mut frame: DecodedFrame,
-) -> Result<DecodedFrame, RedisParseError<NomBytes>> {
+) -> Result<DecodedFrame, RedisParseError<&'a [u8]>> {
   if let Err(e) = frame.add_attributes(attributes) {
     Err(RedisParseError::new_custom("attach_attributes", format!("{:?}", e)))
   } else {
