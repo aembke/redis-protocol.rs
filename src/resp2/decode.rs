@@ -161,10 +161,7 @@ where
 /// If the byte slice contains an incomplete frame then `None` is returned.
 pub fn decode(buf: &Bytes) -> Result<Option<(Frame, usize)>, RedisProtocolError> {
   let len = buf.len();
-  // operate on a shallow clone with a different cursor than `buf` since the parser will split the buffer while parsing
-  // in order to avoid allocating as much as possible, and if a frame is later found to be incomplete we won't affect
-  // the caller's buffer cursor
-  let buffer: NomBytes = buf.clone().into();
+  let buffer: NomBytes = buf.into();
 
   match d_parse_frame(buffer) {
     Ok((remaining, frame)) => Ok(Some((frame, len - remaining.len()))),

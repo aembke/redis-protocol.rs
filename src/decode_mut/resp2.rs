@@ -213,6 +213,7 @@ fn freeze_parse(
 ///
 /// Unlike `decode` this function works on a mutable `BytesMut` buffer in order to parse frames without copying the inner buffer contents
 /// and will automatically split off the consumed bytes before returning. If an error or `None` is returned the buffer will not be modified.
+#[cfg_attr(docsrs, doc(cfg(feature = "decode-mut")))]
 pub fn decode_mut(buf: &mut BytesMut) -> Result<Option<(Resp2Frame, usize, Bytes)>, RedisProtocolError> {
   let (offset, len) = (0, buf.len());
 

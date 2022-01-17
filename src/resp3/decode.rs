@@ -428,10 +428,7 @@ where
       nom_terminated(nom_take_until(EMPTY_SPACE.as_bytes()), nom_take(1_usize)),
       utils::to_byte_str,
     )(input)?;
-    let (input, password) = nom_map_res(
-      nom_terminated(nom_take_until(CRLF.as_bytes()), nom_take(1_usize)),
-      utils::to_byte_str,
-    )(input)?;
+    let (input, password) = nom_map_res(nom_take_until(CRLF.as_bytes()), utils::to_byte_str)(input)?;
 
     (input, Some((username, password)))
   } else {
@@ -559,52 +556,6 @@ where
 }
 
 /// Decoding functions for complete frames. **If a streamed frame is detected it will result in an error.**
-///
-/// Implement a [codec](https://docs.rs/tokio-util/0.6.6/tokio_util/codec/index.html) that only supports complete frames...
-///
-/// ```edition2018 no_run
-/// /*
-/// use redis_protocol::resp3::types::*;
-/// use redis_protocol::types::{RedisProtocolError, RedisProtocolErrorKind};
-/// use redis_protocol::resp3::decode::complete::*;
-/// use redis_protocol::resp3::encode::complete::*;
-/// use bytes::BytesMut;
-/// use tokio_util::codec::{Decoder, Encoder};
-///
-/// pub struct RedisCodec {}
-///
-/// impl Encoder<Frame> for RedisCodec {
-///   type Error = RedisProtocolError;
-///
-///   fn encode(&mut self, item: Frame, dst: &mut BytesMut) -> Result<(), Self::Error> {
-///     // in this example we only show support for encoding complete frames
-///     let _ = encode_bytes(dst, &item)?;
-///     Ok(())
-///   }
-/// }
-///
-/// impl Decoder for RedisCodec {
-///   type Item = Frame;
-///   type Error = RedisProtocolError;
-///
-///   fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-///     if src.is_empty() {
-///       return Ok(None);
-///     }
-///
-///     if let Some((frame, amt)) = decode(&src)? {
-///       // clear the buffer up to the amount decoded so the same bytes aren't repeatedly processed
-///       let _ = src.split_to(amt);
-///
-///       Ok(Some(frame))
-///     }else{
-///       Ok(None)
-///     }
-///   }
-/// }
-/// */
-/// ```
-///
 pub mod complete {
   use super::*;
   use bytes::Bytes;
@@ -628,100 +579,9 @@ pub mod complete {
   pub use crate::decode_mut::resp3::complete::decode_mut;
 }
 
-/// Decoding structs and functions that support streaming frames. The caller is responsible for managing any returned state for streaming frames.
+/// Decoding structs and functions that support streaming frames.
 ///
-/// Examples:
-///
-/// Implement a [codec](https://docs.rs/tokio-util/0.6.6/tokio_util/codec/index.html) that supports decoding streams...
-///
-/// ```edition2018 no_run
-/// /*
-/// use redis_protocol::resp3::types::*;
-/// use redis_protocol::types::{RedisProtocolError, RedisProtocolErrorKind};
-/// use redis_protocol::resp3::decode::streaming::*;
-/// use redis_protocol::resp3::encode::complete::*;
-/// use bytes::BytesMut;
-/// use tokio_util::codec::{Decoder, Encoder};
-/// use std::collections::VecDeque;
-///
-/// pub struct RedisCodec {
-///   decoder_stream: Option<StreamedFrame>
-/// }
-///
-/// impl Encoder<Frame> for RedisCodec {
-///   type Error = RedisProtocolError;
-///
-///   fn encode(&mut self, item: Frame, dst: &mut BytesMut) -> Result<(), Self::Error> {
-///     // in this example we only show support for encoding complete frames
-///     let _ = encode_bytes(dst, &item)?;
-///     Ok(())
-///   }
-/// }
-///
-/// impl Decoder for RedisCodec {
-///   type Item = Frame;
-///   type Error = RedisProtocolError;
-///
-///   // Buffer the results of streamed frame before returning the complete frame to the caller.
-///   // Callers that want to surface streaming frame chunks up the stack would simply return after calling `decode` here.
-///   fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-///     if src.is_empty() {
-///       return Ok(None);
-///     }
-///
-///     if let Some((frame, amt)) = decode(&src)? {
-///       // clear the buffer up to the amount decoded so the same bytes aren't repeatedly processed
-///       let _ = src.split_to(amt);
-///
-///       if self.decoder_stream.is_some() && frame.is_streaming() {
-///         // it doesn't make sense to start a stream while inside another stream
-///         return Err(RedisProtocolError::new(
-///           RedisProtocolErrorKind::DecodeError,
-///           "Cannot start a stream while already inside a stream."
-///         ));
-///       }
-///
-///       let result = if let Some(ref mut streamed_frame) = self.decoder_stream {
-///         // we started receiving streamed data earlier
-///
-///         // we already checked for streams within streams above
-///         let frame = frame.into_complete_frame()?;
-///         streamed_frame.add_frame(frame);
-///
-///         if streamed_frame.is_finished() {
-///            // convert the inner stream buffer into the final output frame
-///            Some(streamed_frame.into_frame()?)
-///         }else{
-///           // buffer the stream in memory until it completes
-///           None
-///         }
-///       }else{
-///         // we're processing a complete frame or starting a new streamed frame
-///         if frame.is_streaming() {
-///           // start a new stream, saving the internal buffer to the codec state
-///           self.decoder_stream = Some(frame.into_streaming_frame()?);
-///           // don't return anything to the caller until the stream finishes (shown above)
-///           None
-///         }else{
-///           // we're not in the middle of a stream and we found a complete frame
-///           Some(frame.into_complete_frame()?)
-///         }
-///       };
-///
-///       if result.is_some() {
-///         // we're either done with the stream or we found a complete frame. either way clear the buffer.
-///         let _ = self.decoder_stream.take();
-///       }
-///
-///       Ok(result)
-///     }else{
-///       Ok(None)
-///     }
-///   }
-/// }
-/// */
-/// ```
-///
+/// The caller is responsible for managing any returned state for streaming frames.
 pub mod streaming {
   use super::*;
   use bytes::Bytes;

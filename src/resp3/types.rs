@@ -1094,8 +1094,6 @@ impl Frame {
   }
 
   /// Attempt to read the frame as a byte slice.
-  ///
-  /// Number and Double will not be returned as a byte slice. Use [number_or_double_as_bytes](Self::number_or_double_as_bytes) instead.
   pub fn as_bytes(&self) -> Option<&[u8]> {
     match *self {
       Frame::SimpleError { ref data, .. } => Some(data.as_bytes()),

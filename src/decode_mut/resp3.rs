@@ -582,6 +582,50 @@ pub mod complete {
   ///
   /// Unlike `decode` this function works on a mutable `BytesMut` buffer in order to parse frames without copying the inner buffer contents
   /// and will automatically split off the consumed bytes before returning. If an error or `None` is returned the buffer will not be modified.
+  ///
+  /// Implement a [codec](https://docs.rs/tokio-util/0.6.6/tokio_util/codec/index.html) that only supports complete frames...
+  ///
+  /// ```edition2018 no_run
+  ///
+  /// use redis_protocol::resp3::types::*;
+  /// use redis_protocol::types::{RedisProtocolError, RedisProtocolErrorKind};
+  /// use redis_protocol::resp3::decode::complete::decode_mut;
+  /// use redis_protocol::resp3::encode::complete::encode_bytes;
+  /// use bytes::BytesMut;
+  /// use tokio_util::codec::{Decoder, Encoder};
+  ///
+  /// pub struct RedisCodec {}
+  ///
+  /// impl Encoder<Frame> for RedisCodec {
+  ///   type Error = RedisProtocolError;
+  ///
+  ///   fn encode(&mut self, item: Frame, dst: &mut BytesMut) -> Result<(), Self::Error> {
+  ///     // in this example we only show support for encoding complete frames
+  ///     let _ = encode_bytes(dst, &item)?;
+  ///     Ok(())
+  ///   }
+  /// }
+  ///
+  /// impl Decoder for RedisCodec {
+  ///   type Item = Frame;
+  ///   type Error = RedisProtocolError;
+  ///
+  ///   fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+  ///     if src.is_empty() {
+  ///       return Ok(None);
+  ///     }
+  ///
+  ///     if let Some((frame, amt, buf)) = decode_mut(src)? {
+  ///       // the `src` buffer will have been modified already at this point, and the `buf` bytes will have been split off
+  ///
+  ///       Ok(Some(frame))
+  ///     }else{
+  ///       Ok(None)
+  ///     }
+  ///   }
+  /// }
+  /// ```
+  #[cfg_attr(docsrs, doc(cfg(feature = "decode-mut")))]
   pub fn decode_mut(buf: &mut BytesMut) -> Result<Option<(Resp3Frame, usize, Bytes)>, RedisProtocolError> {
     let (offset, len) = (0, buf.len());
 
@@ -613,6 +657,92 @@ pub mod streaming {
   ///
   /// Unlike `decode` this function works on a mutable `BytesMut` buffer in order to parse frames without copying the inner buffer contents
   /// and will automatically split off the consumed bytes before returning. If an error or `None` is returned the buffer will not be modified.
+  ///
+  /// Implement a [codec](https://docs.rs/tokio-util/0.6.6/tokio_util/codec/index.html) that supports decoding streams...
+  ///
+  /// ```edition2018 no_run
+  /// use redis_protocol::resp3::types::*;
+  /// use redis_protocol::types::{RedisProtocolError, RedisProtocolErrorKind};
+  /// use redis_protocol::resp3::decode::streaming::decode_mut;
+  /// use redis_protocol::resp3::encode::complete::encode_bytes;
+  /// use bytes::BytesMut;
+  /// use tokio_util::codec::{Decoder, Encoder};
+  ///
+  /// pub struct RedisCodec {
+  ///   decoder_stream: Option<StreamedFrame>
+  /// }
+  ///
+  /// impl Encoder<Frame> for RedisCodec {
+  ///   type Error = RedisProtocolError;
+  ///
+  ///   fn encode(&mut self, item: Frame, dst: &mut BytesMut) -> Result<(), Self::Error> {
+  ///     // in this example we only show support for encoding complete frames. see the resp3 encoder
+  ///     // documentation for examples showing how encode streaming frames
+  ///     let _ = encode_bytes(dst, &item)?;
+  ///     Ok(())
+  ///   }
+  /// }
+  ///
+  /// impl Decoder for RedisCodec {
+  ///   type Item = Frame;
+  ///   type Error = RedisProtocolError;
+  ///
+  ///   // Buffer the results of streamed frame before returning the complete frame to the caller.
+  ///   // Callers that want to surface streaming frame chunks up the stack would simply return after calling `decode` here.
+  ///   fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+  ///     if src.is_empty() {
+  ///       return Ok(None);
+  ///     }
+  ///
+  ///     if let Some((frame, amt, _)) = decode_mut(src)? {
+  ///       if self.decoder_stream.is_some() && frame.is_streaming() {
+  ///         // it doesn't make sense to start a stream while inside another stream
+  ///         return Err(RedisProtocolError::new(
+  ///           RedisProtocolErrorKind::DecodeError,
+  ///           "Cannot start a stream while already inside a stream."
+  ///         ));
+  ///       }
+  ///
+  ///       let result = if let Some(ref mut streamed_frame) = self.decoder_stream {
+  ///         // we started receiving streamed data earlier
+  ///
+  ///         // we already checked for streams within streams above
+  ///         let frame = frame.into_complete_frame()?;
+  ///         streamed_frame.add_frame(frame);
+  ///
+  ///         if streamed_frame.is_finished() {
+  ///            // convert the inner stream buffer into the final output frame
+  ///            Some(streamed_frame.into_frame()?)
+  ///         }else{
+  ///           // buffer the stream in memory until it completes
+  ///           None
+  ///         }
+  ///       }else{
+  ///         // we're processing a complete frame or starting a new streamed frame
+  ///         if frame.is_streaming() {
+  ///           // start a new stream, saving the internal buffer to the codec state
+  ///           self.decoder_stream = Some(frame.into_streaming_frame()?);
+  ///           // don't return anything to the caller until the stream finishes (shown above)
+  ///           None
+  ///         }else{
+  ///           // we're not in the middle of a stream and we found a complete frame
+  ///           Some(frame.into_complete_frame()?)
+  ///         }
+  ///       };
+  ///
+  ///       if result.is_some() {
+  ///         // we're either done with the stream or we found a complete frame. either way clear the buffer.
+  ///         let _ = self.decoder_stream.take();
+  ///       }
+  ///
+  ///       Ok(result)
+  ///     }else{
+  ///       Ok(None)
+  ///     }
+  ///   }
+  /// }
+  /// ```
+  #[cfg_attr(docsrs, doc(cfg(feature = "decode-mut")))]
   pub fn decode_mut(buf: &mut BytesMut) -> Result<Option<(DecodedFrame, usize, Bytes)>, RedisProtocolError> {
     let (offset, len) = (0, buf.len());
 
