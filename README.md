@@ -25,13 +25,13 @@ cargo add redis-protocol
 * Implements cluster key hashing.
 * Utility functions for converting from RESP2 to RESP3.
 
-This library relies heavily on the `BytesMut` interface to implement parsing logic such that buffer contents never need to move or be copied. 
+This library relies heavily on the `Bytes` interface to implement parsing logic such that buffer contents never need to move or be copied. 
 
 ## Examples
 
 ```rust
 use redis_protocol::resp2::prelude::*;
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 
 fn main() {
   let frame = Frame::BulkString("foobar".into());
@@ -43,7 +43,7 @@ fn main() {
   };
   println!("Encoded {} bytes into buffer with contents {:?}", len, buf);
   
-  let buf: BytesMut = "*3\r\n$3\r\nFoo\r\n$-1\r\n$3\r\nBar\r\n".into();
+  let buf: Bytes = "*3\r\n$3\r\nFoo\r\n$-1\r\n$3\r\nBar\r\n".into();
   let (frame, consumed) = match decode(&buf) {
     Ok(Some((f, c))) => (f, c),
     Ok(None) => panic!("Incomplete frame."),
@@ -59,6 +59,12 @@ fn main() {
 ## Decode Logs
 
 Use the `decode-logs` feature to enable special TRACE logs during the Frame decoding process.
+
+## Decoding `BytesMut`
+
+Using the default decoder interface with `BytesMut` can be challenging if the goal is to avoid copying or moving the buffer contents. 
+
+To better support this use case (such as the [codec](https://docs.rs/tokio-util/0.6.6/tokio_util/codec/index.html) interface) this library supports a `decode-mut` feature flag that can parse `BytesMut` without copying or moving the buffer contents.
 
 ## IndexMap
 
