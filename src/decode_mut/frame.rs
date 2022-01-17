@@ -1,12 +1,14 @@
 use crate::decode_mut::utils::hash_tuple;
 use crate::resp3::types::{Auth, FrameKind, RespVersion, VerbatimStringFormat, NULL};
-use crate::types::{RedisProtocolError, RedisProtocolErrorKind};
+use crate::types::{RedisParseError, RedisProtocolError, RedisProtocolErrorKind};
 use bytes::Bytes;
+use nom::IResult;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 
 pub type IndexFrameMap = HashMap<Resp3IndexFrame, Resp3IndexFrame>;
 pub type IndexAttributes = Option<IndexFrameMap>;
+pub type DResult<'a, T> = IResult<(&'a [u8], usize), T, RedisParseError<&'a [u8]>>;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Resp2IndexFrame {
@@ -306,6 +308,44 @@ impl Hash for Resp3IndexFrame {
 }
 
 impl Resp3IndexFrame {
+  pub fn new_end_stream() -> Self {
+    Resp3IndexFrame::ChunkedString((0, 0))
+  }
+
+  pub fn add_attributes(&mut self, attributes: IndexFrameMap) -> Result<(), RedisProtocolError> {
+    use self::Resp3IndexFrame::*;
+
+    let _attributes = match *self {
+      Array { ref mut attributes, .. } => attributes,
+      BlobString { ref mut attributes, .. } => attributes,
+      SimpleString { ref mut attributes, .. } => attributes,
+      SimpleError { ref mut attributes, .. } => attributes,
+      Number { ref mut attributes, .. } => attributes,
+      Double { ref mut attributes, .. } => attributes,
+      BlobError { ref mut attributes, .. } => attributes,
+      VerbatimString { ref mut attributes, .. } => attributes,
+      Boolean { ref mut attributes, .. } => attributes,
+      Map { ref mut attributes, .. } => attributes,
+      Set { ref mut attributes, .. } => attributes,
+      Push { ref mut attributes, .. } => attributes,
+      BigNumber { ref mut attributes, .. } => attributes,
+      _ => {
+        return Err(RedisProtocolError::new(
+          RedisProtocolErrorKind::DecodeError,
+          format!("{:?} cannot have attributes.", self.kind()),
+        ))
+      }
+    };
+
+    if let Some(_attributes) = _attributes.as_mut() {
+      _attributes.extend(attributes.into_iter());
+    } else {
+      *_attributes = Some(attributes);
+    }
+
+    Ok(())
+  }
+
   /// Read the associated `FrameKind`.
   pub fn kind(&self) -> FrameKind {
     use self::Resp3IndexFrame::*;
@@ -337,11 +377,19 @@ impl Resp3IndexFrame {
   }
 }
 
+#[derive(Debug)]
 pub struct StreamedIndexFrame {
   pub kind: FrameKind,
   pub attributes: IndexAttributes,
 }
 
+impl StreamedIndexFrame {
+  pub fn new(kind: FrameKind) -> Self {
+    StreamedIndexFrame { kind, attributes: None }
+  }
+}
+
+#[derive(Debug)]
 pub enum DecodedIndexFrame {
   Complete(Resp3IndexFrame),
   Streaming(StreamedIndexFrame),

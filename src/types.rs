@@ -268,6 +268,12 @@ impl<I, E> FromExternalError<I, E> for RedisParseError<I> {
   }
 }
 
+impl<I, O, E> FromExternalError<(I, O), E> for RedisParseError<I> {
+  fn from_external_error(input: (I, O), kind: ErrorKind, _e: E) -> Self {
+    RedisParseError::Nom(input.0, kind)
+  }
+}
+
 impl<I> From<nom::Err<RedisParseError<I>>> for RedisParseError<I> {
   fn from(e: NomError<RedisParseError<I>>) -> Self {
     match e {

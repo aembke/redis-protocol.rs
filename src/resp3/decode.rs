@@ -2,7 +2,6 @@
 //!
 //! <https://github.com/antirez/RESP3/blob/master/spec.md>
 
-use crate::decode_mut::frame::{IndexAttributes, IndexFrameMap, Resp3IndexFrame};
 use crate::nom_bytes::NomBytes;
 use crate::resp3::types::*;
 use crate::resp3::utils as resp3_utils;
@@ -20,11 +19,11 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::str;
 
-pub(crate) fn map_complete_frame(frame: Frame) -> DecodedFrame {
+fn map_complete_frame(frame: Frame) -> DecodedFrame {
   DecodedFrame::Complete(frame)
 }
 
-pub(crate) fn unwrap_complete_frame<T>(frame: DecodedFrame) -> Result<Frame, RedisParseError<T>> {
+pub(crate) fn unwrap_complete_frame(frame: DecodedFrame) -> Result<Frame, RedisParseError<NomBytes>> {
   frame
     .into_complete_frame()
     .map_err(|e| RedisParseError::new_custom("unwrap_complete_frame", format!("{:?}", e)))
@@ -39,7 +38,7 @@ pub(crate) fn to_usize<T>(s: &[u8]) -> Result<usize, RedisParseError<T>> {
 pub(crate) fn to_isize<T>(s: &[u8]) -> Result<isize, RedisParseError<T>> {
   let s = str::from_utf8(s)?;
 
-  if *s == "?" {
+  if s == "?" {
     Ok(-1)
   } else {
     s.parse::<isize>()
@@ -107,12 +106,12 @@ pub(crate) fn to_hello<T>(version: u8, auth: Option<(Str, Str)>) -> Result<Frame
   Ok(Frame::Hello { version, auth })
 }
 
-fn to_map<'a>(mut data: Vec<Resp3IndexFrame>) -> Result<IndexFrameMap, RedisParseError<&'a [u8]>> {
+fn to_map(mut data: Vec<Frame>) -> Result<FrameMap, RedisParseError<NomBytes>> {
   if data.len() % 2 != 0 {
     return Err(RedisParseError::new_custom("to_map", "Invalid hashmap frame length."));
   }
 
-  let mut out = HashMap::with_capacity(data.len() / 2);
+  let mut out = resp3_utils::new_map(Some(data.len() / 2));
   while data.len() >= 2 {
     let value = data.pop().unwrap();
     let key = data.pop().unwrap();
@@ -123,7 +122,7 @@ fn to_map<'a>(mut data: Vec<Resp3IndexFrame>) -> Result<IndexFrameMap, RedisPars
   Ok(out)
 }
 
-fn to_set<'a>(data: Vec<Frame>) -> Result<FrameSet, RedisParseError<&'a [u8]>> {
+fn to_set(data: Vec<Frame>) -> Result<FrameSet, RedisParseError<NomBytes>> {
   let mut out = resp3_utils::new_set(Some(data.len()));
 
   for frame in data.into_iter() {
@@ -133,10 +132,10 @@ fn to_set<'a>(data: Vec<Frame>) -> Result<FrameSet, RedisParseError<&'a [u8]>> {
   Ok(out)
 }
 
-fn attach_attributes<'a>(
-  attributes: IndexAttributes,
+fn attach_attributes(
+  attributes: Attributes,
   mut frame: DecodedFrame,
-) -> Result<DecodedFrame, RedisParseError<&'a [u8]>> {
+) -> Result<DecodedFrame, RedisParseError<NomBytes>> {
   if let Err(e) = frame.add_attributes(attributes) {
     Err(RedisParseError::new_custom("attach_attributes", format!("{:?}", e)))
   } else {
@@ -168,8 +167,7 @@ where
   T: AsRef<NomBytes> + Debug,
 {
   let (input, data) = d_read_to_crlf_s(input)?;
-  let data = etry!(Str::from_inner(data.into_bytes()));
-  decode_log!("Reading prefix len. Data: {:?}", data.to_string());
+  decode_log!("Reading prefix len. Data: {:?}", str::from_utf8(data));
   Ok((input, etry!(to_usize(&data))))
 }
 
@@ -178,8 +176,7 @@ where
   T: AsRef<NomBytes> + Debug,
 {
   let (input, data) = d_read_to_crlf_s(input)?;
-  let data = etry!(Str::from_inner(data.into_bytes()));
-  decode_log!("Reading prefix len. Data: {:?}", data.to_string());
+  decode_log!("Reading prefix len. Data: {:?}", str::from_utf8(data));
   Ok((input, etry!(to_isize(&data))))
 }
 
@@ -755,7 +752,7 @@ pub mod streaming {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
   use super::*;
   use crate::resp3::decode::complete::decode;
   use crate::resp3::decode::streaming::decode as stream_decode;
@@ -763,13 +760,13 @@ mod tests {
   use nom::AsBytes;
   use std::str;
 
-  const PADDING: &'static str = "FOOBARBAZ";
+  pub const PADDING: &'static str = "FOOBARBAZ";
 
-  fn pretty_print_panic(e: RedisProtocolError) {
+  pub fn pretty_print_panic(e: RedisProtocolError) {
     panic!("{:?}", e);
   }
 
-  fn panic_no_decode() {
+  pub fn panic_no_decode() {
     panic!("Failed to decode bytes. None returned.")
   }
 
