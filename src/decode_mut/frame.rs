@@ -1,7 +1,6 @@
 use crate::decode_mut::utils::hash_tuple;
 use crate::resp3::types::{Auth, FrameKind, RespVersion, VerbatimStringFormat, NULL};
 use crate::types::{RedisParseError, RedisProtocolError, RedisProtocolErrorKind};
-use bytes::Bytes;
 use nom::IResult;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
@@ -415,29 +414,5 @@ impl DecodedIndexFrame {
         "Expected complete frame.",
       )),
     }
-  }
-
-  /// Convert the decoded frame into a streaming frame, returning an error if a complete variant is found.
-  pub fn into_streaming_frame(self) -> Result<StreamedIndexFrame, RedisProtocolError> {
-    match self {
-      DecodedIndexFrame::Streaming(frame) => Ok(frame),
-      DecodedIndexFrame::Complete(_) => Err(RedisProtocolError::new(
-        RedisProtocolErrorKind::DecodeError,
-        "Expected streamed frame.",
-      )),
-    }
-  }
-
-  /// Whether or not the decoded frame starts a stream.
-  pub fn is_streaming(&self) -> bool {
-    match *self {
-      DecodedIndexFrame::Streaming(_) => true,
-      _ => false,
-    }
-  }
-
-  /// Whether or not the decoded frame is a complete frame.
-  pub fn is_complete(&self) -> bool {
-    !self.is_streaming()
   }
 }

@@ -14,8 +14,6 @@ use nom::multi::count as nom_count;
 use nom::number::streaming::be_u8;
 use nom::sequence::terminated as nom_terminated;
 use nom::{Err as NomErr, IResult};
-use std::borrow::Cow;
-use std::collections::HashMap;
 use std::fmt::Debug;
 use std::str;
 
@@ -85,7 +83,6 @@ pub(crate) fn to_verbatimstring_format<T>(s: &[u8]) -> Result<VerbatimStringForm
   }
 }
 
-// TODO change auth fields to Str
 pub(crate) fn to_hello<T>(version: u8, auth: Option<(Str, Str)>) -> Result<Frame, RedisParseError<T>> {
   let version = match version {
     2 => RespVersion::RESP2,
@@ -95,10 +92,7 @@ pub(crate) fn to_hello<T>(version: u8, auth: Option<(Str, Str)>) -> Result<Frame
     }
   };
   let auth = if let Some((username, password)) = auth {
-    Some(Auth {
-      username: Cow::Owned(username.to_string()),
-      password: Cow::Owned(password.to_string()),
-    })
+    Some(Auth { username, password })
   } else {
     None
   };

@@ -3,7 +3,6 @@ use crate::types::{Redirection, RedisProtocolError, RedisProtocolErrorKind};
 use crate::utils;
 use bytes::Bytes;
 use bytes_utils::Str;
-use std::borrow::Cow;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::convert::TryFrom;
 use std::hash::{Hash, Hasher};
@@ -116,16 +115,16 @@ impl RespVersion {
 /// Authentication information used in the `HELLO` request.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Auth {
-  pub username: Cow<'static, str>,
-  pub password: Cow<'static, str>,
+  pub username: Str,
+  pub password: Str,
 }
 
 impl Auth {
   /// Create an [Auth] struct using the "default" user with the provided password.
-  pub fn from_password<S: Into<String>>(password: S) -> Auth {
+  pub fn from_password<S: Into<Str>>(password: S) -> Auth {
     Auth {
-      username: Cow::Borrowed("default"),
-      password: Cow::Owned(password.into()),
+      username: Str::from("default"),
+      password: password.into(),
     }
   }
 }
@@ -147,7 +146,7 @@ impl VerbatimStringFormat {
 
   pub(crate) fn encode_len(&self) -> usize {
     match *self {
-      // the colon suffix is included here
+      // the trailing colon is included here
       VerbatimStringFormat::Text => 4,
       VerbatimStringFormat::Markdown => 4,
     }

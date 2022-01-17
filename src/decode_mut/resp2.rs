@@ -1,6 +1,5 @@
 use crate::decode_mut::frame::{DResult, Resp2IndexFrame};
 use crate::decode_mut::utils::range_to_bytes;
-use crate::nom_bytes::NomBytes;
 use crate::resp2::decode::{isize_to_usize, NULL_LEN};
 use crate::resp2::types::{
   Frame as Resp2Frame, FrameKind, ARRAY_BYTE, BULKSTRING_BYTE, ERROR_BYTE, INTEGER_BYTE, SIMPLESTRING_BYTE,
@@ -9,10 +8,10 @@ use crate::types::{RedisParseError, RedisProtocolError, RedisProtocolErrorKind, 
 use bytes::{Bytes, BytesMut};
 use bytes_utils::Str;
 use nom::bytes::streaming::{take as nom_take, take_until as nom_take_until};
-use nom::multi::{count as nom_count, many0_count as nom_many0_count};
+use nom::multi::count as nom_count;
 use nom::number::streaming::be_u8;
 use nom::sequence::terminated as nom_terminated;
-use nom::{AsBytes, Err as NomErr, IResult};
+use nom::{AsBytes, Err as NomErr};
 use std::str;
 
 pub fn to_isize(s: &[u8]) -> Result<isize, RedisParseError<&[u8]>> {
@@ -240,40 +239,48 @@ mod tests {
 
   fn decode_and_verify_some(bytes: &Bytes, expected: &(Option<Frame>, usize)) {
     let mut bytes = BytesMut::from(bytes.as_bytes());
-    let (frame, len) = match decode_mut(&mut bytes) {
-      Ok(Some((f, l, _))) => (Some(f), l),
+    let total_len = bytes.len();
+
+    let (frame, len, buf) = match decode_mut(&mut bytes) {
+      Ok(Some((f, l, b))) => (Some(f), l, b),
       Ok(None) => return panic_no_decode(),
       Err(e) => return pretty_print_panic(e),
     };
 
     assert_eq!(frame, expected.0, "decoded frame matched");
     assert_eq!(len, expected.1, "decoded frame len matched");
+    assert_eq!(buf.len(), expected.1, "output buffer len matched");
+    assert_eq!(buf.len() + bytes.len(), total_len, "total len matched");
   }
 
   fn decode_and_verify_padded_some(bytes: &Bytes, expected: &(Option<Frame>, usize)) {
-    let mut buf = BytesMut::from(bytes.as_bytes());
-    buf.extend_from_slice(PADDING.as_bytes());
+    let mut bytes = BytesMut::from(bytes.as_bytes());
+    bytes.extend_from_slice(PADDING.as_bytes());
+    let total_len = bytes.len();
 
-    let (frame, len) = match decode_mut(&mut buf) {
-      Ok(Some((f, l, _))) => (Some(f), l),
+    let (frame, len, buf) = match decode_mut(&mut bytes) {
+      Ok(Some((f, l, b))) => (Some(f), l, b),
       Ok(None) => return panic_no_decode(),
       Err(e) => return pretty_print_panic(e),
     };
 
     assert_eq!(frame, expected.0, "decoded frame matched");
     assert_eq!(len, expected.1, "decoded frame len matched");
+    assert_eq!(buf.len(), expected.1, "output buffer len matched");
+    assert_eq!(buf.len() + bytes.len(), total_len, "total len matched");
   }
 
   fn decode_and_verify_none(bytes: &Bytes) {
     let mut bytes = BytesMut::from(bytes.as_bytes());
-    let (frame, len) = match decode_mut(&mut bytes) {
-      Ok(Some((f, l, _))) => (Some(f), l),
-      Ok(None) => (None, 0),
+    let (frame, len, buf) = match decode_mut(&mut bytes) {
+      Ok(Some((f, l, b))) => (Some(f), l, b),
+      Ok(None) => (None, 0, Bytes::new()),
       Err(e) => return pretty_print_panic(e),
     };
 
     assert!(frame.is_none());
     assert_eq!(len, 0);
+    assert!(buf.is_empty());
   }
 
   #[test]

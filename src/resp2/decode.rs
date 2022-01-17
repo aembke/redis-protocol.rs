@@ -185,11 +185,6 @@ pub mod tests {
   use nom::AsBytes;
   use std::str;
 
-  #[test]
-  fn enable_logs() {
-    pretty_env_logger::try_init();
-  }
-
   pub const PADDING: &'static str = "FOOBARBAZ";
 
   pub fn pretty_print_panic(e: RedisProtocolError) {
