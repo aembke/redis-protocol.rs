@@ -94,8 +94,8 @@ pub fn bignumber_encode_len(b: &[u8]) -> usize {
   1 + b.len() + 2
 }
 
-pub fn simplestring_encode_len(s: &str) -> usize {
-  1 + s.as_bytes().len() + 2
+pub fn simplestring_encode_len(s: &[u8]) -> usize {
+  1 + s.len() + 2
 }
 
 pub fn verbatimstring_encode_len(format: &VerbatimStringFormat, data: &[u8]) -> usize {
@@ -204,7 +204,7 @@ pub fn encode_len(data: &Frame) -> Result<usize, GenError> {
     SimpleError {
       ref data,
       ref attributes,
-    } => simplestring_encode_len(data) + attribute_encode_len(attributes)?,
+    } => simplestring_encode_len(data.as_bytes()) + attribute_encode_len(attributes)?,
     Number {
       ref data,
       ref attributes,
@@ -284,7 +284,10 @@ pub fn reconstruct_blobstring(
     });
   }
 
-  Ok(Frame::BlobString { data, attributes })
+  Ok(Frame::BlobString {
+    data: data.freeze(),
+    attributes,
+  })
 }
 
 pub fn reconstruct_array(frames: VecDeque<Frame>, attributes: Option<Attributes>) -> Result<Frame, RedisProtocolError> {

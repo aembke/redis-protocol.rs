@@ -1,9 +1,8 @@
 use crate::resp3::utils as resp3_utils;
 use crate::types::{Redirection, RedisProtocolError, RedisProtocolErrorKind};
 use crate::utils;
-use bytes::BytesMut;
-use bytes_utils::StrMut;
-use std::borrow::Cow;
+use bytes::Bytes;
+use bytes_utils::Str;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::convert::TryFrom;
 use std::hash::{Hash, Hasher};
@@ -13,8 +12,6 @@ use std::str;
 #[cfg(feature = "index-map")]
 use indexmap::{IndexMap, IndexSet};
 
-#[cfg(test)]
-use nom::AsBytes;
 #[cfg(test)]
 use std::convert::TryInto;
 
@@ -118,16 +115,16 @@ impl RespVersion {
 /// Authentication information used in the `HELLO` request.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Auth {
-  pub username: Cow<'static, str>,
-  pub password: Cow<'static, str>,
+  pub username: Str,
+  pub password: Str,
 }
 
 impl Auth {
   /// Create an [Auth] struct using the "default" user with the provided password.
-  pub fn from_password<S: Into<String>>(password: S) -> Auth {
+  pub fn from_password<S: Into<Str>>(password: S) -> Auth {
     Auth {
-      username: Cow::Borrowed("default"),
-      password: Cow::Owned(password.into()),
+      username: Str::from("default"),
+      password: password.into(),
     }
   }
 }
@@ -149,7 +146,7 @@ impl VerbatimStringFormat {
 
   pub(crate) fn encode_len(&self) -> usize {
     match *self {
-      // the colon suffix is included here
+      // the trailing colon is included here
       VerbatimStringFormat::Text => 4,
       VerbatimStringFormat::Markdown => 4,
     }
@@ -292,24 +289,23 @@ impl FrameKind {
 pub enum Frame {
   /// A binary-safe blob.
   BlobString {
-    data: BytesMut,
+    data: Bytes,
     attributes: Option<Attributes>,
   },
   /// A binary-safe blob representing an error.
   BlobError {
-    data: BytesMut,
+    data: Bytes,
     attributes: Option<Attributes>,
   },
   /// A small non binary-safe string.
+  ///
+  /// The internal data type is `Bytes` in order to support callers that use this interface to parse a `MONITOR` stream.
   SimpleString {
-    data: StrMut,
+    data: Bytes,
     attributes: Option<Attributes>,
   },
   /// A small non binary-safe string representing an error.
-  SimpleError {
-    data: StrMut,
-    attributes: Option<Attributes>,
-  },
+  SimpleError { data: Str, attributes: Option<Attributes> },
   /// A boolean type.
   Boolean { data: bool, attributes: Option<Attributes> },
   /// A null type.
@@ -322,12 +318,12 @@ pub enum Frame {
   ///
   /// This library does not attempt to parse this, nor does it offer any utilities to do so.
   BigNumber {
-    data: BytesMut,
+    data: Bytes,
     attributes: Option<Attributes>,
   },
   /// A binary-safe string to be displayed without any escaping or filtering.
   VerbatimString {
-    data: BytesMut,
+    data: Bytes,
     format: VerbatimStringFormat,
     attributes: Option<Attributes>,
   },
@@ -359,7 +355,7 @@ pub enum Frame {
   /// A special frame type used when first connecting to the server to describe the protocol version and optional credentials.
   Hello { version: RespVersion, auth: Option<Auth> },
   /// One chunk of a streaming string.
-  ChunkedString(BytesMut),
+  ChunkedString(Bytes),
 }
 
 impl Hash for Frame {
@@ -406,8 +402,8 @@ impl PartialEq for Frame {
         match *other {
           Array {
             ref data,
-            attributes: _,
-          } => data == _data && _attributes == _attributes,
+            ref attributes,
+          } => data == _data && attributes == _attributes,
           _ => false,
         }
       }
@@ -419,8 +415,8 @@ impl PartialEq for Frame {
         match *other {
           BlobString {
             ref data,
-            attributes: _,
-          } => data == _data && _attributes == _attributes,
+            ref attributes,
+          } => data == _data && attributes == _attributes,
           _ => false,
         }
       }
@@ -432,8 +428,8 @@ impl PartialEq for Frame {
         match *other {
           SimpleString {
             ref data,
-            attributes: _,
-          } => data == _data && _attributes == _attributes,
+            ref attributes,
+          } => data == _data && attributes == _attributes,
           _ => false,
         }
       }
@@ -445,8 +441,8 @@ impl PartialEq for Frame {
         match *other {
           SimpleError {
             ref data,
-            attributes: _,
-          } => data == _data && _attributes == _attributes,
+            ref attributes,
+          } => data == _data && attributes == _attributes,
           _ => false,
         }
       }
@@ -458,8 +454,8 @@ impl PartialEq for Frame {
         match *other {
           Number {
             ref data,
-            attributes: _,
-          } => data == _data && _attributes == _attributes,
+            ref attributes,
+          } => data == _data && attributes == _attributes,
           _ => false,
         }
       }
@@ -475,8 +471,8 @@ impl PartialEq for Frame {
         match *other {
           Boolean {
             ref data,
-            attributes: _,
-          } => data == _data && _attributes == _attributes,
+            ref attributes,
+          } => data == _data && attributes == _attributes,
           _ => false,
         }
       }
@@ -488,8 +484,8 @@ impl PartialEq for Frame {
         match *other {
           Double {
             ref data,
-            attributes: _,
-          } => data == _data && _attributes == _attributes,
+            ref attributes,
+          } => data == _data && attributes == _attributes,
           _ => false,
         }
       }
@@ -501,8 +497,8 @@ impl PartialEq for Frame {
         match *other {
           BlobError {
             ref data,
-            attributes: _,
-          } => data == _data && _attributes == _attributes,
+            ref attributes,
+          } => data == _data && attributes == _attributes,
           _ => false,
         }
       }
@@ -529,8 +525,8 @@ impl PartialEq for Frame {
         match *other {
           Map {
             ref data,
-            attributes: _,
-          } => data == _data && _attributes == _attributes,
+            ref attributes,
+          } => data == _data && attributes == _attributes,
           _ => false,
         }
       }
@@ -542,8 +538,8 @@ impl PartialEq for Frame {
         match *other {
           Set {
             ref data,
-            attributes: _,
-          } => data == _data && _attributes == _attributes,
+            ref attributes,
+          } => data == _data && attributes == _attributes,
           _ => false,
         }
       }
@@ -555,8 +551,8 @@ impl PartialEq for Frame {
         match *other {
           Push {
             ref data,
-            attributes: _,
-          } => data == _data && _attributes == _attributes,
+            ref attributes,
+          } => data == _data && attributes == _attributes,
           _ => false,
         }
       }
@@ -575,8 +571,8 @@ impl PartialEq for Frame {
         match *other {
           BigNumber {
             ref data,
-            attributes: _,
-          } => data == _data && _attributes == _attributes,
+            ref attributes,
+          } => data == _data && attributes == _attributes,
           _ => false,
         }
       }
@@ -593,18 +589,18 @@ impl TryFrom<(FrameKind, Vec<u8>)> for Frame {
   fn try_from((kind, value): (FrameKind, Vec<u8>)) -> Result<Self, Self::Error> {
     let frame = match kind {
       FrameKind::BlobString => Frame::BlobString {
-        data: value.as_bytes().into(),
+        data: value.into(),
         attributes: None,
       },
       FrameKind::BlobError => Frame::BlobError {
-        data: value.as_bytes().into(),
+        data: value.into(),
         attributes: None,
       },
       FrameKind::BigNumber => Frame::BigNumber {
-        data: value.as_bytes().into(),
+        data: value.into(),
         attributes: None,
       },
-      FrameKind::ChunkedString => Frame::ChunkedString(value.as_bytes().into()),
+      FrameKind::ChunkedString => Frame::ChunkedString(value.into()),
       _ => {
         return Err(RedisProtocolError::new(
           RedisProtocolErrorKind::Unknown,
@@ -756,18 +752,18 @@ impl TryFrom<(FrameKind, String)> for Frame {
         attributes: None,
       },
       FrameKind::BlobError => Frame::BlobError {
-        data: value.as_bytes().into(),
+        data: value.into(),
         attributes: None,
       },
       FrameKind::BlobString => Frame::BlobString {
-        data: value.as_bytes().into(),
+        data: value.into(),
         attributes: None,
       },
       FrameKind::BigNumber => Frame::BigNumber {
-        data: value.as_bytes().into(),
+        data: value.into(),
         attributes: None,
       },
-      FrameKind::ChunkedString => Frame::ChunkedString(value.as_bytes().into()),
+      FrameKind::ChunkedString => Frame::ChunkedString(value.into()),
       _ => {
         return Err(RedisProtocolError::new(
           RedisProtocolErrorKind::Unknown,
@@ -912,7 +908,7 @@ impl Frame {
 
   /// Create a new `Frame` that terminates a stream.
   pub fn new_end_stream() -> Self {
-    Frame::ChunkedString(BytesMut::new())
+    Frame::ChunkedString(Bytes::new())
   }
 
   /// A context-aware length function that returns the length of the inner frame contents.
@@ -931,7 +927,8 @@ impl Frame {
       | BlobError { ref data, .. }
       | BigNumber { ref data, .. }
       | ChunkedString(ref data) => data.len(),
-      SimpleString { ref data, .. } | SimpleError { ref data, .. } => data.len(),
+      SimpleString { ref data, .. } => data.len(),
+      SimpleError { ref data, .. } => data.len(),
       Number { .. } | Double { .. } | Boolean { .. } => 1,
       Null => 0,
       VerbatimString { ref data, .. } => data.len(),
@@ -1069,7 +1066,8 @@ impl Frame {
   /// Numbers and Doubles will not be cast to a string since that would require allocating.
   pub fn as_str(&self) -> Option<&str> {
     match *self {
-      Frame::SimpleError { ref data, .. } | Frame::SimpleString { ref data, .. } => Some(data),
+      Frame::SimpleError { ref data, .. } => Some(data),
+      Frame::SimpleString { ref data, .. } => str::from_utf8(data).ok(),
       Frame::BlobError { ref data, .. } | Frame::BlobString { ref data, .. } | Frame::BigNumber { ref data, .. } => {
         str::from_utf8(data).ok()
       }
@@ -1082,7 +1080,8 @@ impl Frame {
   /// Read the frame as a `String` if it can be parsed as a UTF-8 string.
   pub fn to_string(&self) -> Option<String> {
     match *self {
-      Frame::SimpleError { ref data, .. } | Frame::SimpleString { ref data, .. } => Some(data.to_string()),
+      Frame::SimpleError { ref data, .. } => Some(data.to_string()),
+      Frame::SimpleString { ref data, .. } => String::from_utf8(data.to_vec()).ok(),
       Frame::BlobError { ref data, .. } | Frame::BlobString { ref data, .. } | Frame::BigNumber { ref data, .. } => {
         String::from_utf8(data.to_vec()).ok()
       }
@@ -1095,11 +1094,10 @@ impl Frame {
   }
 
   /// Attempt to read the frame as a byte slice.
-  ///
-  /// Number and Double will not be returned as a byte slice. Use [number_or_double_as_bytes](Self::number_or_double_as_bytes) instead.
   pub fn as_bytes(&self) -> Option<&[u8]> {
     match *self {
-      Frame::SimpleError { ref data, .. } | Frame::SimpleString { ref data, .. } => Some(data.as_bytes()),
+      Frame::SimpleError { ref data, .. } => Some(data.as_bytes()),
+      Frame::SimpleString { ref data, .. } => Some(&data),
       Frame::BlobError { ref data, .. } | Frame::BlobString { ref data, .. } | Frame::BigNumber { ref data, .. } => {
         Some(data)
       }
@@ -1115,7 +1113,7 @@ impl Frame {
       Frame::Number { ref data, .. } => Some(*data),
       Frame::Double { ref data, .. } => Some(*data as i64),
       Frame::BlobString { ref data, .. } => str::from_utf8(data).ok().and_then(|s| s.parse::<i64>().ok()),
-      Frame::SimpleString { ref data, .. } => data.parse::<i64>().ok(),
+      Frame::SimpleString { ref data, .. } => str::from_utf8(data).ok().and_then(|s| s.parse::<i64>().ok()),
       _ => None,
     }
   }
@@ -1126,7 +1124,7 @@ impl Frame {
       Frame::Double { ref data, .. } => Some(*data),
       Frame::Number { ref data, .. } => Some(*data as f64),
       Frame::BlobString { ref data, .. } => str::from_utf8(data).ok().and_then(|s| s.parse::<f64>().ok()),
-      Frame::SimpleString { ref data, .. } => data.parse::<f64>().ok(),
+      Frame::SimpleString { ref data, .. } => str::from_utf8(data).ok().and_then(|s| s.parse::<f64>().ok()),
       _ => None,
     }
   }
@@ -1202,11 +1200,11 @@ impl Frame {
 /// A helper struct for reading and managing streaming data types.
 ///
 /// ```rust edition2018
-/// # use bytes::BytesMut;
+/// # use bytes::Bytes;
 /// use redis_protocol::resp3::decode::streaming::decode;
 ///
 /// fn main() {
-///   let parts: Vec<BytesMut> = vec!["*?\r\n".into(), ":1\r\n".into(), ":2\r\n".into(), ".\r\n".into()];
+///   let parts: Vec<Bytes> = vec!["*?\r\n".into(), ":1\r\n".into(), ":2\r\n".into(), ".\r\n".into()];
 ///
 ///   let (frame, _) = decode(&parts[0]).unwrap().unwrap();
 ///   assert!(frame.is_streaming());

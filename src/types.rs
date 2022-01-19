@@ -1,5 +1,6 @@
 use crate::resp2::types::Frame as Resp2Frame;
 use crate::resp3::types::Frame as Resp3Frame;
+use bytes_utils::string::Utf8Error as BytesUtf8Error;
 use cookie_factory::GenError;
 use nom::error::{ErrorKind, FromExternalError, ParseError};
 use nom::{Err as NomError, Needed};
@@ -8,6 +9,7 @@ use std::borrow::Cow;
 use std::fmt::{self, Debug};
 use std::io::Error as IoError;
 use std::str;
+use std::str::Utf8Error;
 
 /// Terminating bytes between frames.
 pub const CRLF: &'static str = "\r\n";
@@ -186,6 +188,18 @@ where
   }
 }
 
+impl<B> From<BytesUtf8Error<B>> for RedisProtocolError {
+  fn from(e: BytesUtf8Error<B>) -> Self {
+    e.utf8_error().into()
+  }
+}
+
+impl From<Utf8Error> for RedisProtocolError {
+  fn from(e: Utf8Error) -> Self {
+    RedisProtocolError::new(RedisProtocolErrorKind::DecodeError, format!("{}", e))
+  }
+}
+
 /// A struct defining parse errors when decoding frames.
 pub enum RedisParseError<I> {
   Custom {
@@ -238,9 +252,25 @@ impl<I> ParseError<I> for RedisParseError<I> {
   }
 }
 
+impl<I, O> ParseError<(I, O)> for RedisParseError<I> {
+  fn from_error_kind(input: (I, O), kind: ErrorKind) -> Self {
+    RedisParseError::Nom(input.0, kind)
+  }
+
+  fn append(_: (I, O), _: ErrorKind, other: Self) -> Self {
+    other
+  }
+}
+
 impl<I, E> FromExternalError<I, E> for RedisParseError<I> {
   fn from_external_error(input: I, kind: ErrorKind, _e: E) -> Self {
     RedisParseError::Nom(input, kind)
+  }
+}
+
+impl<I, O, E> FromExternalError<(I, O), E> for RedisParseError<I> {
+  fn from_external_error(input: (I, O), kind: ErrorKind, _e: E) -> Self {
+    RedisParseError::Nom(input.0, kind)
   }
 }
 
@@ -250,6 +280,18 @@ impl<I> From<nom::Err<RedisParseError<I>>> for RedisParseError<I> {
       NomError::Incomplete(n) => RedisParseError::Incomplete(n),
       NomError::Failure(e) | NomError::Error(e) => e,
     }
+  }
+}
+
+impl<B, I> From<BytesUtf8Error<B>> for RedisParseError<I> {
+  fn from(e: BytesUtf8Error<B>) -> Self {
+    e.utf8_error().into()
+  }
+}
+
+impl<I> From<Utf8Error> for RedisParseError<I> {
+  fn from(e: Utf8Error) -> Self {
+    RedisParseError::new_custom("parse_utf8", format!("{}", e))
   }
 }
 
