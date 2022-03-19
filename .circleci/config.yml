@@ -33,6 +33,24 @@ jobs:
       - run:
           name: Run tests with indexmap features
           command: cargo clean && eval `ssh-agent` && ssh-add ~/.ssh/id_rsa && cargo test --release --features decode-mut
+  build_no_std:
+    docker:
+      - image: cimg/rust:1.57.0
+    steps:
+      - checkout
+      - run:
+          name: Switch to nightly for using unstable feature avoid-dev-deps
+          command: rustup default nightly
+      - run:
+          name: Clear the cargo git cache
+          command: rm -rf ~/.cargo/git/* && rm -rf ~/.cargo/registry/cache/*
+      - run:
+          name: Add cross compile target
+          command: rustup target add thumbv7m-none-eabi
+      - run:
+          name: Verifies successful build for no_std target
+          command: cargo clean && eval `ssh-agent` && ssh-add ~/.ssh/id_rsa && cargo build -Z avoid-dev-deps --release --no-default-features --features libm,hashbrown,alloc --target=thumbv7m-none-eabi
+
 
 workflows:
   version: 2
@@ -41,3 +59,4 @@ workflows:
       - tests-default
       - tests-indexmap
       - tests-decode-mut
+      - build_no_std
