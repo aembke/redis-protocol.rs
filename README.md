@@ -69,3 +69,11 @@ To better support this use case (such as the [codec](https://docs.rs/tokio-util/
 ## IndexMap
 
 Enable the `index-map` feature to use [IndexMap](https://crates.io/crates/indexmap) instead of `HashMap` and `HashSet`. This is useful for testing and may also be useful to callers.
+
+## no_std
+
+`no_std` builds are supported by disabling the `std` feature. However, a few optional dependencies must be activated as a substitute.
+
+````TOML
+redis-protocol = { version="X.X.X", default-features = false, features = ["libm", "hashbrown", "alloc"] }
+````

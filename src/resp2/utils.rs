@@ -1,5 +1,7 @@
 use crate::resp2::types::{Frame, FrameKind, NULL};
 use crate::utils::{digits_in_number, PATTERN_PUBSUB_PREFIX, PUBSUB_PREFIX};
+use alloc::string::String;
+use alloc::vec::Vec;
 use cookie_factory::GenError;
 
 pub fn bulkstring_encode_len(b: &[u8]) -> usize {

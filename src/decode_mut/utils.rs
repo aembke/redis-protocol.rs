@@ -1,6 +1,6 @@
 use crate::types::{RedisProtocolError, RedisProtocolErrorKind};
 use bytes::Bytes;
-use std::hash::{Hash, Hasher};
+use core::hash::{Hash, Hasher};
 
 pub fn hash_tuple<H: Hasher>(state: &mut H, range: &(usize, usize)) {
   range.0.hash(state);

@@ -1,11 +1,10 @@
 use bytes::buf::IntoIter;
 use bytes::Bytes;
 use nom::{AsBytes, FindSubstring, InputIter, InputLength, InputTake, Needed, Offset, Slice, UnspecializedInput};
-use std::fmt::Debug;
-use std::iter::Enumerate;
-use std::ops::{Deref, DerefMut, Range, RangeFrom, RangeFull, RangeTo};
+use core::iter::Enumerate;
+use core::ops::{Deref, DerefMut, Range, RangeFrom, RangeFull, RangeTo};
 #[cfg(feature = "decode-logs")]
-use std::str;
+use core::str;
 
 /// A wrapper type for `Bytes` that implements the Nom traits necessary to operate on Bytes slices directly with nom functions.
 #[derive(Clone, Debug, Eq, PartialEq)]

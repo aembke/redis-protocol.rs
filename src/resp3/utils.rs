@@ -1,10 +1,19 @@
 use crate::resp3::types::*;
 use crate::types::{RedisProtocolError, RedisProtocolErrorKind};
 use crate::utils::{digits_in_number, PATTERN_PUBSUB_PREFIX, PUBSUB_PREFIX, PUBSUB_PUSH_PREFIX};
+use alloc::borrow::Cow;
+use alloc::collections::VecDeque;
+use alloc::format;
+use alloc::string::ToString;
+use alloc::vec::Vec;
 use bytes::BytesMut;
 use cookie_factory::GenError;
-use std::borrow::Cow;
-use std::collections::{HashMap, HashSet, VecDeque};
+
+#[cfg(feature = "std")]
+use std::collections::{HashMap, HashSet};
+
+#[cfg(feature = "hashbrown")]
+use hashbrown::{HashMap, HashSet};
 
 #[cfg(feature = "index-map")]
 use indexmap::{IndexMap, IndexSet};
@@ -361,6 +370,7 @@ pub fn reconstruct_set(frames: VecDeque<Frame>, attributes: Option<Attributes>) 
 
 #[cfg(test)]
 mod tests {
+  use alloc::vec;
   use crate::resp3::types::*;
   use crate::resp3::utils::{encode_len, new_map, new_set};
 

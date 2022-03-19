@@ -5,6 +5,8 @@ use crate::resp2::types::{
   Frame as Resp2Frame, FrameKind, ARRAY_BYTE, BULKSTRING_BYTE, ERROR_BYTE, INTEGER_BYTE, SIMPLESTRING_BYTE,
 };
 use crate::types::{RedisParseError, RedisProtocolError, RedisProtocolErrorKind, CRLF};
+use crate::alloc::string::ToString;
+use alloc::vec::Vec;
 use bytes::{Bytes, BytesMut};
 use bytes_utils::Str;
 use nom::bytes::streaming::{take as nom_take, take_until as nom_take_until};
@@ -12,7 +14,7 @@ use nom::multi::count as nom_count;
 use nom::number::streaming::be_u8;
 use nom::sequence::terminated as nom_terminated;
 use nom::{AsBytes, Err as NomErr};
-use std::str;
+use core::str;
 
 pub fn to_isize(s: &[u8]) -> Result<isize, RedisParseError<&[u8]>> {
   str::from_utf8(s)?

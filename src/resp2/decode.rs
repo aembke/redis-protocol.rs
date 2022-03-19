@@ -6,13 +6,14 @@ use crate::nom_bytes::NomBytes;
 use crate::resp2::types::*;
 use crate::types::*;
 use crate::utils;
+use alloc::vec::Vec;
 use bytes::Bytes;
 use nom::bytes::streaming::{take as nom_take, take_until as nom_take_until};
 use nom::multi::count as nom_count;
 use nom::number::streaming::be_u8;
 use nom::sequence::terminated as nom_terminated;
 use nom::{Err as NomErr, IResult};
-use std::str;
+use core::str;
 
 pub(crate) const NULL_LEN: isize = -1;
 

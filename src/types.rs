@@ -4,12 +4,16 @@ use bytes_utils::string::Utf8Error as BytesUtf8Error;
 use cookie_factory::GenError;
 use nom::error::{ErrorKind, FromExternalError, ParseError};
 use nom::{Err as NomError, Needed};
-use std::borrow::Borrow;
-use std::borrow::Cow;
-use std::fmt::{self, Debug};
+use alloc::borrow::Cow;
+use alloc::format;
+use alloc::string::String;
+use core::borrow::Borrow;
+use core::fmt;
+use core::fmt::Debug;
+use core::str::Utf8Error;
+
+#[cfg(feature = "std")]
 use std::io::Error as IoError;
-use std::str;
-use std::str::Utf8Error;
 
 /// Terminating bytes between frames.
 pub const CRLF: &'static str = "\r\n";
@@ -23,6 +27,7 @@ pub enum RedisProtocolErrorKind {
   BufferTooSmall(usize),
   /// An error that occurred while decoding data.
   DecodeError,
+  #[cfg(feature = "std")]
   /// An IO error.
   IO(IoError),
   /// An unknown error, or an error that can occur during encoding or decoding.
@@ -46,6 +51,7 @@ impl PartialEq for RedisProtocolErrorKind {
         BufferTooSmall(_amt) => amt == amt,
         _ => false,
       },
+      #[cfg(feature = "std")]
       IO(_) => match *other {
         IO(_) => true,
         _ => false,
@@ -68,6 +74,7 @@ impl RedisProtocolErrorKind {
       EncodeError => "Encode Error",
       DecodeError => "Decode Error",
       Unknown => "Unknown Error",
+      #[cfg(feature = "std")]
       IO(_) => "IO Error",
       BufferTooSmall(_) => "Buffer too small",
     }
@@ -173,6 +180,7 @@ impl From<NomError<&[u8]>> for RedisProtocolError {
   }
 }
 
+#[cfg(feature = "std")]
 impl From<IoError> for RedisProtocolError {
   fn from(e: IoError) -> Self {
     RedisProtocolError::new(RedisProtocolErrorKind::IO(e), "IO Error")

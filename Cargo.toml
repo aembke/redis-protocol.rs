@@ -2,7 +2,7 @@
 authors = ["Alec Embke <aembke@gmail.com>"]
 description = "Structs and functions to implement the Redis protocol."
 homepage = "https://github.com/aembke/redis-protocol.rs"
-keywords = ["redis", "protocol", "nom", "resp"]
+keywords = ["redis", "protocol", "nom", "resp", "no_std"]
 license = "MIT"
 name = "redis-protocol"
 readme = "README.md"
@@ -18,13 +18,16 @@ branch = "main"
 repository = "aembke/redis-protocol.rs"
 
 [dependencies]
-bytes = "1.1"
-bytes-utils = "0.1"
-cookie-factory = "0.3"
+bytes = { version = "1.1", default-features = false }
+# Tmp. needed until PR https://github.com/vorner/bytes-utils/pull/3 is merged
+bytes-utils = { git = "https://github.com/marius-meissner/bytes-utils", default-features = false, branch = "no_std_support" }
+cookie-factory = { version = "0.3", default-features = false }
 crc16 = "0.4"
 indexmap = { version = "1.6", optional = true }
 log = "0.4"
-nom = "7.1"
+nom = { version = "7.1", default-features = false }
+libm = { version = "0.2.2", optional = true }
+hashbrown = { version = "0.13.2", optional = true }
 
 [dev-dependencies]
 rand = "0.5"
@@ -34,10 +37,12 @@ itertools = "0.10"
 pretty_env_logger = "0.4"
 
 [features]
-default = []
+default = ["std"]
 index-map = ["indexmap"]
 decode-logs = []
 decode-mut = []
+alloc = ["nom/alloc"]
+std = ["bytes/default", "bytes-utils/std", "cookie-factory/default", "nom/default"]
 
 [lib]
 doc = true
