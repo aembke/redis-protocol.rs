@@ -19,8 +19,7 @@ repository = "aembke/redis-protocol.rs"
 
 [dependencies]
 bytes = { version = "1.1", default-features = false }
-# Tmp. needed until PR https://github.com/vorner/bytes-utils/pull/3 is merged
-bytes-utils = { git = "https://github.com/marius-meissner/bytes-utils", default-features = false, branch = "no_std_support" }
+bytes-utils = { version = "0.1.2", default-features = false }
 cookie-factory = { version = "0.3", default-features = false }
 crc16 = "0.4"
 indexmap = { version = "1.6", optional = true }
