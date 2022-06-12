@@ -196,7 +196,7 @@ pub fn resp2_frame_to_resp3(frame: Resp2Frame) -> Resp3Frame {
           attributes: None,
         }
       }
-    }
+    },
     Resp2Frame::SimpleString(s) => Resp3Frame::SimpleString {
       data: s,
       attributes: None,
@@ -211,7 +211,7 @@ pub fn resp2_frame_to_resp3(frame: Resp2Frame) -> Resp3Frame {
         data: out,
         attributes: None,
       }
-    }
+    },
   }
 }
 
@@ -338,8 +338,7 @@ where
   T: AsRef<NomBytes>,
 {
   let data_ref = data.as_ref();
-  Str::from_inner(data_ref.clone().into_bytes())
-    .map_err(|_| RedisParseError::Nom(data_ref.clone(), NomErrorKind::ParseTo))
+  Str::from_inner(data_ref.clone().into_bytes()).map_err(|_| RedisParseError::Nom(data_ref.clone(), NomErrorKind::Char))
 }
 
 #[cfg(test)]
