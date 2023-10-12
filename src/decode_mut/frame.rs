@@ -1,9 +1,17 @@
+use alloc::format;
+use alloc::string::ToString;
+use alloc::vec::Vec;
+use core::hash::{Hash, Hasher};
 use crate::decode_mut::utils::hash_tuple;
 use crate::resp3::types::{Auth, FrameKind, RespVersion, VerbatimStringFormat, NULL};
 use crate::types::{RedisParseError, RedisProtocolError, RedisProtocolErrorKind};
 use nom::IResult;
+
+#[cfg(feature = "std")]
 use std::collections::{HashMap, HashSet};
-use std::hash::{Hash, Hasher};
+
+#[cfg(feature = "hashbrown")]
+use hashbrown::{HashMap, HashSet};
 
 pub type IndexFrameMap = HashMap<Resp3IndexFrame, Resp3IndexFrame>;
 pub type IndexAttributes = Option<IndexFrameMap>;

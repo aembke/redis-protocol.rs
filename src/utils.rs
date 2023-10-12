@@ -7,7 +7,9 @@ use bytes_utils::Str;
 use cookie_factory::GenError;
 use crc16::{State, XMODEM};
 use nom::error::ErrorKind as NomErrorKind;
-use std::str;
+use alloc::borrow::ToOwned;
+use alloc::vec::Vec;
+use core::str;
 
 pub const KB: usize = 1024;
 /// A pre-defined zeroed out KB of data, used to speed up extending buffers while encoding.
@@ -225,12 +227,22 @@ pub fn check_offset(x: &(&mut [u8], usize)) -> Result<(), GenError> {
 }
 
 /// Returns the number of bytes necessary to encode a string representation of `d`.
+#[cfg(feature = "std")]
 pub fn digits_in_number(d: usize) -> usize {
   if d == 0 {
     return 1;
   }
 
   ((d as f64).log10()).floor() as usize + 1
+}
+
+#[cfg(feature = "libm")]
+pub fn digits_in_number(d: usize) -> usize {
+  if d == 0 {
+    return 1;
+  }
+
+  libm::floor(libm::log10(d as f64)) as usize + 1
 }
 
 // this is faster than repeat(0).take(amt) at the cost of some memory

@@ -1,6 +1,7 @@
 #![cfg_attr(docsrs, deny(rustdoc::broken_intra_doc_links))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(docsrs, allow(unused_attributes))]
+#![cfg_attr(all(not(test), not(feature = "std")), no_std)]
 
 //! # Redis Protocol
 //!
@@ -39,6 +40,9 @@
 //! ```
 //!
 //! Note: if callers are not using the `index-map` feature then substitute `std::collections::HashMap` for any `IndexMap` types in these docs. `rustdoc` doesn't have a great way to show type substitutions based on feature flags.
+
+extern crate alloc;
+extern crate core;
 
 #[macro_use]
 extern crate log;

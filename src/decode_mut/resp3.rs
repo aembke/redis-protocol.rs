@@ -16,8 +16,13 @@ use nom::multi::count as nom_count;
 use nom::number::streaming::be_u8;
 use nom::sequence::terminated as nom_terminated;
 use nom::{AsBytes, Err as NomErr};
+use core::str;
+
+#[cfg(feature = "std")]
 use std::collections::{HashMap, HashSet};
-use std::str;
+
+#[cfg(feature = "hashbrown")]
+use hashbrown::{HashMap, HashSet};
 
 fn map_hello<'a>(frame: Resp3Frame) -> Result<Resp3IndexFrame, RedisParseError<&'a [u8]>> {
   match frame {

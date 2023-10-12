@@ -7,6 +7,8 @@ use crate::resp3::types::*;
 use crate::resp3::utils as resp3_utils;
 use crate::types::*;
 use crate::utils;
+use alloc::format;
+use alloc::vec::Vec;
 use bytes_utils::Str;
 use nom::bytes::streaming::{take as nom_take, take_until as nom_take_until};
 use nom::combinator::{map as nom_map, map_res as nom_map_res, opt as nom_opt};
@@ -14,8 +16,8 @@ use nom::multi::count as nom_count;
 use nom::number::streaming::be_u8;
 use nom::sequence::terminated as nom_terminated;
 use nom::{Err as NomErr, IResult};
-use std::fmt::Debug;
-use std::str;
+use core::fmt::Debug;
+use core::str;
 
 fn map_complete_frame(frame: Frame) -> DecodedFrame {
   DecodedFrame::Complete(frame)

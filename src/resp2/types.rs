@@ -1,10 +1,12 @@
 use crate::resp2::utils as resp2_utils;
 use crate::types::{Redirection, RedisProtocolError};
 use crate::utils;
+use alloc::string::String;
+use alloc::vec::Vec;
 use bytes::Bytes;
 use bytes_utils::Str;
-use std::mem;
-use std::str;
+use core::mem;
+use core::str;
 
 /// Byte prefix before a simple string type.
 pub const SIMPLESTRING_BYTE: u8 = b'+';

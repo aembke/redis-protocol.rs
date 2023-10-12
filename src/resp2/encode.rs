@@ -6,6 +6,8 @@ use crate::resp2::types::*;
 use crate::resp2::utils::{self as resp2_utils};
 use crate::types::{RedisProtocolError, CRLF};
 use crate::utils;
+use crate::alloc::string::ToString;
+use alloc::vec::Vec;
 use bytes::BytesMut;
 use cookie_factory::GenError;
 

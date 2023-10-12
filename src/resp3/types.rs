@@ -1,13 +1,22 @@
 use crate::resp3::utils as resp3_utils;
 use crate::types::{Redirection, RedisProtocolError, RedisProtocolErrorKind};
 use crate::utils;
+use alloc::collections::VecDeque;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use bytes::Bytes;
 use bytes_utils::Str;
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::convert::TryFrom;
-use std::hash::{Hash, Hasher};
-use std::mem;
-use std::str;
+use core::convert::TryFrom;
+use core::hash::{Hash, Hasher};
+use core::mem;
+use core::str;
+
+#[cfg(feature = "std")]
+use std::collections::{HashMap, HashSet};
+
+#[cfg(feature = "hashbrown")]
+use hashbrown::{HashMap, HashSet};
 
 #[cfg(feature = "index-map")]
 use indexmap::{IndexMap, IndexSet};
