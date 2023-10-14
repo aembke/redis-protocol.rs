@@ -2,28 +2,28 @@
 //!
 //! <https://redis.io/topics/protocol#resp-protocol-description>
 
-use crate::nom_bytes::NomBytes;
-use crate::resp2::types::*;
-use crate::types::*;
-use crate::utils;
+use crate::{error::*, resp2::types::*, types::*, utils};
 use alloc::vec::Vec;
 use bytes::Bytes;
-use nom::bytes::streaming::{take as nom_take, take_until as nom_take_until};
-use nom::multi::count as nom_count;
-use nom::number::streaming::be_u8;
-use nom::sequence::terminated as nom_terminated;
-use nom::{Err as NomErr, IResult};
 use core::str;
+use nom::{
+  bytes::streaming::{take as nom_take, take_until as nom_take_until},
+  multi::count as nom_count,
+  number::streaming::be_u8,
+  sequence::terminated as nom_terminated,
+  Err as NomErr,
+  IResult,
+};
 
 pub(crate) const NULL_LEN: isize = -1;
 
-fn to_isize(s: &NomBytes) -> Result<isize, RedisParseError<NomBytes>> {
+fn to_isize(s: &[u8]) -> Result<isize, RedisParseError<&[u8]>> {
   str::from_utf8(s)?
     .parse::<isize>()
     .map_err(|_| RedisParseError::new_custom("to_isize", "Failed to parse as integer."))
 }
 
-fn to_i64(s: &NomBytes) -> Result<i64, RedisParseError<NomBytes>> {
+fn to_i64(s: &[u8]) -> Result<i64, RedisParseError<&[u8]>> {
   str::from_utf8(s)?
     .parse::<i64>()
     .map_err(|_| RedisParseError::new_custom("to_i64", "Failed to parse as integer."))
@@ -37,24 +37,24 @@ pub fn isize_to_usize<'a, T>(s: isize) -> Result<usize, RedisParseError<T>> {
   }
 }
 
-fn d_read_to_crlf(input: &NomBytes) -> IResult<NomBytes, NomBytes, RedisParseError<NomBytes>> {
+fn d_read_to_crlf(input: &[u8]) -> IResult<&[u8], &[u8], RedisParseError<&[u8]>> {
   decode_log!(input, "Parsing to CRLF. Remaining: {:?}", input);
   nom_terminated(nom_take_until(CRLF.as_bytes()), nom_take(2_usize))(input.clone())
 }
 
-fn d_read_to_crlf_s(input: &NomBytes) -> IResult<NomBytes, NomBytes, RedisParseError<NomBytes>> {
+fn d_read_to_crlf_s(input: &[u8]) -> IResult<&[u8], &[u8], RedisParseError<&[u8]>> {
   let (input, data) = d_read_to_crlf(input)?;
   decode_log!(data, "Parsing to StrMut. Data: {:?}", data);
   Ok((input, data))
 }
 
-fn d_read_prefix_len(input: &NomBytes) -> IResult<NomBytes, isize, RedisParseError<NomBytes>> {
+fn d_read_prefix_len(input: &[u8]) -> IResult<&[u8], isize, RedisParseError<&[u8]>> {
   let (input, data) = d_read_to_crlf_s(input)?;
   decode_log!("Reading prefix len. Data: {:?}", str::from_utf8(&data));
   Ok((input, etry!(to_isize(&data))))
 }
 
-fn d_frame_type(input: &NomBytes) -> IResult<NomBytes, FrameKind, RedisParseError<NomBytes>> {
+fn d_frame_type(input: &[u8]) -> IResult<&[u8], FrameKind, RedisParseError<&[u8]>> {
   let (input, byte) = be_u8(input.clone())?;
   decode_log!(
     input,
@@ -74,85 +74,73 @@ fn d_frame_type(input: &NomBytes) -> IResult<NomBytes, FrameKind, RedisParseErro
   Ok((input, kind))
 }
 
-fn d_parse_simplestring(input: &NomBytes) -> IResult<NomBytes, Frame, RedisParseError<NomBytes>> {
+fn d_parse_simplestring(input: &[u8]) -> IResult<&[u8], Frame, RedisParseError<&[u8]>> {
   let (input, data) = d_read_to_crlf_s(input)?;
   Ok((input, Frame::SimpleString(data.into_bytes())))
 }
 
-fn d_parse_integer(input: &NomBytes) -> IResult<NomBytes, Frame, RedisParseError<NomBytes>> {
+fn d_parse_integer(input: &[u8]) -> IResult<&[u8], Frame, RedisParseError<&[u8]>> {
   let (input, data) = d_read_to_crlf_s(input)?;
   let parsed = etry!(to_i64(&data));
   Ok((input, Frame::Integer(parsed)))
 }
 
-// assumes the '$-1\r\n' has been consumed already, since nulls look like bulk strings until the length prefix is parsed,
-// and parsing the length prefix consumes the trailing \r\n in the underlying `terminated!` call
-fn d_parse_null(input: &NomBytes) -> IResult<NomBytes, Frame, RedisParseError<NomBytes>> {
+// assumes the '$-1\r\n' has been consumed already, since nulls look like bulk strings until the length prefix is
+// parsed, and parsing the length prefix consumes the trailing \r\n in the underlying `terminated!` call
+fn d_parse_null(input: &[u8]) -> IResult<&[u8], Frame, RedisParseError<&[u8]>> {
   Ok((input.clone(), Frame::Null))
 }
 
-fn d_parse_error(input: &NomBytes) -> IResult<NomBytes, Frame, RedisParseError<NomBytes>> {
+fn d_parse_error(input: &[u8]) -> IResult<&[u8], Frame, RedisParseError<&[u8]>> {
   let (input, data) = d_read_to_crlf_s(input)?;
   let data = etry!(utils::to_byte_str(data));
   Ok((input, Frame::Error(data)))
 }
 
-fn d_parse_bulkstring(input: &NomBytes, len: usize) -> IResult<NomBytes, Frame, RedisParseError<NomBytes>> {
+fn d_parse_bulkstring(input: &[u8], len: usize) -> IResult<&[u8], Frame, RedisParseError<&[u8]>> {
   let (input, data) = nom_terminated(nom_take(len), nom_take(2_usize))(input.clone())?;
   Ok((input.clone(), Frame::BulkString(data.into_bytes())))
 }
 
-fn d_parse_bulkstring_or_null(input: &NomBytes) -> IResult<NomBytes, Frame, RedisParseError<NomBytes>> {
+fn d_parse_bulkstring_or_null(input: &[u8]) -> IResult<&[u8], Frame, RedisParseError<&[u8]>> {
   let (input, len) = d_read_prefix_len(input)?;
   decode_log!(input, "Parsing bulkstring, Length: {:?}, remaining: {:?}", len, input);
 
   if len == NULL_LEN {
-    d_parse_null(&input)
+    d_parse_null(input)
   } else {
     d_parse_bulkstring(&input, etry!(isize_to_usize(len)))
   }
 }
 
-fn d_parse_array_frames<T>(input: T, len: usize) -> IResult<NomBytes, Vec<Frame>, RedisParseError<NomBytes>>
-where
-  T: AsRef<NomBytes>,
-{
-  let input_ref = input.as_ref();
-  decode_log!(
-    input_ref,
-    "Parsing array frames. Length: {:?}, remaining: {:?}",
-    len,
-    input_ref
-  );
-  nom_count(d_parse_frame, len)(input_ref.clone())
+fn d_parse_array_frames(input: &[u8], len: usize) -> IResult<&[u8], Vec<Frame>, RedisParseError<&[u8]>> {
+  decode_log!(input, "Parsing array frames. Length: {:?}, remaining: {:?}", len, input);
+  nom_count(d_parse_frame, len)(input)
 }
 
-fn d_parse_array(input: &NomBytes) -> IResult<NomBytes, Frame, RedisParseError<NomBytes>> {
+fn d_parse_array(input: &[u8]) -> IResult<&[u8], Frame, RedisParseError<&[u8]>> {
   let (input, len) = d_read_prefix_len(input)?;
   decode_log!(input, "Parsing array. Length: {:?}, remaining: {:?}", len, input);
 
   if len == NULL_LEN {
-    d_parse_null(&input)
+    d_parse_null(input)
   } else {
     let len = etry!(isize_to_usize(len));
-    let (input, frames) = d_parse_array_frames(&input, len)?;
+    let (input, frames) = d_parse_array_frames(input, len)?;
     Ok((input, Frame::Array(frames)))
   }
 }
 
-fn d_parse_frame<T>(input: T) -> IResult<NomBytes, Frame, RedisParseError<NomBytes>>
-where
-  T: AsRef<NomBytes>,
-{
-  let (input, kind) = d_frame_type(input.as_ref())?;
+fn d_parse_frame(input: &[u8]) -> IResult<&[u8], Frame, RedisParseError<&[u8]>> {
+  let (input, kind) = d_frame_type(input)?;
   decode_log!(input, "Parsed kind: {:?}, remaining: {:?}", kind, input);
 
   match kind {
-    FrameKind::SimpleString => d_parse_simplestring(&input),
-    FrameKind::Error => d_parse_error(&input),
-    FrameKind::Integer => d_parse_integer(&input),
-    FrameKind::BulkString => d_parse_bulkstring_or_null(&input),
-    FrameKind::Array => d_parse_array(&input),
+    FrameKind::SimpleString => d_parse_simplestring(input),
+    FrameKind::Error => d_parse_error(input),
+    FrameKind::Integer => d_parse_integer(input),
+    FrameKind::BulkString => d_parse_bulkstring_or_null(input),
+    FrameKind::Array => d_parse_array(input),
     _ => e!(RedisParseError::new_custom("parse_frame", "Invalid frame kind.")),
   }
 }
@@ -160,11 +148,10 @@ where
 /// Attempt to parse the contents of `buf`, returning the first valid frame and the number of bytes consumed.
 ///
 /// If the byte slice contains an incomplete frame then `None` is returned.
-pub fn decode(buf: &Bytes) -> Result<Option<(Frame, usize)>, RedisProtocolError> {
+pub fn decode(buf: &[u8]) -> Result<Option<(Frame, usize)>, RedisProtocolError> {
   let len = buf.len();
-  let buffer: NomBytes = buf.into();
 
-  match d_parse_frame(buffer) {
+  match d_parse_frame(buf) {
     Ok((remaining, frame)) => Ok(Some((frame, len - remaining.len()))),
     Err(NomErr::Incomplete(_)) => Ok(None),
     Err(NomErr::Error(e)) => Err(e.into()),
@@ -172,16 +159,12 @@ pub fn decode(buf: &Bytes) -> Result<Option<(Frame, usize)>, RedisProtocolError>
   }
 }
 
-#[cfg(feature = "decode-mut")]
-#[cfg_attr(docsrs, doc(cfg(feature = "decode-mut")))]
-pub use crate::decode_mut::resp2::decode_mut;
-
 #[cfg(test)]
 pub mod tests {
   use super::*;
   use bytes::BytesMut;
+  use core::str;
   use nom::AsBytes;
-  use std::str;
 
   pub const PADDING: &'static str = "FOOBARBAZ";
 

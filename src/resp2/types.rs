@@ -1,12 +1,14 @@
-use crate::resp2::utils as resp2_utils;
-use crate::types::{Redirection, RedisProtocolError};
-use crate::utils;
-use alloc::string::String;
-use alloc::vec::Vec;
+use crate::{error::*, resp2::utils as resp2_utils, types::Redirection, utils};
+use alloc::{string::String, vec::Vec};
 use bytes::Bytes;
 use bytes_utils::Str;
-use core::mem;
-use core::str;
+use core::{
+  fmt::{Debug, Display},
+  mem,
+  ops::Range,
+  str,
+  str::FromStr,
+};
 
 /// Byte prefix before a simple string type.
 pub const SIMPLESTRING_BYTE: u8 = b'+';
@@ -23,6 +25,47 @@ pub const ARRAY_BYTE: u8 = b'*';
 pub const NULL: &'static str = "$-1\r\n";
 
 pub use crate::utils::{PATTERN_PUBSUB_PREFIX, PUBSUB_PREFIX};
+
+///
+pub trait FromPartialFrame<'a> {
+  /// An interface that moves or copies the buffer contents when building the output.
+  fn copy_from_bytes(buf: &[u8], frame: &PartialFrame) -> Result<Self<'_>, RedisProtocolError>;
+
+  /// Attempt to convert from the partial frame and an arbitrary buffer.
+  ///
+  /// This method is tried first and is assumed to be preferred over [copy_from_bytes](Self::copy_from_bytes).
+  fn from_buf<B>(_: &'a B, _: &PartialFrame) -> Result<Option<Self<'a>>, RedisProtocolError> {
+    Ok(None)
+  }
+
+  fn convert<B>(buf: B, frame: PartialFrame) -> Result<Self<'a>, RedisProtocolError>
+  where
+    B: AsRef<&'a [u8]>,
+  {
+    Self::from_buf(&buf, &frame).and_then(|v| v.or_else(|| Self::copy_from_bytes(buf.as_ref(), &frame)))
+  }
+}
+
+impl FromPartialFrame for PartialFrame {}
+
+impl<'a> FromPartialFrame<'a> for &'a [u8] {}
+
+impl FromPartialFrame for Vec<u8> {}
+
+impl FromPartialFrame for BytesMut {}
+
+/// A partially decoded frame, usually used alongside the associated buffer.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PartialFrame {
+  SimpleString(Range<usize>),
+  Error(Range<usize>),
+  Integer(i64),
+  BulkString(Range<usize>),
+  Array(Vec<PartialFrame>),
+  Null,
+}
+
+impl PartialFrame {}
 
 /// An enum representing the kind of a Frame without references to any inner data.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -111,7 +154,8 @@ impl Frame {
     }
   }
 
-  /// Whether or not the frame represents a message on a publish-subscribe channel matched against a pattern subscription.
+  /// Whether or not the frame represents a message on a publish-subscribe channel matched against a pattern
+  /// subscription.
   pub fn is_pattern_pubsub_message(&self) -> bool {
     if let Frame::Array(ref frames) = *self {
       resp2_utils::is_pattern_pubsub(frames)
@@ -190,11 +234,13 @@ impl Frame {
     }
   }
 
+  // TODO get rid of this, or use frames, but don't clone/copy
   /// Attempt to parse the frame as a publish-subscribe message, returning the `(channel, message)` tuple
   /// if successful, or the original frame if the inner data is not a publish-subscribe message.
   pub fn parse_as_pubsub(self) -> Result<(String, String), Self> {
     if self.is_pubsub_message() {
-      // if `is_pubsub_message` returns true but this panics then there's a bug in `is_pubsub_message`, so this fails loudly
+      // if `is_pubsub_message` returns true but this panics then there's a bug in `is_pubsub_message`, so this fails
+      // loudly
       let (message, channel, _) = match self {
         Frame::Array(mut frames) => (
           resp2_utils::opt_frame_to_string_panic(frames.pop(), "Expected pubsub payload. This is a bug."),
@@ -211,7 +257,7 @@ impl Frame {
   }
 
   /// Attempt to parse the frame as a cluster redirection.
-  pub fn to_redirection(&self) -> Option<Redirection> {
+  pub fn to_redirection(&self) -> Option<Redirection<Str>> {
     match *self {
       Frame::Error(ref s) => utils::read_cluster_error(s),
       _ => None,
@@ -224,14 +270,14 @@ impl Frame {
   }
 }
 
-impl From<Redirection> for Frame {
-  fn from(redirection: Redirection) -> Self {
+impl<S: Debug + Display + FromStr> From<Redirection<S>> for Frame {
+  fn from(redirection: Redirection<S>) -> Self {
     redirection.to_resp2_frame()
   }
 }
 
-impl<'a> From<&'a Redirection> for Frame {
-  fn from(redirection: &'a Redirection) -> Self {
+impl<'a, S: Debug + Display + FromStr> From<&'a Redirection<S>> for Frame {
+  fn from(redirection: &'a Redirection<S>) -> Self {
     redirection.to_resp2_frame()
   }
 }
@@ -243,7 +289,7 @@ mod tests {
   #[test]
   fn should_convert_ask_redirection_to_frame() {
     let redirection = Redirection::Ask {
-      slot: 3999,
+      slot:   3999,
       server: "127.0.0.1:6381".into(),
     };
     let frame = Frame::Error("ASK 3999 127.0.0.1:6381".into());
@@ -254,7 +300,7 @@ mod tests {
   #[test]
   fn should_convert_moved_redirection_to_frame() {
     let redirection = Redirection::Moved {
-      slot: 3999,
+      slot:   3999,
       server: "127.0.0.1:6381".into(),
     };
     let frame = Frame::Error("MOVED 3999 127.0.0.1:6381".into());
@@ -265,7 +311,7 @@ mod tests {
   #[test]
   fn should_convert_frame_to_redirection_moved() {
     let redirection = Redirection::Moved {
-      slot: 3999,
+      slot:   3999,
       server: "127.0.0.1:6381".into(),
     };
     let frame = Frame::Error("MOVED 3999 127.0.0.1:6381".into());
@@ -276,7 +322,7 @@ mod tests {
   #[test]
   fn should_convert_frame_to_redirection_ask() {
     let redirection = Redirection::Ask {
-      slot: 3999,
+      slot:   3999,
       server: "127.0.0.1:6381".into(),
     };
     let frame = Frame::Error("ASK 3999 127.0.0.1:6381".into());
@@ -288,7 +334,7 @@ mod tests {
   #[should_panic]
   fn should_convert_frame_to_redirection_error() {
     let redirection = Redirection::Ask {
-      slot: 3999,
+      slot:   3999,
       server: "127.0.0.1:6381".into(),
     };
     let frame = Frame::BulkString("ASK 3999 127.0.0.1:6381".into());

@@ -1,15 +1,11 @@
-use crate::nom_bytes::NomBytes;
-use crate::resp2::types::Frame as Resp2Frame;
-use crate::resp3::types::Frame as Resp3Frame;
-use crate::types::*;
+use crate::{nom_bytes::NomBytes, resp2::types::Frame as Resp2Frame, resp3::types::Frame as Resp3Frame, types::*};
+use alloc::{borrow::ToOwned, vec::Vec};
 use bytes::BytesMut;
 use bytes_utils::Str;
 use cookie_factory::GenError;
+use core::str;
 use crc16::{State, XMODEM};
 use nom::error::ErrorKind as NomErrorKind;
-use alloc::borrow::ToOwned;
-use alloc::vec::Vec;
-use core::str;
 
 pub const KB: usize = 1024;
 /// A pre-defined zeroed out KB of data, used to speed up extending buffers while encoding.
@@ -103,21 +99,23 @@ macro_rules! decode_log(
 
 /// Utility function to translate RESP2 frames to RESP3 frames.
 ///
-/// RESP2 frames and RESP3 frames are quite different, but RESP3 is largely a superset of RESP2 so this function will never return an error.
+/// RESP2 frames and RESP3 frames are quite different, but RESP3 is largely a superset of RESP2 so this function will
+/// never return an error.
 ///
-/// Redis handles the protocol choice based on the response to the `HELLO` command, so developers of higher level clients can be faced with a decision on which `Frame`
-/// struct to expose to callers.
+/// Redis handles the protocol choice based on the response to the `HELLO` command, so developers of higher level
+/// clients can be faced with a decision on which `Frame` struct to expose to callers.
 ///
-/// This function can allow callers to take a dependency on the RESP3 interface by lazily translating RESP2 frames from the server to RESP3 frames.
+/// This function can allow callers to take a dependency on the RESP3 interface by lazily translating RESP2 frames
+/// from the server to RESP3 frames.
 pub fn resp2_frame_to_resp3(frame: Resp2Frame) -> Resp3Frame {
   if frame.is_normal_pubsub() {
     let mut out = Vec::with_capacity(4);
     out.push(Resp3Frame::SimpleString {
-      data: PUBSUB_PUSH_PREFIX.into(),
+      data:       PUBSUB_PUSH_PREFIX.into(),
       attributes: None,
     });
     out.push(Resp3Frame::SimpleString {
-      data: PUBSUB_PREFIX.into(),
+      data:       PUBSUB_PREFIX.into(),
       attributes: None,
     });
     if let Resp2Frame::Array(mut inner) = frame {
@@ -131,18 +129,18 @@ pub fn resp2_frame_to_resp3(frame: Resp2Frame) -> Resp3Frame {
     }
 
     return Resp3Frame::Push {
-      data: out,
+      data:       out,
       attributes: None,
     };
   }
   if frame.is_pattern_pubsub_message() {
     let mut out = Vec::with_capacity(4);
     out.push(Resp3Frame::SimpleString {
-      data: PUBSUB_PUSH_PREFIX.into(),
+      data:       PUBSUB_PUSH_PREFIX.into(),
       attributes: None,
     });
     out.push(Resp3Frame::SimpleString {
-      data: PATTERN_PUBSUB_PREFIX.into(),
+      data:       PATTERN_PUBSUB_PREFIX.into(),
       attributes: None,
     });
     if let Resp2Frame::Array(mut inner) = frame {
@@ -156,18 +154,18 @@ pub fn resp2_frame_to_resp3(frame: Resp2Frame) -> Resp3Frame {
     }
 
     return Resp3Frame::Push {
-      data: out,
+      data:       out,
       attributes: None,
     };
   }
 
   match frame {
     Resp2Frame::Integer(i) => Resp3Frame::Number {
-      data: i,
+      data:       i,
       attributes: None,
     },
     Resp2Frame::Error(s) => Resp3Frame::SimpleError {
-      data: s,
+      data:       s,
       attributes: None,
     },
     Resp2Frame::BulkString(d) => {
@@ -175,32 +173,32 @@ pub fn resp2_frame_to_resp3(frame: Resp2Frame) -> Resp3Frame {
         match str::from_utf8(&d).ok() {
           Some(s) => match s.as_ref() {
             "true" => Resp3Frame::Boolean {
-              data: true,
+              data:       true,
               attributes: None,
             },
             "false" => Resp3Frame::Boolean {
-              data: false,
+              data:       false,
               attributes: None,
             },
             _ => Resp3Frame::BlobString {
-              data: d,
+              data:       d,
               attributes: None,
             },
           },
           None => Resp3Frame::BlobString {
-            data: d,
+            data:       d,
             attributes: None,
           },
         }
       } else {
         Resp3Frame::BlobString {
-          data: d,
+          data:       d,
           attributes: None,
         }
       }
     },
     Resp2Frame::SimpleString(s) => Resp3Frame::SimpleString {
-      data: s,
+      data:       s,
       attributes: None,
     },
     Resp2Frame::Null => Resp3Frame::Null,
@@ -210,7 +208,7 @@ pub fn resp2_frame_to_resp3(frame: Resp2Frame) -> Resp3Frame {
         out.push(resp2_frame_to_resp3(frame));
       }
       Resp3Frame::Array {
-        data: out,
+        data:       out,
         attributes: None,
       }
     },
@@ -255,7 +253,7 @@ pub fn zero_extend(buf: &mut BytesMut, mut amt: usize) {
     amt -= KB;
   }
   if amt > 0 {
-    buf.extend_from_slice(&ZEROED_KB[0..amt]);
+    buf.extend_from_slice(&ZEROED_KB[0 .. amt]);
   }
 }
 
@@ -267,12 +265,12 @@ pub fn is_cluster_error(payload: &str) -> bool {
   }
 }
 
-pub fn read_cluster_error(payload: &str) -> Option<Redirection> {
+pub fn read_cluster_error(payload: &str) -> Option<Redirection<Str>> {
   if payload.starts_with("MOVED") {
     let parts: Vec<&str> = payload.split(" ").collect();
     if parts.len() == 3 {
       let slot = unwrap_return!(parts[1].parse::<u16>().ok());
-      let server = parts[2].to_owned();
+      let server = parts[2].into();
 
       Some(Redirection::Moved { slot, server })
     } else {
@@ -282,7 +280,7 @@ pub fn read_cluster_error(payload: &str) -> Option<Redirection> {
     let parts: Vec<&str> = payload.split(" ").collect();
     if parts.len() == 3 {
       let slot = unwrap_return!(parts[1].parse::<u16>().ok());
-      let server = parts[2].to_owned();
+      let server = parts[2].into();
 
       Some(Redirection::Ask { slot, server })
     } else {
@@ -307,7 +305,10 @@ fn crc16_xmodem(key: &[u8]) -> u16 {
 ///
 /// ```no_run
 /// # use redis_protocol::redis_keyslot;
-/// assert_eq!(redis_keyslot("8xjx7vWrfPq54mKfFD3Y1CcjjofpnAcQ".as_bytes()), 5458);
+/// assert_eq!(
+///   redis_keyslot("8xjx7vWrfPq54mKfFD3Y1CcjjofpnAcQ".as_bytes()),
+///   5458
+/// );
 /// ```
 pub fn redis_keyslot(key: &[u8]) -> u16 {
   let (mut i, mut j): (Option<usize>, Option<usize>) = (None, None);
@@ -324,7 +325,7 @@ pub fn redis_keyslot(key: &[u8]) -> u16 {
   }
 
   let i = i.unwrap();
-  for (idx, c) in key[i + 1..].iter().enumerate() {
+  for (idx, c) in key[i + 1 ..].iter().enumerate() {
     if *c == b'}' {
       j = Some(idx);
       break;
@@ -339,7 +340,7 @@ pub fn redis_keyslot(key: &[u8]) -> u16 {
   let out = if i + j == key.len() || j == 0 {
     crc16_xmodem(key)
   } else {
-    crc16_xmodem(&key[i + 1..i + j + 1])
+    crc16_xmodem(&key[i + 1 .. i + j + 1])
   };
 
   out
@@ -350,7 +351,8 @@ where
   T: AsRef<NomBytes>,
 {
   let data_ref = data.as_ref();
-  Str::from_inner(data_ref.clone().into_bytes()).map_err(|_| RedisParseError::Nom(data_ref.clone(), NomErrorKind::Char))
+  Str::from_inner(data_ref.clone().into_bytes())
+    .map_err(|_| RedisParseError::Nom(data_ref.clone(), NomErrorKind::Char))
 }
 
 #[cfg(test)]

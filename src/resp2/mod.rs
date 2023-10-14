@@ -5,13 +5,13 @@ pub mod encode;
 /// RESP2 frame types.
 pub mod types;
 
+mod _decode;
+
 pub(crate) mod utils;
 
 /// Shorthand for `use`'ing `types`, `encode`, `decode`, etc.
 pub mod prelude {
-  pub use super::decode::*;
-  pub use super::encode::*;
-  pub use super::types::*;
+  pub use super::{decode::*, encode::*, types::*};
 
   pub use crate::utils::redis_keyslot;
 }

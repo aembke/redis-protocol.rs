@@ -2,44 +2,37 @@
 authors = ["Alec Embke <aembke@gmail.com>"]
 description = "Structs and functions to implement the Redis protocol."
 homepage = "https://github.com/aembke/redis-protocol.rs"
-keywords = ["redis", "protocol", "nom", "resp", "no_std"]
+keywords = ["redis", "protocol", "resp"]
 license = "MIT"
 name = "redis-protocol"
 readme = "README.md"
 repository = "https://github.com/aembke/redis-protocol.rs"
-version = "4.1.0"
-edition = "2018"
-
-[badges.maintenance]
-status = "actively-developed"
-
-[badges.travis-ci]
-branch = "main"
-repository = "aembke/redis-protocol.rs"
+version = "5.0.0"
+edition = "2021"
 
 [dependencies]
 bytes = { version = "1.1", default-features = false }
-bytes-utils = { version = "0.1.2", default-features = false }
+bytes-utils = { version = "0.1", default-features = false }
 cookie-factory = { version = "0.3", default-features = false }
 crc16 = "0.4"
-indexmap = { version = "1.6", optional = true }
+indexmap = { version = "2.0", optional = true }
 log = "0.4"
 nom = { version = "7.1", default-features = false }
-libm = { version = "0.2.2", optional = true }
-hashbrown = { version = "0.13.2", optional = true }
+libm = { version = "0.2", optional = true }
+hashbrown = { version = "0.14", optional = true }
 
 [dev-dependencies]
-rand = "0.5"
-tokio-util = { version = "0.6", features = ["codec"] }
-tokio = { version = "1.12", features = ["full"] }
-itertools = "0.10"
-pretty_env_logger = "0.4"
+rand = "0.8"
+tokio-util = { version = "0.7", features = ["codec"] }
+tokio = { version = "1", features = ["full"] }
+itertools = "0.11"
+pretty_env_logger = "0.5"
 
 [features]
 default = ["std"]
 index-map = ["indexmap"]
 decode-logs = []
-decode-mut = []
+attributes = []
 alloc = ["nom/alloc"]
 std = ["bytes/default", "bytes-utils/std", "cookie-factory/default", "nom/default"]
 
@@ -48,13 +41,3 @@ doc = true
 doctest = true
 name = "redis_protocol"
 test = true
-
-[profile]
-[profile.bench]
-codegen-units = 16
-debug = false
-debug-assertions = false
-incremental = false
-opt-level = 3
-overflow-checks = false
-rpath = false
