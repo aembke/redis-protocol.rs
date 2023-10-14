@@ -1,5 +1,5 @@
 use crate::{error::*, resp2::utils as resp2_utils, types::Redirection, utils};
-use alloc::{string::String, vec::Vec};
+use alloc::{borrow::Cow, string::String, vec::Vec};
 use bytes::Bytes;
 use bytes_utils::Str;
 use core::{
@@ -26,34 +26,6 @@ pub const NULL: &'static str = "$-1\r\n";
 
 pub use crate::utils::{PATTERN_PUBSUB_PREFIX, PUBSUB_PREFIX};
 
-///
-pub trait FromPartialFrame<'a> {
-  /// An interface that moves or copies the buffer contents when building the output.
-  fn copy_from_bytes(buf: &[u8], frame: &PartialFrame) -> Result<Self<'_>, RedisProtocolError>;
-
-  /// Attempt to convert from the partial frame and an arbitrary buffer.
-  ///
-  /// This method is tried first and is assumed to be preferred over [copy_from_bytes](Self::copy_from_bytes).
-  fn from_buf<B>(_: &'a B, _: &PartialFrame) -> Result<Option<Self<'a>>, RedisProtocolError> {
-    Ok(None)
-  }
-
-  fn convert<B>(buf: B, frame: PartialFrame) -> Result<Self<'a>, RedisProtocolError>
-  where
-    B: AsRef<&'a [u8]>,
-  {
-    Self::from_buf(&buf, &frame).and_then(|v| v.or_else(|| Self::copy_from_bytes(buf.as_ref(), &frame)))
-  }
-}
-
-impl FromPartialFrame for PartialFrame {}
-
-impl<'a> FromPartialFrame<'a> for &'a [u8] {}
-
-impl FromPartialFrame for Vec<u8> {}
-
-impl FromPartialFrame for BytesMut {}
-
 /// A partially decoded frame, usually used alongside the associated buffer.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PartialFrame {
@@ -61,11 +33,66 @@ pub enum PartialFrame {
   Error(Range<usize>),
   Integer(i64),
   BulkString(Range<usize>),
-  Array(Vec<PartialFrame>),
+  Array([PartialFrame]),
   Null,
 }
 
-impl PartialFrame {}
+///
+pub trait FromPartialFrame<'a> {
+  /// An interface that copies the buffer contents when building the output.
+  fn copy_from_slice(buf: &[u8], frame: &PartialFrame) -> Result<Self<'_>, RedisProtocolError>;
+
+  /// Attempt to convert from the partial frame and associated bytes buffer.
+  ///
+  /// This method is tried first and is assumed to be preferred over [copy_from_bytes](Self::copy_from_bytes)
+  #[cfg(feature = "bytes")]
+  fn from_bytes(_: &Bytes, _: &PartialFrame) -> Result<Option<Self<'_>>, RedisProtocolError> {
+    Ok(None)
+  }
+
+  /// Attempt to convert from the partial frame and associated bytes buffer, consuming and freezing bytes from the
+  /// buffer in the process.
+  ///
+  /// This method is tried first and is assumed to be preferred over [copy_from_bytes](Self::copy_from_bytes)
+  #[cfg(feature = "bytes")]
+  fn from_bytes_mut(_: &mut BytesMut, _: &PartialFrame) -> Result<Option<Self<'_>>, RedisProtocolError> {
+    Ok(None)
+  }
+
+  /// Attempt to convert the buffer and partial frame into the output type.
+  ///
+  /// This will first try [from_buf](Self::from_buf), then [copy_from_bytes](Self::copy_from_bytes).
+  fn convert<B>(buf: &'a B, frame: PartialFrame) -> Result<Self<'a>, RedisProtocolError>
+  where
+    B: AsRef<&'a [u8]>,
+  {
+    unimplemented!()
+  }
+}
+
+impl FromPartialFrame for PartialFrame {}
+
+impl<'a> FromPartialFrame for Frame<'a> {
+  fn copy_from_slice(buf: &[u8], frame: &PartialFrame) -> Result<Self<'_>, RedisProtocolError> {
+    Ok(match frame {
+      PartialFrame::SimpleString(r) => Frame::SimpleString(Cow::Owned(buf[r].to_vec())),
+      PartialFrame::Error(r) => Frame::Error(Cow::Owned(String::from_utf8(buf[r].to_vec())?)),
+      PartialFrame::BulkString(r) => Frame::BulkString(Cow::Owned(buf[r].to_vec())),
+      PartialFrame::Integer(i) => Frame::Integer(*i),
+      PartialFrame::Array(frames) => Frame::Array(
+        frames
+          .iter()
+          .map(|frame| Self::copy_from_bytes(buf, frame))
+          .collect::<Result<Vec<_>, _>>()?,
+      ),
+      PartialFrame::Null => Frame::Null,
+    })
+  }
+
+  fn from_buf<B>(buf: &'a B, frame: &PartialFrame) -> Result<Option<Self<'a>>, RedisProtocolError> {
+    todo!()
+  }
+}
 
 /// An enum representing the kind of a Frame without references to any inner data.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -105,19 +132,19 @@ impl FrameKind {
   }
 }
 
-/// An enum representing a Frame of data.
+///
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum Frame {
-  /// A short non binary-safe string.
-  SimpleString(Bytes),
-  /// A short non binary-safe string representing an error.
-  Error(Str),
+pub enum Frame<'a> {
+  /// A short string.
+  SimpleString(Cow<'a, [u8]>),
+  /// A short string representing an error.
+  Error(Cow<'a, str>),
   /// A signed 64 bit integer.
   Integer(i64),
-  /// A binary-safe string.
-  BulkString(Bytes),
-  /// An array of frames, arbitrarily nested.
-  Array(Vec<Frame>),
+  /// A RESP2 bulk string.
+  BulkString(Cow<'a, [u8]>),
+  /// An array of frames.
+  Array(Vec<Frame<'a>>),
   /// A null value.
   Null,
 }
@@ -230,6 +257,7 @@ impl Frame {
   pub fn to_string(&self) -> Option<String> {
     match *self {
       Frame::BulkString(ref b) | Frame::SimpleString(ref b) => String::from_utf8(b.to_vec()).ok(),
+      Frame::Error(ref s) => Some(s.to_string()),
       _ => None,
     }
   }
@@ -239,8 +267,8 @@ impl Frame {
   /// if successful, or the original frame if the inner data is not a publish-subscribe message.
   pub fn parse_as_pubsub(self) -> Result<(String, String), Self> {
     if self.is_pubsub_message() {
-      // if `is_pubsub_message` returns true but this panics then there's a bug in `is_pubsub_message`, so this fails
-      // loudly
+      // if `is_pubsub_message` returns true but this panics then there's a bug in `is_pubsub_message`, so this
+      // fails loudly
       let (message, channel, _) = match self {
         Frame::Array(mut frames) => (
           resp2_utils::opt_frame_to_string_panic(frames.pop(), "Expected pubsub payload. This is a bug."),
@@ -270,15 +298,173 @@ impl Frame {
   }
 }
 
-impl<S: Debug + Display + FromStr> From<Redirection<S>> for Frame {
-  fn from(redirection: Redirection<S>) -> Self {
-    redirection.to_resp2_frame()
-  }
-}
+/// Types specialized for the [bytes](bytes) and [bytes_utils](bytes_utils) ecosystem.
+#[cfg(feature = "bytes-mut")]
+pub mod bytes {
 
-impl<'a, S: Debug + Display + FromStr> From<&'a Redirection<S>> for Frame {
-  fn from(redirection: &'a Redirection<S>) -> Self {
-    redirection.to_resp2_frame()
+  /// An enum representing a Frame of data.
+  #[derive(Clone, Debug, Eq, PartialEq)]
+  pub enum Frame {
+    /// A short string.
+    SimpleString(Bytes),
+    /// A short string representing an error.
+    Error(Str),
+    /// A signed 64 bit integer.
+    Integer(i64),
+    /// A RESP2 bulk string.
+    BulkString(Bytes),
+    /// An array of frames.
+    Array(Vec<Frame>),
+    /// A null value.
+    Null,
+  }
+
+  impl Frame {
+    /// Replace `self` with Null, returning the original value.
+    pub fn take(&mut self) -> Frame {
+      mem::replace(self, Frame::Null)
+    }
+
+    /// Whether or not the frame is an error.
+    pub fn is_error(&self) -> bool {
+      match self.kind() {
+        FrameKind::Error => true,
+        _ => false,
+      }
+    }
+
+    /// Whether or not the frame represents a publish-subscribe message, but not a pattern publish-subscribe message.
+    pub fn is_normal_pubsub(&self) -> bool {
+      if let Frame::Array(ref frames) = *self {
+        resp2_utils::is_normal_pubsub(frames)
+      } else {
+        false
+      }
+    }
+
+    /// Whether or not the frame represents a message on a publish-subscribe channel.
+    pub fn is_pubsub_message(&self) -> bool {
+      if let Frame::Array(ref frames) = *self {
+        resp2_utils::is_normal_pubsub(frames) || resp2_utils::is_pattern_pubsub(frames)
+      } else {
+        false
+      }
+    }
+
+    /// Whether or not the frame represents a message on a publish-subscribe channel matched against a pattern
+    /// subscription.
+    pub fn is_pattern_pubsub_message(&self) -> bool {
+      if let Frame::Array(ref frames) = *self {
+        resp2_utils::is_pattern_pubsub(frames)
+      } else {
+        false
+      }
+    }
+
+    /// Read the `FrameKind` value for this frame.
+    pub fn kind(&self) -> FrameKind {
+      match *self {
+        Frame::SimpleString(_) => FrameKind::SimpleString,
+        Frame::Error(_) => FrameKind::Error,
+        Frame::Integer(_) => FrameKind::Integer,
+        Frame::BulkString(_) => FrameKind::BulkString,
+        Frame::Array(_) => FrameKind::Array,
+        Frame::Null => FrameKind::Null,
+      }
+    }
+
+    /// Attempt to read the frame value as a string slice without allocating.
+    pub fn as_str(&self) -> Option<&str> {
+      match *self {
+        Frame::BulkString(ref b) => str::from_utf8(b).ok(),
+        Frame::SimpleString(ref s) => str::from_utf8(s).ok(),
+        Frame::Error(ref s) => Some(s),
+        _ => None,
+      }
+    }
+
+    /// Whether or not the frame is a simple string or bulk string.
+    pub fn is_string(&self) -> bool {
+      match *self {
+        Frame::SimpleString(_) | Frame::BulkString(_) => true,
+        _ => false,
+      }
+    }
+
+    /// Whether or not the frame is Null.
+    pub fn is_null(&self) -> bool {
+      match *self {
+        Frame::Null => true,
+        _ => false,
+      }
+    }
+
+    /// Whether or not the frame is an array of frames.
+    pub fn is_array(&self) -> bool {
+      match *self {
+        Frame::Array(_) => true,
+        _ => false,
+      }
+    }
+
+    /// Whether or not the frame is an integer.
+    pub fn is_integer(&self) -> bool {
+      match *self {
+        Frame::Integer(_) => true,
+        _ => false,
+      }
+    }
+
+    /// Whether or not the framed is a a Moved or Ask error.
+    pub fn is_moved_or_ask_error(&self) -> bool {
+      match *self {
+        Frame::Error(ref s) => utils::is_cluster_error(s),
+        _ => false,
+      }
+    }
+
+    // Copy and read the inner value as a string, if possible.
+    pub fn to_string(&self) -> Option<String> {
+      match *self {
+        Frame::BulkString(ref b) | Frame::SimpleString(ref b) => String::from_utf8(b.to_vec()).ok(),
+        _ => None,
+      }
+    }
+
+    // TODO get rid of this, or use frames, but don't clone/copy
+    /// Attempt to parse the frame as a publish-subscribe message, returning the `(channel, message)` tuple
+    /// if successful, or the original frame if the inner data is not a publish-subscribe message.
+    pub fn parse_as_pubsub(self) -> Result<(String, String), Self> {
+      if self.is_pubsub_message() {
+        // if `is_pubsub_message` returns true but this panics then there's a bug in `is_pubsub_message`, so this
+        // fails loudly
+        let (message, channel, _) = match self {
+          Frame::Array(mut frames) => (
+            resp2_utils::opt_frame_to_string_panic(frames.pop(), "Expected pubsub payload. This is a bug."),
+            resp2_utils::opt_frame_to_string_panic(frames.pop(), "Expected pubsub channel. This is a bug."),
+            resp2_utils::opt_frame_to_string_panic(frames.pop(), "Expected pubsub message kind. This is a bug."),
+          ),
+          _ => panic!("Unreachable 1. This is a bug."),
+        };
+
+        Ok((channel, message))
+      } else {
+        Err(self)
+      }
+    }
+
+    /// Attempt to parse the frame as a cluster redirection.
+    pub fn to_redirection(&self) -> Option<Redirection<Str>> {
+      match *self {
+        Frame::Error(ref s) => utils::read_cluster_error(s),
+        _ => None,
+      }
+    }
+
+    /// Attempt to read the number of bytes needed to encode this frame.
+    pub fn encode_len(&self) -> Result<usize, RedisProtocolError> {
+      resp2_utils::encode_len(self).map_err(|e| e.into())
+    }
   }
 }
 

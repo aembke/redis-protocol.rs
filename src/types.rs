@@ -11,8 +11,8 @@ use nom::IResult;
 pub const CRLF: &'static str = "\r\n";
 
 // TODO format - (remaining, amt parsed so far), result type (usually bytes), error
-///
-pub type DResult<'a, T> = IResult<(&'a [u8], usize), T, RedisParseError<&'a [u8]>>;
+/// The return value from inner parsing functions.
+pub(crate) type DResult<'a, T> = IResult<(&'a [u8], usize), T, RedisParseError<&'a [u8]>>;
 
 /// A cluster redirection message.
 ///
@@ -25,7 +25,7 @@ pub enum Redirection<S: Debug + Display + FromStr> {
 
 impl<S: Debug + Display + FromStr> Redirection<S> {
   ///
-  pub fn from_str(s: &str) -> Option<Self<S>> {
+  pub fn from_str(s: &str) -> Option<Self> {
     let mut parts = s.split(" ");
     let is_moved = match parts.next() {
       Some("MOVED") => true,

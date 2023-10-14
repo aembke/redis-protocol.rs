@@ -1,3 +1,11 @@
+#![allow(clippy::redundant_pattern_matching)]
+#![allow(clippy::mutable_key_type)]
+#![allow(clippy::derivable_impls)]
+#![allow(clippy::iter_kv_map)]
+#![allow(clippy::len_without_is_empty)]
+#![allow(clippy::vec_init_then_push)]
+#![allow(clippy::while_let_on_iterator)]
+#![allow(clippy::new_without_default)]
 #![cfg_attr(docsrs, deny(rustdoc::broken_intra_doc_links))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(docsrs, allow(unused_attributes))]
@@ -13,8 +21,8 @@
 //! # extern crate redis_protocol;
 //! # extern crate bytes;
 //!
-//! use redis_protocol::resp2::prelude::*;
 //! use bytes::{Bytes, BytesMut};
+//! use redis_protocol::resp2::prelude::*;
 //!
 //! fn main() {
 //!   let frame = Frame::BulkString("foobar".into());
@@ -22,7 +30,7 @@
 //!
 //!   let len = match encode_bytes(&mut buf, &frame) {
 //!     Ok(l) => l,
-//!     Err(e) => panic!("Error encoding frame: {:?}", e)
+//!     Err(e) => panic!("Error encoding frame: {:?}", e),
 //!   };
 //!   println!("Encoded {} bytes into buffer with contents {:?}", len, buf);
 //!
@@ -30,7 +38,7 @@
 //!   let (frame, consumed) = match decode(&buf) {
 //!     Ok(Some((f, c))) => (f, c),
 //!     Ok(None) => panic!("Incomplete frame."),
-//!     Err(e) => panic!("Error parsing bytes: {:?}", e)
+//!     Err(e) => panic!("Error parsing bytes: {:?}", e),
 //!   };
 //!   println!("Parsed frame {:?} and consumed {} bytes", frame, consumed);
 //!
@@ -39,7 +47,9 @@
 //! }
 //! ```
 //!
-//! Note: if callers are not using the `index-map` feature then substitute `std::collections::HashMap` for any `IndexMap` types in these docs. `rustdoc` doesn't have a great way to show type substitutions based on feature flags.
+//! Note: if callers are not using the `index-map` feature then substitute `std::collections::HashMap` for any
+//! `IndexMap` types in these docs. `rustdoc` doesn't have a great way to show type substitutions based on feature
+//! flags.
 
 extern crate alloc;
 extern crate core;
@@ -61,13 +71,13 @@ pub(crate) mod nom_bytes;
 
 #[cfg(feature = "decode-mut")]
 mod decode_mut;
+/// Error interfaces.
+pub mod error;
 /// Types and functions for implementing the RESP2 protocol.
 pub mod resp2;
 /// Types and functions for implementing the RESP3 protocol.
 pub mod resp3;
 /// Error types and general redis protocol types.
 pub mod types;
-/// Error interfaces.
-pub mod error;
 
 pub use utils::{digits_in_number, redis_keyslot, resp2_frame_to_resp3, ZEROED_KB};
