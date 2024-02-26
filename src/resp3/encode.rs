@@ -647,8 +647,8 @@ pub mod streaming {
   }
 
   /// Encode the inner frames that make up a key-value pair in a streamed map.
-  pub fn encode_aggregate_type_inner_kv_pair<'a>(
-    buf: &'a mut [u8],
+  pub fn encode_aggregate_type_inner_kv_pair(
+    buf: &mut [u8],
     offset: usize,
     key: &Frame,
     value: &Frame,
@@ -690,7 +690,7 @@ mod tests {
   use std::convert::TryInto;
   use std::str;
 
-  const PADDING: &'static str = "foobar";
+  const PADDING: &str = "foobar";
 
   fn empty_bytes() -> BytesMut {
     BytesMut::new()
@@ -786,7 +786,7 @@ mod tests {
     buf.extend_from_slice(PADDING.as_bytes());
 
     let len = complete::encode_bytes(&mut buf, input).unwrap();
-    let padded = vec![PADDING, expected].join("");
+    let padded = [PADDING, expected].join("");
 
     assert_eq!(
       buf,
@@ -803,7 +803,7 @@ mod tests {
     buf.extend_from_slice(PADDING.as_bytes());
 
     let len = complete::encode_bytes(&mut buf, input).unwrap();
-    let expected_start_padded = vec![PADDING, expected_start].join("");
+    let expected_start_padded = [PADDING, expected_start].join("");
 
     unordered_assert_eq(buf, BytesMut::from(expected_start_padded.as_bytes()), expected_middle);
 
@@ -836,7 +836,7 @@ mod tests {
   fn encode_and_verify_empty_with_attributes(input: &Frame, expected: &str) {
     let (attributes, encoded_attributes) = create_attributes();
     let mut frame = input.clone();
-    let _ = frame.add_attributes(attributes).unwrap();
+    frame.add_attributes(attributes).unwrap();
     let mut buf = empty_bytes();
 
     let len = complete::encode_bytes(&mut buf, &frame).unwrap();
@@ -856,7 +856,7 @@ mod tests {
   fn encode_and_verify_empty_with_attributes_unordered(input: &Frame, expected_start: &str, expected_middle: &[&str]) {
     let (attributes, encoded_attributes) = create_attributes();
     let mut frame = input.clone();
-    let _ = frame.add_attributes(attributes).unwrap();
+    frame.add_attributes(attributes).unwrap();
     let mut buf = empty_bytes();
 
     let len = complete::encode_bytes(&mut buf, &frame).unwrap();
@@ -877,7 +877,7 @@ mod tests {
   fn encode_and_verify_non_empty_with_attributes(input: &Frame, expected: &str) {
     let (attributes, encoded_attributes) = create_attributes();
     let mut frame = input.clone();
-    let _ = frame.add_attributes(attributes).unwrap();
+    frame.add_attributes(attributes).unwrap();
 
     let mut buf = empty_bytes();
     buf.extend_from_slice(PADDING.as_bytes());
@@ -903,7 +903,7 @@ mod tests {
   ) {
     let (attributes, encoded_attributes) = create_attributes();
     let mut frame = input.clone();
-    let _ = frame.add_attributes(attributes).unwrap();
+    frame.add_attributes(attributes).unwrap();
 
     let mut buf = empty_bytes();
     buf.extend_from_slice(PADDING.as_bytes());
@@ -1085,7 +1085,7 @@ mod tests {
   #[test]
   fn should_encode_negative_number() {
     let expected = ":-1000\r\n";
-    let input: Frame = (-1000 as i64).into();
+    let input: Frame = (-1000_i64).into();
 
     encode_and_verify_empty(&input, expected);
     encode_and_verify_non_empty(&input, expected);

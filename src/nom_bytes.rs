@@ -44,7 +44,7 @@ impl DerefMut for NomBytes {
 
 impl AsRef<NomBytes> for NomBytes {
   fn as_ref(&self) -> &NomBytes {
-    &self
+    self
   }
 }
 

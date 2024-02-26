@@ -183,7 +183,7 @@ pub mod tests {
   use nom::AsBytes;
   use std::str;
 
-  pub const PADDING: &'static str = "FOOBARBAZ";
+  pub const PADDING: &str = "FOOBARBAZ";
 
   pub fn pretty_print_panic(e: RedisProtocolError) {
     panic!("{:?}", e);
@@ -194,7 +194,7 @@ pub mod tests {
   }
 
   fn decode_and_verify_some(bytes: &Bytes, expected: &(Option<Frame>, usize)) {
-    let (frame, len) = match decode(&bytes) {
+    let (frame, len) = match decode(bytes) {
       Ok(Some((f, l))) => (Some(f), l),
       Ok(None) => return panic_no_decode(),
       Err(e) => return pretty_print_panic(e),
@@ -220,7 +220,7 @@ pub mod tests {
   }
 
   fn decode_and_verify_none(bytes: &Bytes) {
-    let (frame, len) = match decode(&bytes) {
+    let (frame, len) = match decode(bytes) {
       Ok(Some((f, l))) => (Some(f), l),
       Ok(None) => (None, 0),
       Err(e) => return pretty_print_panic(e),
@@ -351,6 +351,6 @@ pub mod tests {
   #[should_panic]
   fn should_error_on_junk() {
     let bytes: Bytes = "foobarbazwibblewobble".into();
-    let _ = decode(&bytes).map_err(|e| pretty_print_panic(e));
+    let _ = decode(&bytes).map_err(pretty_print_panic);
   }
 }

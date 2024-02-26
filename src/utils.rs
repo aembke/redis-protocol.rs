@@ -13,22 +13,22 @@ use core::str;
 
 pub const KB: usize = 1024;
 /// A pre-defined zeroed out KB of data, used to speed up extending buffers while encoding.
-pub const ZEROED_KB: &'static [u8; 1024] = &[0; 1024];
+pub const ZEROED_KB: &[u8; 1024] = &[0; 1024];
 
 pub const REDIS_CLUSTER_SLOTS: u16 = 16384;
 
 /// Prefix on normal pubsub messages.
 ///
 /// In RESP2 this may be the first inner frame, in RESP3 it may be the second inner frame.
-pub const PUBSUB_PREFIX: &'static str = "message";
+pub const PUBSUB_PREFIX: &str = "message";
 /// Prefix on pubsub messages from a pattern matching subscription.
 ///
 /// In RESP2 this may be the first inner frame, in RESP3 it may be the second inner frame.
-pub const PATTERN_PUBSUB_PREFIX: &'static str = "pmessage";
+pub const PATTERN_PUBSUB_PREFIX: &str = "pmessage";
 /// Prefix on RESP3 push pubsub messages.
 ///
 /// In RESP3 this is the first inner frame in a push pubsub message.
-pub const PUBSUB_PUSH_PREFIX: &'static str = "pubsub";
+pub const PUBSUB_PUSH_PREFIX: &str = "pubsub";
 
 macro_rules! unwrap_return(
   ($expr:expr) => {
@@ -173,7 +173,7 @@ pub fn resp2_frame_to_resp3(frame: Resp2Frame) -> Resp3Frame {
     Resp2Frame::BulkString(d) => {
       if d.len() < 6 {
         match str::from_utf8(&d).ok() {
-          Some(s) => match s.as_ref() {
+          Some(s) => match s {
             "true" => Resp3Frame::Boolean {
               data: true,
               attributes: None,
@@ -261,7 +261,7 @@ pub fn zero_extend(buf: &mut BytesMut, mut amt: usize) {
 
 pub fn is_cluster_error(payload: &str) -> bool {
   if payload.starts_with("MOVED") || payload.starts_with("ASK") {
-    payload.split(" ").fold(0, |c, _| c + 1) == 3
+    payload.split(' ').fold(0, |c, _| c + 1) == 3
   } else {
     false
   }
@@ -269,7 +269,7 @@ pub fn is_cluster_error(payload: &str) -> bool {
 
 pub fn read_cluster_error(payload: &str) -> Option<Redirection> {
   if payload.starts_with("MOVED") {
-    let parts: Vec<&str> = payload.split(" ").collect();
+    let parts: Vec<&str> = payload.split(' ').collect();
     if parts.len() == 3 {
       let slot = unwrap_return!(parts[1].parse::<u16>().ok());
       let server = parts[2].to_owned();
@@ -279,7 +279,7 @@ pub fn read_cluster_error(payload: &str) -> Option<Redirection> {
       None
     }
   } else if payload.starts_with("ASK") {
-    let parts: Vec<&str> = payload.split(" ").collect();
+    let parts: Vec<&str> = payload.split(' ').collect();
     if parts.len() == 3 {
       let slot = unwrap_return!(parts[1].parse::<u16>().ok());
       let server = parts[2].to_owned();
@@ -336,13 +336,13 @@ pub fn redis_keyslot(key: &[u8]) -> u16 {
   }
 
   let j = j.unwrap();
-  let out = if i + j == key.len() || j == 0 {
+  
+
+  if i + j == key.len() || j == 0 {
     crc16_xmodem(key)
   } else {
     crc16_xmodem(&key[i + 1..i + j + 1])
-  };
-
-  out
+  }
 }
 
 pub(crate) fn to_byte_str<T>(data: T) -> Result<Str, RedisParseError<NomBytes>>

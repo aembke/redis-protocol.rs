@@ -20,7 +20,7 @@ pub const BULKSTRING_BYTE: u8 = b'$';
 pub const ARRAY_BYTE: u8 = b'*';
 
 /// The binary representation of NULL in RESP2.
-pub const NULL: &'static str = "$-1\r\n";
+pub const NULL: &str = "$-1\r\n";
 
 pub use crate::utils::{PATTERN_PUBSUB_PREFIX, PUBSUB_PREFIX};
 
