@@ -1,19 +1,22 @@
 use crate::resp2::types::Frame as Resp2Frame;
 use crate::resp3::types::Frame as Resp3Frame;
-use bytes_utils::string::Utf8Error as BytesUtf8Error;
-use cookie_factory::GenError;
-use nom::error::{ErrorKind, FromExternalError, ParseError};
-use nom::{Err as NomError, Needed};
 use alloc::borrow::Cow;
 use alloc::format;
 use alloc::string::String;
+use bytes_utils::string::Utf8Error as BytesUtf8Error;
+use cookie_factory::GenError;
 use core::borrow::Borrow;
 use core::fmt;
 use core::fmt::Debug;
 use core::str::Utf8Error;
+use nom::error::{ErrorKind, FromExternalError, ParseError};
+use nom::{Err as NomError, Needed};
 
 #[cfg(feature = "std")]
 use std::io::Error as IoError;
+
+/// Used as the string in redis error types
+pub use bytes_utils::Str;
 
 /// Terminating bytes between frames.
 pub const CRLF: &'static str = "\r\n";
