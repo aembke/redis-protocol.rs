@@ -1,16 +1,16 @@
 use crate::resp2::types::Frame as Resp2Frame;
 use crate::resp3::types::Frame as Resp3Frame;
-use bytes_utils::string::Utf8Error as BytesUtf8Error;
-use cookie_factory::GenError;
-use nom::error::{ErrorKind, FromExternalError, ParseError};
-use nom::{Err as NomError, Needed};
 use alloc::borrow::Cow;
 use alloc::format;
 use alloc::string::String;
+use bytes_utils::string::Utf8Error as BytesUtf8Error;
+use cookie_factory::GenError;
 use core::borrow::Borrow;
 use core::fmt;
 use core::fmt::Debug;
 use core::str::Utf8Error;
+use nom::error::{ErrorKind, FromExternalError, ParseError};
+use nom::{Err as NomError, Needed};
 
 #[cfg(feature = "std")]
 use std::io::Error as IoError;
@@ -36,30 +36,13 @@ pub enum RedisProtocolErrorKind {
 
 impl PartialEq for RedisProtocolErrorKind {
   fn eq(&self, other: &Self) -> bool {
-    use self::RedisProtocolErrorKind::*;
-
-    match *self {
-      EncodeError => match *other {
-        EncodeError => true,
-        _ => false,
-      },
-      DecodeError => match *other {
-        DecodeError => true,
-        _ => false,
-      },
-      BufferTooSmall(amt) => match *other {
-        BufferTooSmall(_amt) => amt == amt,
-        _ => false,
-      },
-      #[cfg(feature = "std")]
-      IO(_) => match *other {
-        IO(_) => true,
-        _ => false,
-      },
-      Unknown => match *other {
-        Unknown => true,
-        _ => false,
-      },
+    match (self, other) {
+      (RedisProtocolErrorKind::EncodeError, RedisProtocolErrorKind::EncodeError) => true,
+      (RedisProtocolErrorKind::DecodeError, RedisProtocolErrorKind::DecodeError) => true,
+      (RedisProtocolErrorKind::BufferTooSmall(a), RedisProtocolErrorKind::BufferTooSmall(b)) => a == b,
+      (RedisProtocolErrorKind::IO(_), RedisProtocolErrorKind::IO(_)) => true,
+      (RedisProtocolErrorKind::Unknown, RedisProtocolErrorKind::Unknown) => true,
+      _ => false,
     }
   }
 }
