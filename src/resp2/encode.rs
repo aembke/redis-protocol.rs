@@ -69,8 +69,8 @@ fn gen_array<'a>(x: (&'a mut [u8], usize), data: &Vec<Frame>) -> Result<(&'a mut
 
   for frame in data.iter() {
     x = match frame {
-      Frame::SimpleString(ref s) => gen_simplestring(x, &s)?,
-      Frame::BulkString(ref b) => gen_bulkstring(x, &b)?,
+      Frame::SimpleString(ref s) => gen_simplestring(x, s)?,
+      Frame::BulkString(ref b) => gen_bulkstring(x, b)?,
       Frame::Null => gen_null(x)?,
       Frame::Error(ref s) => gen_error(x, s)?,
       Frame::Array(ref frames) => gen_array(x, frames)?,
@@ -122,7 +122,7 @@ mod tests {
   use super::*;
   use crate::utils::*;
 
-  const PADDING: &'static str = "foobar";
+  const PADDING: &str = "foobar";
 
   fn encode_and_verify_empty(input: &Frame, expected: &str) {
     let mut buf = BytesMut::new();
@@ -144,7 +144,7 @@ mod tests {
       Ok(l) => l,
       Err(e) => panic!("{:?}", e),
     };
-    let padded = vec![PADDING, expected].join("");
+    let padded = [PADDING, expected].join("");
 
     assert_eq!(buf, padded.as_bytes(), "padded buf contents match");
     assert_eq!(len, padded.as_bytes().len(), "padded expected len is correct");

@@ -283,7 +283,7 @@ pub fn reconstruct_blobstring(
   for frame in frames.into_iter() {
     data.extend_from_slice(match frame {
       Frame::ChunkedString(ref inner) => inner,
-      Frame::BlobString { ref data, .. } => &data,
+      Frame::BlobString { ref data, .. } => data,
       _ => {
         return Err(RedisProtocolError::new(
           RedisProtocolErrorKind::DecodeError,
@@ -327,7 +327,7 @@ pub fn reconstruct_map(
   }
 
   let mut data = new_map(Some(frames.len() / 2));
-  while frames.len() > 0 {
+  while !frames.is_empty() {
     let value = frames.pop_back().unwrap();
     let key = match frames.pop_back() {
       Some(f) => f,
@@ -522,7 +522,7 @@ mod tests {
     assert_eq!(streamed_frame.into_frame().unwrap(), expected);
 
     let (attributes, _) = create_attributes();
-    let _ = k1.add_attributes(attributes.clone()).unwrap();
+    k1.add_attributes(attributes.clone()).unwrap();
 
     let mut streamed_frame = StreamedFrame::new(FrameKind::Map);
     streamed_frame.add_frame(k1.clone());
@@ -602,7 +602,7 @@ mod tests {
     assert_eq!(streamed_frame.into_frame().unwrap(), expected);
 
     let (attributes, _) = create_attributes();
-    let _ = v1.add_attributes(attributes.clone()).unwrap();
+    v1.add_attributes(attributes.clone()).unwrap();
 
     let mut streamed_frame = StreamedFrame::new(FrameKind::Set);
     streamed_frame.add_frame(v1.clone());
@@ -779,8 +779,8 @@ mod tests {
     assert_eq!(streamed_frame.into_frame().unwrap(), expected);
 
     let (attributes, _) = create_attributes();
-    let _ = v1.add_attributes(attributes.clone()).unwrap();
-    let _ = inner_v1.add_attributes(attributes.clone()).unwrap();
+    v1.add_attributes(attributes.clone()).unwrap();
+    inner_v1.add_attributes(attributes.clone()).unwrap();
     let mut inner_map = new_map(None);
     inner_map.insert(inner_k1, inner_v1);
     let v2 = Frame::Map {
@@ -815,7 +815,7 @@ mod tests {
     assert_eq!(encode_len(&frame).unwrap(), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
-    let _ = frame.add_attributes(attributes).unwrap();
+    frame.add_attributes(attributes).unwrap();
     assert_eq!(encode_len(&frame).unwrap(), expected_len + attributes_len);
   }
 
@@ -829,7 +829,7 @@ mod tests {
     assert_eq!(encode_len(&frame).unwrap(), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
-    let _ = frame.add_attributes(attributes).unwrap();
+    frame.add_attributes(attributes).unwrap();
     assert_eq!(encode_len(&frame).unwrap(), expected_len + attributes_len);
   }
 
@@ -843,7 +843,7 @@ mod tests {
     assert_eq!(encode_len(&frame).unwrap(), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
-    let _ = frame.add_attributes(attributes).unwrap();
+    frame.add_attributes(attributes).unwrap();
     assert_eq!(encode_len(&frame).unwrap(), expected_len + attributes_len);
   }
 
@@ -857,7 +857,7 @@ mod tests {
     assert_eq!(encode_len(&frame).unwrap(), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
-    let _ = frame.add_attributes(attributes).unwrap();
+    frame.add_attributes(attributes).unwrap();
     assert_eq!(encode_len(&frame).unwrap(), expected_len + attributes_len);
 
     let mut frame = Frame::Boolean {
@@ -868,7 +868,7 @@ mod tests {
     assert_eq!(encode_len(&frame).unwrap(), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
-    let _ = frame.add_attributes(attributes).unwrap();
+    frame.add_attributes(attributes).unwrap();
     assert_eq!(encode_len(&frame).unwrap(), expected_len + attributes_len);
   }
 
@@ -882,7 +882,7 @@ mod tests {
     assert_eq!(encode_len(&frame).unwrap(), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
-    let _ = frame.add_attributes(attributes).unwrap();
+    frame.add_attributes(attributes).unwrap();
     assert_eq!(encode_len(&frame).unwrap(), expected_len + attributes_len);
   }
 
@@ -896,7 +896,7 @@ mod tests {
     assert_eq!(encode_len(&frame).unwrap(), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
-    let _ = frame.add_attributes(attributes).unwrap();
+    frame.add_attributes(attributes).unwrap();
     assert_eq!(encode_len(&frame).unwrap(), expected_len + attributes_len);
   }
 
@@ -910,7 +910,7 @@ mod tests {
     assert_eq!(encode_len(&frame).unwrap(), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
-    let _ = frame.add_attributes(attributes).unwrap();
+    frame.add_attributes(attributes).unwrap();
     assert_eq!(encode_len(&frame).unwrap(), expected_len + attributes_len);
   }
 
@@ -924,7 +924,7 @@ mod tests {
     assert_eq!(encode_len(&frame).unwrap(), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
-    let _ = frame.add_attributes(attributes).unwrap();
+    frame.add_attributes(attributes).unwrap();
     assert_eq!(encode_len(&frame).unwrap(), expected_len + attributes_len);
   }
 
@@ -938,7 +938,7 @@ mod tests {
     assert_eq!(encode_len(&frame).unwrap(), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
-    let _ = frame.add_attributes(attributes).unwrap();
+    frame.add_attributes(attributes).unwrap();
     assert_eq!(encode_len(&frame).unwrap(), expected_len + attributes_len);
 
     let mut frame = Frame::Double {
@@ -949,7 +949,7 @@ mod tests {
     assert_eq!(encode_len(&frame).unwrap(), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
-    let _ = frame.add_attributes(attributes).unwrap();
+    frame.add_attributes(attributes).unwrap();
     assert_eq!(encode_len(&frame).unwrap(), expected_len + attributes_len);
   }
 
@@ -998,7 +998,7 @@ mod tests {
     assert_eq!(encode_len(&frame).unwrap(), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
-    let _ = frame.add_attributes(attributes).unwrap();
+    frame.add_attributes(attributes).unwrap();
     assert_eq!(encode_len(&frame).unwrap(), expected_len + attributes_len);
 
     let mut frame = Frame::VerbatimString {
@@ -1010,7 +1010,7 @@ mod tests {
     assert_eq!(encode_len(&frame).unwrap(), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
-    let _ = frame.add_attributes(attributes).unwrap();
+    frame.add_attributes(attributes).unwrap();
     assert_eq!(encode_len(&frame).unwrap(), expected_len + attributes_len);
   }
 

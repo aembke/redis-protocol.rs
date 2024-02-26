@@ -64,28 +64,28 @@ pub const END_STREAM_BYTE: u8 = b'.';
 /// Byte prefix on a streamed type, following the byte that identifies the type.
 pub const STREAMED_LENGTH_BYTE: u8 = b'?';
 /// The terminating bytes when a streaming operation is done from a blob string.
-pub const END_STREAM_STRING_BYTES: &'static str = ";0\r\n";
+pub const END_STREAM_STRING_BYTES: &str = ";0\r\n";
 /// The terminating bytes when a streaming operation is done from an aggregate type.
-pub const END_STREAM_AGGREGATE_BYTES: &'static str = ".\r\n";
+pub const END_STREAM_AGGREGATE_BYTES: &str = ".\r\n";
 
 /// The binary representation of NULL in RESP3.
-pub const NULL: &'static str = "_\r\n";
+pub const NULL: &str = "_\r\n";
 
 /// Byte representation of positive infinity.
-pub const INFINITY: &'static str = "inf";
+pub const INFINITY: &str = "inf";
 /// Byte representation of negative infinity.
-pub const NEG_INFINITY: &'static str = "-inf";
+pub const NEG_INFINITY: &str = "-inf";
 
 /// Byte representation of HELLO.
-pub const HELLO: &'static str = "HELLO";
+pub const HELLO: &str = "HELLO";
 /// Byte representation of `true`.
-pub const BOOL_TRUE_BYTES: &'static str = "#t\r\n";
+pub const BOOL_TRUE_BYTES: &str = "#t\r\n";
 /// Byte representation of `false`.
-pub const BOOL_FALSE_BYTES: &'static str = "#f\r\n";
+pub const BOOL_FALSE_BYTES: &str = "#f\r\n";
 /// Byte representation of an empty space.
-pub const EMPTY_SPACE: &'static str = " ";
+pub const EMPTY_SPACE: &str = " ";
 /// Byte representation of `AUTH`.
-pub const AUTH: &'static str = "AUTH";
+pub const AUTH: &str = "AUTH";
 
 pub use crate::utils::{PATTERN_PUBSUB_PREFIX, PUBSUB_PREFIX, PUBSUB_PUSH_PREFIX};
 
@@ -907,7 +907,7 @@ impl Frame {
     };
 
     if let Some(_attributes) = _attributes.as_mut() {
-      _attributes.extend(attributes.into_iter());
+      _attributes.extend(attributes);
     } else {
       *_attributes = Some(attributes);
     }
@@ -1106,7 +1106,7 @@ impl Frame {
   pub fn as_bytes(&self) -> Option<&[u8]> {
     match *self {
       Frame::SimpleError { ref data, .. } => Some(data.as_bytes()),
-      Frame::SimpleString { ref data, .. } => Some(&data),
+      Frame::SimpleString { ref data, .. } => Some(data),
       Frame::BlobError { ref data, .. } | Frame::BlobString { ref data, .. } | Frame::BigNumber { ref data, .. } => {
         Some(data)
       }
@@ -1276,7 +1276,7 @@ impl StreamedFrame {
       // the last frame is an empty chunked string when the stream is finished
       let _ = self.buffer.pop_back();
     }
-    let buffer = mem::replace(&mut self.buffer, VecDeque::new());
+    let buffer = std::mem::take(&mut self.buffer);
     let attributes = self.attributes.take();
 
     let frame = match self.kind {
@@ -1316,7 +1316,7 @@ pub enum DecodedFrame {
 impl DecodedFrame {
   /// Add attributes to the decoded frame, if possible.
   pub fn add_attributes(&mut self, attributes: Attributes) -> Result<(), RedisProtocolError> {
-    let _ = match *self {
+    match *self {
       DecodedFrame::Streaming(ref mut inner) => inner.attributes = Some(attributes),
       DecodedFrame::Complete(ref mut inner) => inner.add_attributes(attributes)?,
     };

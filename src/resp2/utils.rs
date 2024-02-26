@@ -50,7 +50,7 @@ pub fn is_pattern_pubsub(frames: &Vec<Frame>) -> bool {
 /// Returns the number of bytes necessary to represent the frame.
 pub fn encode_len(data: &Frame) -> Result<usize, GenError> {
   match *data {
-    Frame::BulkString(ref b) => Ok(bulkstring_encode_len(&b)),
+    Frame::BulkString(ref b) => Ok(bulkstring_encode_len(b)),
     Frame::Array(ref frames) => array_encode_len(frames),
     Frame::Null => Ok(NULL.as_bytes().len()),
     Frame::SimpleString(ref s) => Ok(simplestring_encode_len(s)),

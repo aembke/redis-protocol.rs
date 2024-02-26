@@ -67,7 +67,7 @@ pub(crate) fn to_f64<T>(s: &[u8]) -> Result<f64, RedisParseError<T>> {
 }
 
 pub(crate) fn to_bool<T>(s: &[u8]) -> Result<bool, RedisParseError<T>> {
-  match str::from_utf8(s)?.as_ref() {
+  match str::from_utf8(s)? {
     "t" => Ok(true),
     "f" => Ok(false),
     _ => Err(RedisParseError::new_custom("to_bool", "Invalid boolean value.")),
@@ -75,7 +75,7 @@ pub(crate) fn to_bool<T>(s: &[u8]) -> Result<bool, RedisParseError<T>> {
 }
 
 pub(crate) fn to_verbatimstring_format<T>(s: &[u8]) -> Result<VerbatimStringFormat, RedisParseError<T>> {
-  match str::from_utf8(s)?.as_ref() {
+  match str::from_utf8(s)? {
     "txt" => Ok(VerbatimStringFormat::Text),
     "mkd" => Ok(VerbatimStringFormat::Markdown),
     _ => Err(RedisParseError::new_custom(
@@ -616,7 +616,7 @@ pub mod tests {
   use nom::AsBytes;
   use std::str;
 
-  pub const PADDING: &'static str = "FOOBARBAZ";
+  pub const PADDING: &str = "FOOBARBAZ";
 
   pub fn pretty_print_panic(e: RedisProtocolError) {
     panic!("{:?}", e);
@@ -627,7 +627,7 @@ pub mod tests {
   }
 
   fn decode_and_verify_some(bytes: &Bytes, expected: &(Option<Frame>, usize)) {
-    let (frame, len) = match complete::decode(&bytes) {
+    let (frame, len) = match complete::decode(bytes) {
       Ok(Some((f, l))) => (Some(f), l),
       Ok(None) => return panic_no_decode(),
       Err(e) => return pretty_print_panic(e),
@@ -653,7 +653,7 @@ pub mod tests {
   }
 
   fn decode_and_verify_none(bytes: &Bytes) {
-    let (frame, len) = match complete::decode(&bytes) {
+    let (frame, len) = match complete::decode(bytes) {
       Ok(Some((f, l))) => (Some(f), l),
       Ok(None) => (None, 0),
       Err(e) => return pretty_print_panic(e),
@@ -847,7 +847,7 @@ pub mod tests {
   #[should_panic]
   fn should_error_on_junk() {
     let bytes: Bytes = "foobarbazwibblewobble".into();
-    let _ = complete::decode(&bytes).map_err(|e| pretty_print_panic(e));
+    let _ = complete::decode(&bytes).map_err(pretty_print_panic);
   }
 
   // ----------------- end tests adapted from RESP2 ------------------------
@@ -1386,7 +1386,7 @@ pub mod tests {
             attributes: None,
           },
         ],
-        attributes: Some(expected_attrs.into()),
+        attributes: Some(expected_attrs),
       }),
       81,
     );

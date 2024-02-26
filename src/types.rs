@@ -16,7 +16,7 @@ use core::str::Utf8Error;
 use std::io::Error as IoError;
 
 /// Terminating bytes between frames.
-pub const CRLF: &'static str = "\r\n";
+pub const CRLF: &str = "\r\n";
 
 /// The kind of error without any associated data.
 #[derive(Debug)]
