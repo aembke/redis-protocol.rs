@@ -1,15 +1,14 @@
-//! Functions for encoding frames into the RESP2 protocol.
+//! Functions for encoding Frames into the RESP2 protocol.
 //!
 //! <https://redis.io/topics/protocol#resp-protocol-description>
 
 use crate::{
   alloc::string::ToString,
-  error::{RedisProtocolError, RedisProtocolErrorKind},
   resp2::{
     types::*,
     utils::{self as resp2_utils},
   },
-  types::CRLF,
+  types::{RedisProtocolError, CRLF},
   utils,
 };
 use alloc::vec::Vec;
@@ -100,11 +99,9 @@ fn attempt_encoding(buf: &mut [u8], offset: usize, frame: &Frame) -> Result<usiz
   }
 }
 
-/// Attempt to encode a frame into `buf`, starting at `offset`.
+/// Attempt to encode a frame into `buf`, assuming a starting offset of 0.
 ///
 /// The caller is responsible for extending the buffer if a `RedisProtocolErrorKind::BufferTooSmall` is returned.
-///
-/// Returns the number of bytes encoded.
 pub fn encode(buf: &mut [u8], offset: usize, frame: &Frame) -> Result<usize, RedisProtocolError> {
   attempt_encoding(buf, offset, frame).map_err(|e| e.into())
 }

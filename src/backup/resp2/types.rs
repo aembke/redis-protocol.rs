@@ -1,13 +1,12 @@
-use crate::{
-  error::{RedisProtocolError, RedisProtocolErrorKind},
-  resp2::utils as resp2_utils,
-  types::Redirection,
-  utils,
-};
-use alloc::{string::String, vec::Vec};
+use crate::resp2::utils as resp2_utils;
+use crate::types::{Redirection, RedisProtocolError};
+use crate::utils;
+use alloc::string::String;
+use alloc::vec::Vec;
 use bytes::Bytes;
 use bytes_utils::Str;
-use core::{mem, str};
+use core::mem;
+use core::str;
 
 /// Byte prefix before a simple string type.
 pub const SIMPLESTRING_BYTE: u8 = b'+';
@@ -112,8 +111,7 @@ impl Frame {
     }
   }
 
-  /// Whether or not the frame represents a message on a publish-subscribe channel matched against a pattern
-  /// subscription.
+  /// Whether or not the frame represents a message on a publish-subscribe channel matched against a pattern subscription.
   pub fn is_pattern_pubsub_message(&self) -> bool {
     if let Frame::Array(ref frames) = *self {
       resp2_utils::is_pattern_pubsub(frames)
@@ -196,8 +194,7 @@ impl Frame {
   /// if successful, or the original frame if the inner data is not a publish-subscribe message.
   pub fn parse_as_pubsub(self) -> Result<(String, String), Self> {
     if self.is_pubsub_message() {
-      // if `is_pubsub_message` returns true but this panics then there's a bug in `is_pubsub_message`, so this fails
-      // loudly
+      // if `is_pubsub_message` returns true but this panics then there's a bug in `is_pubsub_message`, so this fails loudly
       let (message, channel, _) = match self {
         Frame::Array(mut frames) => (
           resp2_utils::opt_frame_to_string_panic(frames.pop(), "Expected pubsub payload. This is a bug."),
@@ -246,7 +243,7 @@ mod tests {
   #[test]
   fn should_convert_ask_redirection_to_frame() {
     let redirection = Redirection::Ask {
-      slot:   3999,
+      slot: 3999,
       server: "127.0.0.1:6381".into(),
     };
     let frame = Frame::Error("ASK 3999 127.0.0.1:6381".into());
@@ -257,7 +254,7 @@ mod tests {
   #[test]
   fn should_convert_moved_redirection_to_frame() {
     let redirection = Redirection::Moved {
-      slot:   3999,
+      slot: 3999,
       server: "127.0.0.1:6381".into(),
     };
     let frame = Frame::Error("MOVED 3999 127.0.0.1:6381".into());
@@ -268,7 +265,7 @@ mod tests {
   #[test]
   fn should_convert_frame_to_redirection_moved() {
     let redirection = Redirection::Moved {
-      slot:   3999,
+      slot: 3999,
       server: "127.0.0.1:6381".into(),
     };
     let frame = Frame::Error("MOVED 3999 127.0.0.1:6381".into());
@@ -279,7 +276,7 @@ mod tests {
   #[test]
   fn should_convert_frame_to_redirection_ask() {
     let redirection = Redirection::Ask {
-      slot:   3999,
+      slot: 3999,
       server: "127.0.0.1:6381".into(),
     };
     let frame = Frame::Error("ASK 3999 127.0.0.1:6381".into());
@@ -291,7 +288,7 @@ mod tests {
   #[should_panic]
   fn should_convert_frame_to_redirection_error() {
     let redirection = Redirection::Ask {
-      slot:   3999,
+      slot: 3999,
       server: "127.0.0.1:6381".into(),
     };
     let frame = Frame::BulkString("ASK 3999 127.0.0.1:6381".into());

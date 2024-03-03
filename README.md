@@ -7,25 +7,18 @@ Redis Protocol
 [![Crates.io](https://img.shields.io/crates/v/redis-protocol.svg)](https://crates.io/crates/redis-protocol)
 [![API docs](https://docs.rs/redis-protocol/badge.svg)](https://docs.rs/redis-protocol)
 
-Structs and functions for implementing the [Redis protocol](https://redis.io/topics/protocol). 
-
-## Install
-
-With [cargo edit](https://github.com/killercup/cargo-edit).
-
-```
-cargo add redis-protocol
-```
+A Rust implementation of the [Redis protocol](https://redis.io/topics/protocol). 
 
 ## Features
 
-* Supports RESP2 and RESP3, including streaming frames.
-* Parse publish-subscribe messages.
-* Support cluster redirection errors.
-* Implements cluster key hashing.
+* Owned and zero-copy borrowed or [Bytes](https://docs.rs/bytes/latest/bytes/struct.Bytes.html)-based parsing interfaces. 
+* Supports RESP2 and RESP3 frames, including streaming frames.
+* Publish-subscribe message utilities.
+* Cluster key hashing.
+* Cluster routing.
+* RESP2 and RESP3 [codec](https://docs.rs/tokio-util/latest/tokio_util/codec/index.html) interfaces. 
 * Utility functions for converting from RESP2 to RESP3.
-
-This library relies heavily on the `Bytes` interface to implement parsing logic such that buffer contents never need to move or be copied. 
+* Utility traits for converting frames into other types. 
 
 ## Examples
 
@@ -56,19 +49,19 @@ fn main() {
 }
 ```
 
-## Decode Logs
+## Build Features 
 
-Use the `decode-logs` feature to enable special TRACE logs during the Frame decoding process.
-
-## Decoding `BytesMut`
-
-Using the default decoder interface with `BytesMut` can be challenging if the goal is to avoid copying or moving the buffer contents. 
-
-To better support this use case (such as the [codec](https://docs.rs/tokio-util/0.6.6/tokio_util/codec/index.html) interface) this library supports a `decode-mut` feature flag that can parse `BytesMut` without copying or moving the buffer contents.
-
-## IndexMap
-
-Enable the `index-map` feature to use [IndexMap](https://crates.io/crates/indexmap) instead of `HashMap` and `HashSet`. This is useful for testing and may also be useful to callers.
+| Name          | Default | Description                                                                                                                                  |
+|---------------|---------|----------------------------------------------------------------------------------------------------------------------------------------------|
+| `std`         | x       | Enable stdlib features and most dependency default features.                                                                                 |
+| `decode-logs` |         | Enable extra debugging TRACE logs during the frame decoding process.                                                                         |
+| `alloc`       |         | Enable `nom/alloc` for use in `no_std` builds.                                                                                               |
+| `libm`        |         | Enable `libm` utils for use in `no_std` builds.                                                                                              |
+| `hashbrown`   |         | Enable `hashbrown` types for use in `no_std` builds.                                                                                         |
+| `routing`     |         | Enable a cluster routing interface.                                                                                                          |
+| `codec`       |         | Enable a RESP2 and RESP3 [Tokio codec](https://docs.rs/tokio-util/latest/tokio_util/codec/index.html) interface.                             |
+| `convert`     |         | Enable the `FromResp2` and `FromResp3` trait interfaces.                                                                                     |
+| `index-map`   |         | Use [IndexMap](https://crates.io/crates/indexmap) types instead of `HashMap`. This is useful for testing and may also be useful for callers. |
 
 ## no_std
 
