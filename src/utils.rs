@@ -5,7 +5,7 @@ use crate::{
   types::*,
 };
 use alloc::{borrow::ToOwned, format, string::String, vec::Vec};
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use bytes_utils::Str;
 use cookie_factory::GenError;
 use core::str;
@@ -35,16 +35,51 @@ pub fn digits_in_number(d: usize) -> usize {
   libm::floor(libm::log10(d as f64)) as usize + 1
 }
 
-/// Utility function to translate RESP2 frames to RESP3 frames.
+// TODO maybe move this to resp3 utils
+#[cfg(feature = "std")]
+pub fn hash_tuple<H: std::hash::Hasher>(state: &mut H, range: &(usize, usize)) {
+  use std::hash::Hash;
+
+  range.0.hash(state);
+  range.1.hash(state);
+}
+
+/// A utility function to translate RESP2 frames to RESP3 frames.
 ///
 /// RESP2 frames and RESP3 frames are quite different, but RESP3 is largely a superset of RESP2 so this function will
 /// never return an error.
 ///
 /// Redis handles the protocol choice based on the response to the `HELLO` command, so developers of higher level
-/// clients can be faced with a decision on which `Frame` struct to expose to callers.
+/// clients can be faced with a decision on which `Frame` struct to expose to callers. This function can allow callers
+/// to take a dependency on the RESP3 interface by lazily translating RESP2 frames to RESP3 frames.
 ///
-/// This function can allow callers to take a dependency on the RESP3 interface by lazily translating RESP2 frames
-/// from the server to RESP3 frames.
+/// **Important**: RESP3 pubsub payloads have an additional ["pubsub"](crate::types::PUBSUB_PUSH_PREFIX) SimpleString
+/// prefix frame.
+///
+/// For example, a RESP2 pubsub payload uses the format:
+///
+/// ```rust
+/// # use redis_protocol::resp2::types::OwnedFrame;
+/// OwnedFrame::Array(vec![
+///   OwnedFrame::SimpleString("message|pmessage|smessage".into()),
+///   OwnedFrame::BulkString("<channel>".into()),
+///   OwnedFrame::BulkString("<message>".into()),
+/// ])
+/// ```
+///
+/// whereas a RESP3 pubsub payload uses the format:
+///
+/// ```rust
+/// # use redis_protocol::resp3::types::OwnedFrame;
+/// OwnedFrame::Array(vec![
+///   OwnedFrame::SimpleString("pubsub".into()),
+///   OwnedFrame::SimpleString("message|pmessage|smessage".into()),
+///   OwnedFrame::BulkString("<channel>".into()),
+///   OwnedFrame::BulkString("<message>".into()),
+/// ])
+/// ```
+///
+/// This function will add the "pubsub" prefix shown above, but callers should be aware of this for any relevant [duck typing](https://en.wikipedia.org/wiki/Duck_typing) use cases.
 pub fn resp2_to_resp3(frame: Resp2Frame) -> Resp3Frame {
   if frame.is_normal_pubsub() {
     let mut out = Vec::with_capacity(4);

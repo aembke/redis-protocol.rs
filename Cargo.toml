@@ -1,6 +1,6 @@
 [package]
 authors = ["Alec Embke <aembke@gmail.com>"]
-description = "Structs and functions to implement the Redis protocol."
+description = "An implementation of the RESP2 and RESP3 protocols."
 homepage = "https://github.com/aembke/redis-protocol.rs"
 keywords = ["redis", "protocol", "RESP", "no_std"]
 license = "MIT"
