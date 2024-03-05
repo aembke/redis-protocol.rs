@@ -46,8 +46,7 @@ pub fn hash_tuple<H: std::hash::Hasher>(state: &mut H, range: &(usize, usize)) {
 
 /// A utility function to translate RESP2 frames to RESP3 frames.
 ///
-/// RESP2 frames and RESP3 frames are quite different, but RESP3 is largely a superset of RESP2 so this function will
-/// never return an error.
+/// RESP2 frames and RESP3 frames are somewhat different, but RESP3 is largely a superset of RESP2.
 ///
 /// Redis handles the protocol choice based on the response to the `HELLO` command, so developers of higher level
 /// clients can be faced with a decision on which `Frame` struct to expose to callers. This function can allow callers
@@ -66,7 +65,7 @@ pub fn hash_tuple<H: std::hash::Hasher>(state: &mut H, range: &(usize, usize)) {
 ///   OwnedFrame::BulkString("<message>".into()),
 /// ])
 /// ```
-///
+
 /// whereas a RESP3 pubsub payload uses the format:
 ///
 /// ```rust

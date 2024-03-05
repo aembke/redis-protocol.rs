@@ -3,7 +3,7 @@ use crate::{
   error::{RedisProtocolError, RedisProtocolErrorKind},
   resp2::{
     utils as resp2_utils,
-    utils::{array_encode_len, bulkstring_encode_len, error_encode_len, integer_encode_len, simplestring_encode_len},
+    utils::{bulkstring_encode_len, error_encode_len, integer_encode_len, simplestring_encode_len},
   },
   types::_Range,
   utils,
@@ -12,6 +12,7 @@ use alloc::{string::String, vec::Vec};
 use bytes::{Bytes, BytesMut};
 use bytes_utils::Str;
 use core::{mem, str};
+use nom::AsBytes;
 
 /// Byte prefix before a simple string type.
 pub const SIMPLESTRING_BYTE: u8 = b'+';
@@ -87,20 +88,6 @@ pub enum RangeFrame {
   Null,
 }
 
-impl RangeFrame {
-  ///
-  // TODO
-  pub fn to_owned_frame<'a>(&self, buf: &'a [u8]) -> Result<OwnedFrame, RedisProtocolError> {
-    unimplemented!()
-  }
-
-  ///
-  // TODO do zero-copy things
-  pub fn to_bytes_frame(&self, buf: &BytesMut) -> Result<BytesFrame, RedisProtocolError> {
-    unimplemented!()
-  }
-}
-
 /// A RESP2 frame.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum OwnedFrame {
@@ -133,6 +120,7 @@ impl OwnedFrame {
     }
   }
 
+  /// Read the number of bytes needed to encode this frame.
   pub fn encode_len(&self) -> usize {
     match self {
       OwnedFrame::BulkString(b) => bulkstring_encode_len(&b),
@@ -146,7 +134,67 @@ impl OwnedFrame {
     }
   }
 
-  // TODO impl the other util functions from BytesFrame
+  /// Replace `self` with Null, returning the original value.
+  pub fn take(&mut self) -> OwnedFrame {
+    mem::replace(self, OwnedFrame::Null)
+  }
+
+  /// Whether the frame is an error.
+  pub fn is_error(&self) -> bool {
+    match self.kind() {
+      FrameKind::Error => true,
+      _ => false,
+    }
+  }
+
+  /// Read the `FrameKind` value for this frame.
+  pub fn kind(&self) -> FrameKind {
+    match self {
+      OwnedFrame::SimpleString(_) => FrameKind::SimpleString,
+      OwnedFrame::Error(_) => FrameKind::Error,
+      OwnedFrame::Integer(_) => FrameKind::Integer,
+      OwnedFrame::BulkString(_) => FrameKind::BulkString,
+      OwnedFrame::Array(_) => FrameKind::Array,
+      OwnedFrame::Null => FrameKind::Null,
+    }
+  }
+
+  /// Attempt to read the frame value as a string slice.
+  pub fn as_str(&self) -> Option<&str> {
+    match self {
+      OwnedFrame::BulkString(b) => str::from_utf8(b).ok(),
+      OwnedFrame::SimpleString(s) => str::from_utf8(s).ok(),
+      OwnedFrame::Error(s) => Some(s),
+      _ => None,
+    }
+  }
+
+  /// Attempt to read the frame value as a byte slice.
+  pub fn as_bytes(&self) -> Option<&[u8]> {
+    Some(match self {
+      OwnedFrame::BulkString(b) => b,
+      OwnedFrame::SimpleString(s) => s,
+      OwnedFrame::Error(s) => s.as_bytes(),
+      _ => return None,
+    })
+  }
+
+  /// Whether the framed is a Moved or Ask error.
+  pub fn is_moved_or_ask_error(&self) -> bool {
+    match self {
+      OwnedFrame::Error(s) => utils::is_cluster_error(s),
+      _ => false,
+    }
+  }
+
+  /// Copy and read the inner value as a string, if possible.
+  pub fn to_string(&self) -> Option<String> {
+    match self {
+      OwnedFrame::BulkString(b) | OwnedFrame::SimpleString(b) => String::from_utf8(b.to_vec()).ok(),
+      OwnedFrame::Error(b) => Some(b.clone()),
+      _ => None,
+    }
+  }
 }
 
 /// A RESP2 frame that uses [Bytes](bytes::Bytes) and [Str](bytes_utils::Str) as the backing types for dynamically
@@ -168,6 +216,20 @@ pub enum BytesFrame {
 }
 
 impl BytesFrame {
+  /// Copy the contents into a new [OwnedFrame](crate::resp2::types::OwnedFrame).
+  pub fn to_owned_frame(&self) -> OwnedFrame {
+    match self {
+      BytesFrame::SimpleString(s) => OwnedFrame::SimpleString(s.to_vec()),
+      BytesFrame::Error(e) => OwnedFrame::Error((&*e).to_string()),
+      BytesFrame::Integer(i) => OwnedFrame::Integer(*i),
+      BytesFrame::BulkString(b) => OwnedFrame::BulkString(b.to_vec()),
+      BytesFrame::Array(frames) => {
+        OwnedFrame::Array(frames.into_iter().map(|frame| frame.to_owned_frame()).collect())
+      },
+      BytesFrame::Null => OwnedFrame::Null,
+    }
+  }
+
   /// Replace `self` with Null, returning the original value.
   pub fn take(&mut self) -> BytesFrame {
     mem::replace(self, BytesFrame::Null)
@@ -183,7 +245,7 @@ impl BytesFrame {
 
   /// Read the `FrameKind` value for this frame.
   pub fn kind(&self) -> FrameKind {
-    match *self {
+    match self {
       BytesFrame::SimpleString(_) => FrameKind::SimpleString,
       BytesFrame::Error(_) => FrameKind::Error,
       BytesFrame::Integer(_) => FrameKind::Integer,
@@ -195,36 +257,37 @@ impl BytesFrame {
 
   /// Attempt to read the frame value as a string slice.
   pub fn as_str(&self) -> Option<&str> {
-    match *self {
-      BytesFrame::BulkString(ref b) => str::from_utf8(b).ok(),
-      BytesFrame::SimpleString(ref s) => str::from_utf8(s).ok(),
-      BytesFrame::Error(ref s) => Some(s),
+    match self {
+      BytesFrame::BulkString(b) => str::from_utf8(b).ok(),
+      BytesFrame::SimpleString(s) => str::from_utf8(s).ok(),
+      BytesFrame::Error(s) => Some(s),
       _ => None,
     }
   }
 
   /// Attempt to read the frame value as a byte slice.
   pub fn as_bytes(&self) -> Option<&[u8]> {
-    Some(match *self {
-      BytesFrame::BulkString(ref b) => b,
-      BytesFrame::SimpleString(ref s) => s,
-      BytesFrame::Error(ref s) => s.as_bytes(),
+    Some(match self {
+      BytesFrame::BulkString(b) => b,
+      BytesFrame::SimpleString(s) => s,
+      BytesFrame::Error(s) => s.as_bytes(),
       _ => return None,
     })
   }
 
   /// Whether the framed is a Moved or Ask error.
   pub fn is_moved_or_ask_error(&self) -> bool {
-    match *self {
-      BytesFrame::Error(ref s) => utils::is_cluster_error(s),
+    match self {
+      BytesFrame::Error(s) => utils::is_cluster_error(s),
       _ => false,
     }
   }
 
   /// Copy and read the inner value as a string, if possible.
   pub fn to_string(&self) -> Option<String> {
-    match *self {
-      BytesFrame::BulkString(ref b) | BytesFrame::SimpleString(ref b) => String::from_utf8(b.to_vec()).ok(),
+    match self {
+      BytesFrame::BulkString(b) | BytesFrame::SimpleString(b) => String::from_utf8(b.to_vec()).ok(),
+      BytesFrame::Error(s) => Some(s.to_string()),
       _ => None,
     }
   }
