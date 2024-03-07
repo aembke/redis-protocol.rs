@@ -4,7 +4,10 @@ use crate::{
   utils::digits_in_number,
 };
 use alloc::{borrow::Cow, format, string::ToString, vec::Vec};
-use core::hash::{Hash, Hasher};
+use core::{
+  hash::{Hash, Hasher},
+  str,
+};
 
 #[cfg(feature = "zero-copy")]
 use bytes::{Bytes, BytesMut};
@@ -533,7 +536,7 @@ pub fn build_owned_frame(buf: &[u8], frame: &RangeFrame) -> Result<OwnedFrame, R
       attributes: build_owned_attributes(buf, attributes.as_ref())?,
     },
     RangeFrame::SimpleError { data, attributes } => OwnedFrame::SimpleError {
-      data:       String::from_utf8(buf[data.0 .. data.1].to_vec())?,
+      data:       str::from_utf8(&buf[data.0 .. data.1])?.to_string(),
       attributes: build_owned_attributes(buf, attributes.as_ref())?,
     },
     RangeFrame::BlobString { data, attributes } => OwnedFrame::BlobString {

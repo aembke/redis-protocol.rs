@@ -97,12 +97,8 @@ fn to_map<'a>(mut data: Vec<RangeFrame>) -> Result<FrameMap<RangeFrame, RangeFra
   Ok(out)
 }
 
-fn to_set(data: Vec<RangeFrame>) -> Result<HashSet<RangeFrame>, RedisParseError<&'_ [u8]>> {
-  let mut out = resp3_utils::new_set(Some(data.len()));
-  for frame in data.into_iter() {
-    out.insert(frame);
-  }
-  Ok(out)
+fn to_set(data: Vec<RangeFrame>) -> Result<FrameSet<RangeFrame>, RedisParseError<&'_ [u8]>> {
+  Ok(data.into_iter().collect())
 }
 
 fn attach_attributes(
