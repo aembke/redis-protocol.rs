@@ -4,7 +4,10 @@ use crate::{
   utils::digits_in_number,
 };
 use alloc::{string::String, vec::Vec};
+
+#[cfg(feature = "zero-copy")]
 use bytes::{Bytes, BytesMut};
+#[cfg(feature = "zero-copy")]
 use bytes_utils::Str;
 
 pub fn bulkstring_encode_len(b: &[u8]) -> usize {
@@ -46,6 +49,7 @@ pub fn build_owned_frame(buf: &[u8], frame: &RangeFrame) -> Result<OwnedFrame, R
 }
 
 /// Use the `Bytes` interface to create owned views into the provided buffer for each of the provided range frames.
+#[cfg(feature = "zero-copy")]
 pub fn build_bytes_frame(buf: &Bytes, frame: &RangeFrame) -> Result<BytesFrame, RedisProtocolError> {
   Ok(match frame {
     RangeFrame::Error((start, end)) => {
@@ -76,10 +80,9 @@ pub fn build_bytes_frame(buf: &Bytes, frame: &RangeFrame) -> Result<BytesFrame, 
 /// Split off and [freeze](bytes::BytesMut::freeze) `amt` bytes from `buf` and return owned views into the buffer
 /// based on the provided range frame.
 ///
-/// The returned `Bytes` represents the entire `Bytes` buffer that was sliced off `buf`. The returned frames hold
+/// The returned `Bytes` represents the `Bytes` buffer that was sliced off `buf`. The returned frames hold
 /// owned `Bytes` views to slices within this buffer.
-///
-/// This is the core of the zero-copy functionality in the `BytesFrame` interface.
+#[cfg(feature = "zero-copy")]
 pub fn freeze_parse(
   buf: &mut BytesMut,
   frame: &RangeFrame,

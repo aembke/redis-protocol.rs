@@ -24,6 +24,7 @@ extern crate cookie_factory;
 
 pub extern crate bytes;
 pub extern crate bytes_utils;
+extern crate core;
 #[cfg(feature = "codec")]
 #[cfg_attr(docsrs, doc(cfg(feature = "codec")))]
 pub extern crate tokio_util;
@@ -34,6 +35,8 @@ mod macros;
 pub mod error;
 mod utils;
 
+#[cfg(feature = "routing")]
+pub use utils::redis_keyslot;
 ///
 // TODO doc
 #[cfg(feature = "routing")]
@@ -48,4 +51,4 @@ pub mod resp3;
 // TODO doc
 pub mod types;
 
-pub use utils::{digits_in_number, redis_keyslot, resp2_to_resp3, str_to_f64};
+pub use utils::{digits_in_number, resp2_to_resp3, str_to_f64};

@@ -13,9 +13,11 @@ use crate::{
   utils,
 };
 use alloc::{string::String, vec::Vec};
-use bytes::BytesMut;
 use cookie_factory::GenError;
 use core::str;
+
+#[cfg(feature = "zero-copy")]
+use bytes::{Bytes, BytesMut};
 
 fn gen_simplestring<'a>(x: (&'a mut [u8], usize), data: &[u8]) -> Result<(&'a mut [u8], usize), GenError> {
   encode_checks!(x, resp2_utils::simplestring_encode_len(data));
@@ -99,6 +101,7 @@ fn gen_owned_array<'a>(x: (&'a mut [u8], usize), data: &Vec<OwnedFrame>) -> Resu
   Ok(x)
 }
 
+#[cfg(feature = "zero-copy")]
 fn gen_bytes_array<'a>(x: (&'a mut [u8], usize), data: &Vec<BytesFrame>) -> Result<(&'a mut [u8], usize), GenError> {
   let total_len = data
     .iter()
@@ -138,6 +141,7 @@ fn gen_owned_frame(buf: &mut [u8], offset: usize, frame: &OwnedFrame) -> Result<
   }
 }
 
+#[cfg(feature = "zero-copy")]
 fn gen_bytes_frame(buf: &mut [u8], offset: usize, frame: &BytesFrame) -> Result<usize, GenError> {
   match frame {
     BytesFrame::BulkString(b) => gen_bulkstring((buf, offset), b).map(|(_, l)| l),
@@ -151,47 +155,40 @@ fn gen_bytes_frame(buf: &mut [u8], offset: usize, frame: &BytesFrame) -> Result<
 
 /// Attempt to encode a frame into `buf`.
 ///
-/// The caller is responsible for extending the buffer if a `RedisProtocolErrorKind::BufferTooSmall` is returned.
+/// The caller is responsible for extending `buf` if a `BufferTooSmall` error is returned.
 ///
 /// Returns the number of bytes encoded.
-pub fn encode<F>(buf: &mut [u8], frame: F) -> Result<usize, RedisProtocolError>
-where
-  F: Into<BorrowedFrame>,
-{
-  match frame.into() {
-    BorrowedFrame::Owned(frame) => gen_owned_frame(buf, 0, frame).map_err(|e| e.into()),
-    BorrowedFrame::Bytes(frame) => gen_bytes_frame(buf, 0, frame).map_err(|e| e.into()),
-  }
+pub fn encode(buf: &mut [u8], frame: &OwnedFrame) -> Result<usize, RedisProtocolError> {
+  gen_owned_frame(buf, 0, frame).map_err(|e| e.into())
+}
+
+/// Attempt to encode a frame into `buf`.
+///
+/// The caller is responsible for extending `buf` if a `BufferTooSmall` error is returned.
+///
+/// Returns the number of bytes encoded.
+#[cfg(feature = "zero-copy")]
+#[cfg_attr(docsrs, doc(cfg(feature = "zero-copy")))]
+pub fn encode_bytes(buf: &mut [u8], frame: &BytesFrame) -> Result<usize, RedisProtocolError> {
+  gen_bytes_frame(buf, 0, frame).map_err(|e| e.into())
 }
 
 /// Attempt to encode a frame into `buf`, extending the buffer as needed.
 ///
 /// Returns the number of bytes encoded.
-pub fn extend_encode<F>(buf: &mut BytesMut, frame: F) -> Result<usize, RedisProtocolError>
-where
-  F: Into<BorrowedFrame>,
-{
+#[cfg(feature = "zero-copy")]
+#[cfg_attr(docsrs, doc(cfg(feature = "zero-copy")))]
+pub fn extend_encode(buf: &mut BytesMut, frame: &BytesFrame) -> Result<usize, RedisProtocolError> {
   let offset = buf.len();
 
-  match frame.into() {
-    BorrowedFrame::Owned(frame) => loop {
-      match gen_owned_frame(buf, offset, frame) {
-        Ok(size) => return Ok(size),
-        Err(e) => match e {
-          GenError::BufferTooSmall(amt) => utils::zero_extend(buf, amt),
-          _ => return Err(e.into()),
-        },
-      }
-    },
-    BorrowedFrame::Bytes(frame) => loop {
-      match gen_bytes_frame(buf, offset, frame) {
-        Ok(size) => return Ok(size),
-        Err(e) => match e {
-          GenError::BufferTooSmall(amt) => utils::zero_extend(buf, amt),
-          _ => return Err(e.into()),
-        },
-      }
-    },
+  loop {
+    match gen_bytes_frame(buf, offset, frame) {
+      Ok(size) => return Ok(size),
+      Err(e) => match e {
+        GenError::BufferTooSmall(amt) => utils::zero_extend(buf, amt),
+        _ => return Err(e.into()),
+      },
+    }
   }
 }
 

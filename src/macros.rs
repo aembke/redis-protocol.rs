@@ -9,7 +9,7 @@ macro_rules! unwrap_return(
 
 macro_rules! encode_checks(
   ($x:ident, $required:expr) => {
-    let _ = crate::utils::check_offset(&$x)?;
+    crate::utils::check_offset(&$x)?;
     let required = $required;
     let remaining = $x.0.len() - $x.1;
 

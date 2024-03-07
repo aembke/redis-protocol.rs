@@ -1,5 +1,4 @@
-use crate::error::{RedisParseError, RedisProtocolError, RedisProtocolErrorKind};
-use alloc::{format, string::String};
+use crate::error::RedisParseError;
 use nom::IResult;
 
 /// Alternative alias for `std::ops::Range`.

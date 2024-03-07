@@ -1,8 +1,6 @@
 use crate::{
   error::{RedisProtocolError, RedisProtocolErrorKind},
   resp3::utils as resp3_utils,
-  types::{PATTERN_PUBSUB_PREFIX, PUBSUB_PREFIX, PUBSUB_PUSH_PREFIX, SHARD_PUBSUB_PREFIX},
-  utils,
 };
 use alloc::{
   collections::VecDeque,
@@ -10,15 +8,20 @@ use alloc::{
   string::{String, ToString},
   vec::Vec,
 };
-use bytes::Bytes;
-use bytes_utils::Str;
 use core::{
   convert::TryFrom,
+  fmt::Debug,
   hash::{Hash, Hasher},
   mem,
   str,
 };
 
+#[cfg(feature = "zero-copy")]
+use bytes::{Bytes, BytesMut};
+#[cfg(feature = "zero-copy")]
+use bytes_utils::Str;
+
+use crate::types::{_Range, PATTERN_PUBSUB_PREFIX, PUBSUB_PREFIX, PUBSUB_PUSH_PREFIX, SHARD_PUBSUB_PREFIX};
 #[cfg(feature = "hashbrown")]
 use hashbrown::{HashMap, HashSet};
 #[cfg(feature = "index-map")]
@@ -92,7 +95,7 @@ pub const AUTH: &str = "AUTH";
 /// A map struct for frames that uses either [indexmap::IndexMap], [hashbrown::HashMap], or
 /// [std::collections::HashMap] depending on the enabled feature flags.
 #[cfg(not(feature = "index-map"))]
-pub type FrameMap<T> = HashMap<T, T>;
+pub type FrameMap<K, V> = HashMap<K, V>;
 /// A set struct for frames that uses either [indexmap::IndexSet], [hashbrown::HashSet], or
 /// [std::collections::HashSet] depending on the enabled feature flags.
 #[cfg(not(feature = "index-map"))]
@@ -100,16 +103,20 @@ pub type FrameSet<T> = HashSet<T>;
 /// A map struct for frames that uses either [indexmap::IndexMap], [hashbrown::HashMap], or
 /// [std::collections::HashMap] depending on the enabled feature flags.
 #[cfg(feature = "index-map")]
-pub type FrameMap<T> = IndexMap<T, T>;
+pub type FrameMap<K, V> = IndexMap<K, V>;
 /// A set struct for frames that uses either [indexmap::IndexSet], [hashbrown::HashSet], or
 /// [std::collections::HashSet] depending on the enabled feature flags.
 #[cfg(feature = "index-map")]
 pub type FrameSet<T> = IndexSet<T>;
 
 /// Additional information returned alongside a [BytesFrame].
-pub type BytesAttributes = FrameMap<BytesFrame>;
+#[cfg(feature = "zero-copy")]
+#[cfg_attr(docsrs, doc(cfg(feature = "zero-copy")))]
+pub type BytesAttributes = FrameMap<BytesFrame, BytesFrame>;
 /// Additional information returned alongside an [OwnedFrame].
-pub type OwnedAttributes = FrameMap<OwnedFrame>;
+pub type OwnedAttributes = FrameMap<OwnedFrame, OwnedFrame>;
+/// Additional information returned alongside an [RangeFrame].
+pub type RangeAttributes = FrameMap<RangeFrame, RangeFrame>;
 
 /// The RESP version used in the `HELLO` request.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -210,8 +217,7 @@ impl FrameKind {
     )
   }
 
-  /// A function used to differentiate data types that may have the same inner binary representation when hashing a
-  /// `BytesFrame`.
+  /// A function used to differentiate data types that may have the same inner binary representation when hashing.
   pub fn hash_prefix(&self) -> &'static str {
     use self::FrameKind::*;
 
@@ -299,6 +305,297 @@ impl FrameKind {
 
 ///
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RangeFrame {
+  /// A blob of bytes.
+  BlobString {
+    data:       _Range,
+    attributes: Option<RangeAttributes>,
+  },
+  /// A blob representing an error.
+  BlobError {
+    data:       _Range,
+    attributes: Option<RangeAttributes>,
+  },
+  /// A small string.
+  SimpleString {
+    data:       _Range,
+    attributes: Option<RangeAttributes>,
+  },
+  /// A small string representing an error.
+  SimpleError {
+    data:       _Range,
+    attributes: Option<RangeAttributes>,
+  },
+  /// A boolean type.
+  Boolean {
+    data:       bool,
+    attributes: Option<RangeAttributes>,
+  },
+  /// A null type.
+  Null,
+  /// A signed 64-bit integer.
+  Number {
+    data:       i64,
+    attributes: Option<RangeAttributes>,
+  },
+  /// A signed 64-bit floating point number.
+  Double {
+    data:       f64,
+    attributes: Option<RangeAttributes>,
+  },
+  /// A large number not representable as a `Number` or `Double`.
+  BigNumber {
+    data:       _Range,
+    attributes: Option<RangeAttributes>,
+  },
+  /// A string to be displayed without any escaping or filtering.
+  VerbatimString {
+    data:       _Range,
+    format:     VerbatimStringFormat,
+    attributes: Option<RangeAttributes>,
+  },
+  /// An array of frames.
+  Array {
+    data:       Vec<RangeFrame>,
+    attributes: Option<RangeAttributes>,
+  },
+  /// An unordered map of key-value pairs.
+  Map {
+    data:       FrameMap<RangeFrame, RangeFrame>,
+    attributes: Option<RangeAttributes>,
+  },
+  /// An unordered collection of other frames with a uniqueness constraint.
+  Set {
+    data:       FrameSet<RangeFrame>,
+    attributes: Option<RangeAttributes>,
+  },
+  /// Out-of-band data.
+  Push {
+    data:       Vec<RangeFrame>,
+    attributes: Option<RangeAttributes>,
+  },
+  /// A special frame type used when first connecting to the server to describe the protocol version and optional
+  /// credentials.
+  Hello {
+    version:  RespVersion,
+    username: Option<_Range>,
+    password: Option<_Range>,
+  },
+  /// One chunk of a streaming blob.
+  ChunkedString(_Range),
+}
+
+impl RangeFrame {
+  /// Read the associated `FrameKind`.
+  pub fn kind(&self) -> FrameKind {
+    match self {
+      RangeFrame::Array { .. } => FrameKind::Array,
+      RangeFrame::BlobString { .. } => FrameKind::BlobString,
+      RangeFrame::SimpleString { .. } => FrameKind::SimpleString,
+      RangeFrame::SimpleError { .. } => FrameKind::SimpleError,
+      RangeFrame::Number { .. } => FrameKind::Number,
+      RangeFrame::Null => FrameKind::Null,
+      RangeFrame::Double { .. } => FrameKind::Double,
+      RangeFrame::BlobError { .. } => FrameKind::BlobError,
+      RangeFrame::VerbatimString { .. } => FrameKind::VerbatimString,
+      RangeFrame::Boolean { .. } => FrameKind::Boolean,
+      RangeFrame::Map { .. } => FrameKind::Map,
+      RangeFrame::Set { .. } => FrameKind::Set,
+      RangeFrame::Push { .. } => FrameKind::Push,
+      RangeFrame::Hello { .. } => FrameKind::Hello,
+      RangeFrame::BigNumber { .. } => FrameKind::BigNumber,
+      RangeFrame::ChunkedString(inner) => {
+        if inner.is_empty() {
+          FrameKind::EndStream
+        } else {
+          FrameKind::ChunkedString
+        }
+      },
+    }
+  }
+
+  /// A context-aware length function that returns the length of the inner frame contents.
+  ///
+  /// This does not return the encoded length, but rather the length of the contents of the frame such as the number
+  /// of elements in an array, the size of any inner buffers, etc.
+  ///
+  /// Note: `Null` has a length of 0 and `Hello`, `Number`, `Double`, and `Boolean` have a length of 1.
+  ///
+  /// See [encode_len](Self::encode_len) to read the number of bytes necessary to encode the frame.
+  pub fn len(&self) -> usize {
+    match self {
+      RangeFrame::Array { data, .. } | RangeFrame::Push { data, .. } => data.len(),
+      RangeFrame::BlobString { data, .. }
+      | RangeFrame::BlobError { data, .. }
+      | RangeFrame::BigNumber { data, .. }
+      | RangeFrame::ChunkedString(data) => data.1 - data.0,
+      RangeFrame::SimpleString { data, .. } => data.1 - data.0,
+      RangeFrame::SimpleError { data, .. } => data.1 - data.0,
+      RangeFrame::Number { .. } | RangeFrame::Double { .. } | RangeFrame::Boolean { .. } => 1,
+      RangeFrame::Null => 0,
+      RangeFrame::VerbatimString { data, .. } => data.1 - data.0,
+      RangeFrame::Map { data, .. } => data.len(),
+      RangeFrame::Set { data, .. } => data.len(),
+      RangeFrame::Hello { .. } => 1,
+    }
+  }
+
+  ///
+  pub fn add_attributes(&mut self, attributes: RangeAttributes) -> Result<(), RedisProtocolError> {
+    unimplemented!()
+  }
+}
+
+impl Hash for RangeFrame {
+  fn hash<H: Hasher>(&self, state: &mut H) {
+    use self::RangeFrame::*;
+    self.kind().hash_prefix().hash(state);
+
+    match self {
+      BlobString { data, .. } => resp3_utils::hash_tuple(state, data),
+      SimpleString { data, .. } => resp3_utils::hash_tuple(state, data),
+      SimpleError { data, .. } => resp3_utils::hash_tuple(state, data),
+      Number { data, .. } => data.hash(state),
+      Null => NULL.hash(state),
+      Double { data, .. } => data.to_string().hash(state),
+      Boolean { data, .. } => data.hash(state),
+      BlobError { data, .. } => resp3_utils::hash_tuple(state, data),
+      VerbatimString { data, format, .. } => {
+        format.hash(state);
+        resp3_utils::hash_tuple(state, data);
+      },
+      ChunkedString(data) => resp3_utils::hash_tuple(state, data),
+      BigNumber { data, .. } => resp3_utils::hash_tuple(state, data),
+      _ => panic!("Invalid RESP3 data type to use as hash key."),
+    };
+  }
+}
+
+/// TODO docs
+#[derive(Debug)]
+pub struct StreamedRangeFrame {
+  pub kind:       FrameKind,
+  pub attributes: Option<RangeAttributes>,
+}
+
+impl StreamedRangeFrame {
+  ///
+  pub fn new(kind: FrameKind) -> Self {
+    StreamedRangeFrame { kind, attributes: None }
+  }
+
+  ///
+  pub fn add_attributes(&mut self, attributes: RangeAttributes) -> Result<(), RedisProtocolError> {
+    unimplemented!()
+  }
+}
+
+/// TODO docs
+#[derive(Debug)]
+pub enum DecodedRangeFrame {
+  Complete(RangeFrame),
+  Streaming(StreamedRangeFrame),
+}
+
+impl DecodedRangeFrame {
+  /// Add attributes to the decoded frame, if possible.
+  pub fn add_attributes(&mut self, attributes: RangeAttributes) -> Result<(), RedisProtocolError> {
+    match self {
+      DecodedRangeFrame::Streaming(inner) => inner.add_attributes(attributes),
+      DecodedRangeFrame::Complete(inner) => inner.add_attributes(attributes),
+    }
+  }
+
+  /// Convert the decoded frame to a complete frame, returning an error if a streaming variant is found.
+  pub fn into_complete_frame(self) -> Result<RangeFrame, RedisProtocolError> {
+    match self {
+      DecodedRangeFrame::Complete(frame) => Ok(frame),
+      DecodedRangeFrame::Streaming(_) => Err(RedisProtocolError::new(
+        RedisProtocolErrorKind::DecodeError,
+        "Expected complete frame.",
+      )),
+    }
+  }
+}
+
+// TODO docs
+///
+pub trait Resp3Frame: Debug + Hash + Eq {
+  type Attributes;
+
+  /// Create the target aggregate type based on a buffered set of chunked frames.
+  fn from_buffer(
+    target: FrameKind,
+    buf: impl IntoIterator<Item = Self>,
+    attributes: Option<Self::Attributes>,
+  ) -> Result<Self, RedisProtocolError>;
+
+  /// Read the attributes attached to the frame.
+  fn attributes(&self) -> Option<&Self::Attributes>;
+
+  /// Take the attributes off this frame.
+  fn take_attributes(&mut self) -> Option<Self::Attributes>;
+
+  /// Read a mutable reference to any attributes attached to the frame.
+  fn attributes_mut(&mut self) -> Option<&mut Self::Attributes>;
+
+  /// Attempt to add attributes to the frame, extending the existing attributes if needed.
+  fn add_attributes(&mut self, attributes: Self::Attributes) -> Result<(), RedisProtocolError>;
+
+  /// Create a new frame that terminates a stream.
+  fn new_end_stream() -> Self;
+
+  /// Create a new empty frame with attribute support.
+  fn new_empty() -> Self;
+
+  /// A context-aware length function that returns the length of the inner frame contents.
+  ///
+  /// This does not return the encoded length, but rather the length of the contents of the frame such as the number
+  /// of elements in an array, the size of any inner buffers, etc.
+  ///
+  /// Note: `Null` has a length of 0 and `Hello`, `Number`, `Double`, and `Boolean` have a length of 1.
+  ///
+  /// See [encode_len](Self::encode_len) to read the number of bytes necessary to encode the frame.
+  fn len(&self) -> usize;
+
+  /// Replace `self` with Null, returning the original value.
+  fn take(&mut self) -> Self;
+
+  /// Read the associated `FrameKind`.
+  fn kind(&self) -> FrameKind;
+
+  /// Whether the frame is an empty chunked string, signifying the end of a chunked string stream.
+  fn is_end_stream_frame(&self) -> bool;
+
+  /// If the frame is a verbatim string then read the associated format.
+  fn verbatim_string_format(&self) -> Option<&VerbatimStringFormat>;
+
+  /// Read the frame as a string slice if it can be parsed as a UTF-8 string without allocating.
+  fn as_str(&self) -> Option<&str>;
+
+  /// Read the frame as a `String` if it can be parsed as a UTF-8 string.
+  fn to_string(&self) -> Option<String>;
+
+  /// Attempt to read the frame as a byte slice.
+  fn as_bytes(&self) -> Option<&[u8]>;
+
+  /// Read the number of bytes necessary to represent the frame and any associated attributes.
+  fn encode_len(&self) -> usize;
+
+  /// Whether the frame is a message from a `subscribe` call.
+  fn is_normal_pubsub_message(&self) -> bool;
+
+  /// Whether the frame is a message from a `psubscribe` call.
+  fn is_pattern_pubsub_message(&self) -> bool;
+
+  /// Whether the frame is a message from a `ssubscribe` call.
+  fn is_shard_pubsub_message(&self) -> bool;
+}
+
+/// An enum describing a RESP3 frame.
+///
+/// <https://github.com/antirez/RESP3/blob/master/spec.md>
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum OwnedFrame {
   /// A blob of bytes.
   BlobString {
@@ -364,7 +661,7 @@ pub enum OwnedFrame {
   /// for certain aggregate types. The [can_hash](crate::resp3::types::FrameKind::can_hash) function can be used to
   /// detect this.
   Map {
-    data:       FrameMap<OwnedFrame>,
+    data:       FrameMap<OwnedFrame, OwnedFrame>,
     attributes: Option<OwnedAttributes>,
   },
   /// An unordered collection of other frames with a uniqueness constraint.
@@ -413,75 +710,57 @@ impl Hash for OwnedFrame {
   }
 }
 
-impl OwnedFrame {
-  /// Read the attributes attached to the frame.
-  pub fn attributes(&self) -> Option<&OwnedAttributes> {
-    let attributes = match self {
-      OwnedFrame::Array { attributes, .. } => attributes,
-      OwnedFrame::Push { attributes, .. } => attributes,
-      OwnedFrame::BlobString { attributes, .. } => attributes,
-      OwnedFrame::BlobError { attributes, .. } => attributes,
-      OwnedFrame::BigNumber { attributes, .. } => attributes,
-      OwnedFrame::Boolean { attributes, .. } => attributes,
-      OwnedFrame::Number { attributes, .. } => attributes,
-      OwnedFrame::Double { attributes, .. } => attributes,
-      OwnedFrame::VerbatimString { attributes, .. } => attributes,
-      OwnedFrame::SimpleError { attributes, .. } => attributes,
-      OwnedFrame::SimpleString { attributes, .. } => attributes,
-      OwnedFrame::Set { attributes, .. } => attributes,
-      OwnedFrame::Map { attributes, .. } => attributes,
-      OwnedFrame::Null | OwnedFrame::ChunkedString(_) | OwnedFrame::Hello { .. } => return None,
-    };
+impl Resp3Frame for OwnedFrame {
+  type Attributes = OwnedAttributes;
 
-    attributes.as_ref()
+  fn from_buffer(
+    target: FrameKind,
+    buf: impl IntoIterator<Item = Self>,
+    attributes: Option<Self::Attributes>,
+  ) -> Result<Self, RedisProtocolError> {
+    let mut data: Vec<_> = buf.into_iter().collect();
+
+    Ok(match target {
+      FrameKind::BlobString => {
+        let total_len = data.iter().fold(0, |m, f| m + f.len());
+        let mut buf = Vec::with_capacity(total_len);
+        for frame in data.into_iter() {
+          buf.extend(match frame {
+            OwnedFrame::ChunkedString(chunk) => chunk,
+            OwnedFrame::BlobString { data, .. } => data,
+            _ => {
+              return Err(RedisProtocolError::new(
+                RedisProtocolErrorKind::DecodeError,
+                "Expected chunked or blob string.",
+              ));
+            },
+          });
+        }
+
+        OwnedFrame::BlobString { data: buf, attributes }
+      },
+      FrameKind::Map => OwnedFrame::Map {
+        attributes,
+        data: data
+          .chunks_exact_mut(2)
+          .map(|chunk| (chunk[0].take(), chunk[1].take()))
+          .collect(),
+      },
+      FrameKind::Set => OwnedFrame::Set {
+        attributes,
+        data: data.into_iter().collect(),
+      },
+      FrameKind::Array => OwnedFrame::Array { attributes, data },
+      _ => {
+        return Err(RedisProtocolError::new(
+          RedisProtocolErrorKind::DecodeError,
+          "Streaming frames only supported for blob strings, maps, sets, and arrays.",
+        ))
+      },
+    })
   }
 
-  /// Take the attributes off this frame.
-  pub fn take_attributes(&mut self) -> Option<OwnedAttributes> {
-    let attributes = match self {
-      OwnedFrame::Array { attributes, .. } => attributes,
-      OwnedFrame::Push { attributes, .. } => attributes,
-      OwnedFrame::BlobString { attributes, .. } => attributes,
-      OwnedFrame::BlobError { attributes, .. } => attributes,
-      OwnedFrame::BigNumber { attributes, .. } => attributes,
-      OwnedFrame::Boolean { attributes, .. } => attributes,
-      OwnedFrame::Number { attributes, .. } => attributes,
-      OwnedFrame::Double { attributes, .. } => attributes,
-      OwnedFrame::VerbatimString { attributes, .. } => attributes,
-      OwnedFrame::SimpleError { attributes, .. } => attributes,
-      OwnedFrame::SimpleString { attributes, .. } => attributes,
-      OwnedFrame::Set { attributes, .. } => attributes,
-      OwnedFrame::Map { attributes, .. } => attributes,
-      OwnedFrame::Null | OwnedFrame::ChunkedString(_) | OwnedFrame::Hello { .. } => return None,
-    };
-
-    attributes.take()
-  }
-
-  /// Read a mutable reference to any attributes attached to the frame.
-  pub fn attributes_mut(&mut self) -> Option<&mut OwnedAttributes> {
-    let attributes = match self {
-      OwnedFrame::Array { attributes, .. } => attributes,
-      OwnedFrame::Push { attributes, .. } => attributes,
-      OwnedFrame::BlobString { attributes, .. } => attributes,
-      OwnedFrame::BlobError { attributes, .. } => attributes,
-      OwnedFrame::BigNumber { attributes, .. } => attributes,
-      OwnedFrame::Boolean { attributes, .. } => attributes,
-      OwnedFrame::Number { attributes, .. } => attributes,
-      OwnedFrame::Double { attributes, .. } => attributes,
-      OwnedFrame::VerbatimString { attributes, .. } => attributes,
-      OwnedFrame::SimpleError { attributes, .. } => attributes,
-      OwnedFrame::SimpleString { attributes, .. } => attributes,
-      OwnedFrame::Set { attributes, .. } => attributes,
-      OwnedFrame::Map { attributes, .. } => attributes,
-      OwnedFrame::Null | OwnedFrame::ChunkedString(_) | OwnedFrame::Hello { .. } => return None,
-    };
-
-    attributes.as_mut()
-  }
-
-  /// Attempt to add attributes to the frame, extending the existing attributes if needed.
-  pub fn add_attributes(&mut self, attributes: OwnedAttributes) -> Result<(), RedisProtocolError> {
+  fn add_attributes(&mut self, attributes: Self::Attributes) -> Result<(), RedisProtocolError> {
     let _attributes = match self {
       OwnedFrame::Array { attributes, .. } => attributes,
       OwnedFrame::Push { attributes, .. } => attributes,
@@ -513,62 +792,120 @@ impl OwnedFrame {
     Ok(())
   }
 
-  /// Create a new `OwnedFrame` that terminates a stream.
-  pub fn new_end_stream() -> Self {
+  fn attributes(&self) -> Option<&Self::Attributes> {
+    let attributes = match self {
+      OwnedFrame::Array { attributes, .. } => attributes,
+      OwnedFrame::Push { attributes, .. } => attributes,
+      OwnedFrame::BlobString { attributes, .. } => attributes,
+      OwnedFrame::BlobError { attributes, .. } => attributes,
+      OwnedFrame::BigNumber { attributes, .. } => attributes,
+      OwnedFrame::Boolean { attributes, .. } => attributes,
+      OwnedFrame::Number { attributes, .. } => attributes,
+      OwnedFrame::Double { attributes, .. } => attributes,
+      OwnedFrame::VerbatimString { attributes, .. } => attributes,
+      OwnedFrame::SimpleError { attributes, .. } => attributes,
+      OwnedFrame::SimpleString { attributes, .. } => attributes,
+      OwnedFrame::Set { attributes, .. } => attributes,
+      OwnedFrame::Map { attributes, .. } => attributes,
+      OwnedFrame::Null | OwnedFrame::ChunkedString(_) | OwnedFrame::Hello { .. } => return None,
+    };
+
+    attributes.as_ref()
+  }
+
+  fn attributes_mut(&mut self) -> Option<&mut Self::Attributes> {
+    let attributes = match self {
+      OwnedFrame::Array { attributes, .. } => attributes,
+      OwnedFrame::Push { attributes, .. } => attributes,
+      OwnedFrame::BlobString { attributes, .. } => attributes,
+      OwnedFrame::BlobError { attributes, .. } => attributes,
+      OwnedFrame::BigNumber { attributes, .. } => attributes,
+      OwnedFrame::Boolean { attributes, .. } => attributes,
+      OwnedFrame::Number { attributes, .. } => attributes,
+      OwnedFrame::Double { attributes, .. } => attributes,
+      OwnedFrame::VerbatimString { attributes, .. } => attributes,
+      OwnedFrame::SimpleError { attributes, .. } => attributes,
+      OwnedFrame::SimpleString { attributes, .. } => attributes,
+      OwnedFrame::Set { attributes, .. } => attributes,
+      OwnedFrame::Map { attributes, .. } => attributes,
+      OwnedFrame::Null | OwnedFrame::ChunkedString(_) | OwnedFrame::Hello { .. } => return None,
+    };
+
+    attributes.as_mut()
+  }
+
+  fn take_attributes(&mut self) -> Option<Self::Attributes> {
+    let attributes = match self {
+      OwnedFrame::Array { attributes, .. } => attributes,
+      OwnedFrame::Push { attributes, .. } => attributes,
+      OwnedFrame::BlobString { attributes, .. } => attributes,
+      OwnedFrame::BlobError { attributes, .. } => attributes,
+      OwnedFrame::BigNumber { attributes, .. } => attributes,
+      OwnedFrame::Boolean { attributes, .. } => attributes,
+      OwnedFrame::Number { attributes, .. } => attributes,
+      OwnedFrame::Double { attributes, .. } => attributes,
+      OwnedFrame::VerbatimString { attributes, .. } => attributes,
+      OwnedFrame::SimpleError { attributes, .. } => attributes,
+      OwnedFrame::SimpleString { attributes, .. } => attributes,
+      OwnedFrame::Set { attributes, .. } => attributes,
+      OwnedFrame::Map { attributes, .. } => attributes,
+      OwnedFrame::Null | OwnedFrame::ChunkedString(_) | OwnedFrame::Hello { .. } => return None,
+    };
+
+    attributes.take()
+  }
+
+  fn new_end_stream() -> Self {
     OwnedFrame::ChunkedString(Vec::new())
   }
 
-  /// A context-aware length function that returns the length of the inner frame contents.
-  ///
-  /// This does not return the encoded length, but rather the length of the contents of the frame such as the number
-  /// of elements in an array, the size of any inner buffers, etc.
-  ///
-  /// Note: `Null` has a length of 0 and `Hello`, `Number`, `Double`, and `Boolean` have a length of 1.
-  ///
-  /// See [encode_len](Self::encode_len) to read the number of bytes necessary to encode the frame.
-  pub fn len(&self) -> usize {
-    use self::OwnedFrame::*;
-
-    match self {
-      Array { data, .. } | Push { data, .. } => data.len(),
-      BlobString { data, .. } | BlobError { data, .. } | BigNumber { data, .. } | ChunkedString(data) => data.len(),
-      SimpleString { data, .. } => data.len(),
-      SimpleError { data, .. } => data.len(),
-      Number { .. } | Double { .. } | Boolean { .. } => 1,
-      Null => 0,
-      VerbatimString { data, .. } => data.len(),
-      Map { data, .. } => data.len(),
-      Set { data, .. } => data.len(),
-      Hello { .. } => 1,
+  fn new_empty() -> Self {
+    OwnedFrame::Number {
+      data:       0,
+      attributes: None,
     }
   }
 
-  /// Replace `self` with Null, returning the original value.
-  pub fn take(&mut self) -> OwnedFrame {
+  fn len(&self) -> usize {
+    match self {
+      OwnedFrame::Array { data, .. } | OwnedFrame::Push { data, .. } => data.len(),
+      OwnedFrame::BlobString { data, .. }
+      | OwnedFrame::BlobError { data, .. }
+      | OwnedFrame::BigNumber { data, .. }
+      | OwnedFrame::ChunkedString(data) => data.len(),
+      OwnedFrame::SimpleString { data, .. } => data.len(),
+      OwnedFrame::SimpleError { data, .. } => data.len(),
+      OwnedFrame::Number { .. } | OwnedFrame::Double { .. } | OwnedFrame::Boolean { .. } => 1,
+      OwnedFrame::Null => 0,
+      OwnedFrame::VerbatimString { data, .. } => data.len(),
+      OwnedFrame::Map { data, .. } => data.len(),
+      OwnedFrame::Set { data, .. } => data.len(),
+      OwnedFrame::Hello { .. } => 1,
+    }
+  }
+
+  fn take(&mut self) -> Self {
     mem::replace(self, OwnedFrame::Null)
   }
 
-  /// Read the associated `FrameKind`.
-  pub fn kind(&self) -> FrameKind {
-    use self::OwnedFrame::*;
-
+  fn kind(&self) -> FrameKind {
     match self {
-      Array { .. } => FrameKind::Array,
-      BlobString { .. } => FrameKind::BlobString,
-      SimpleString { .. } => FrameKind::SimpleString,
-      SimpleError { .. } => FrameKind::SimpleError,
-      Number { .. } => FrameKind::Number,
-      Null => FrameKind::Null,
-      Double { .. } => FrameKind::Double,
-      BlobError { .. } => FrameKind::BlobError,
-      VerbatimString { .. } => FrameKind::VerbatimString,
-      Boolean { .. } => FrameKind::Boolean,
-      Map { .. } => FrameKind::Map,
-      Set { .. } => FrameKind::Set,
-      Push { .. } => FrameKind::Push,
-      Hello { .. } => FrameKind::Hello,
-      BigNumber { .. } => FrameKind::BigNumber,
-      ChunkedString(inner) => {
+      OwnedFrame::Array { .. } => FrameKind::Array,
+      OwnedFrame::BlobString { .. } => FrameKind::BlobString,
+      OwnedFrame::SimpleString { .. } => FrameKind::SimpleString,
+      OwnedFrame::SimpleError { .. } => FrameKind::SimpleError,
+      OwnedFrame::Number { .. } => FrameKind::Number,
+      OwnedFrame::Null => FrameKind::Null,
+      OwnedFrame::Double { .. } => FrameKind::Double,
+      OwnedFrame::BlobError { .. } => FrameKind::BlobError,
+      OwnedFrame::VerbatimString { .. } => FrameKind::VerbatimString,
+      OwnedFrame::Boolean { .. } => FrameKind::Boolean,
+      OwnedFrame::Map { .. } => FrameKind::Map,
+      OwnedFrame::Set { .. } => FrameKind::Set,
+      OwnedFrame::Push { .. } => FrameKind::Push,
+      OwnedFrame::Hello { .. } => FrameKind::Hello,
+      OwnedFrame::BigNumber { .. } => FrameKind::BigNumber,
+      OwnedFrame::ChunkedString(inner) => {
         if inner.is_empty() {
           FrameKind::EndStream
         } else {
@@ -578,24 +915,21 @@ impl OwnedFrame {
     }
   }
 
-  /// Whether the frame is an empty chunked string, signifying the end of a chunked string stream.
-  pub fn is_end_stream_frame(&self) -> bool {
+  fn is_end_stream_frame(&self) -> bool {
     match self {
-      BytesFrame::ChunkedString(s) => s.is_empty(),
+      OwnedFrame::ChunkedString(s) => s.is_empty(),
       _ => false,
     }
   }
 
-  /// If the frame is a verbatim string then read the associated format.
-  pub fn verbatim_string_format(&self) -> Option<&VerbatimStringFormat> {
+  fn verbatim_string_format(&self) -> Option<&VerbatimStringFormat> {
     match self {
-      BytesFrame::VerbatimString { format, .. } => Some(format),
+      OwnedFrame::VerbatimString { format, .. } => Some(format),
       _ => None,
     }
   }
 
-  /// Read the frame as a string slice if it can be parsed as a UTF-8 string without allocating.
-  pub fn as_str(&self) -> Option<&str> {
+  fn as_str(&self) -> Option<&str> {
     match self {
       OwnedFrame::SimpleError { data, .. } => Some(data),
       OwnedFrame::SimpleString { data, .. } => str::from_utf8(data).ok(),
@@ -608,8 +942,7 @@ impl OwnedFrame {
     }
   }
 
-  /// Read the frame as a `String` if it can be parsed as a UTF-8 string.
-  pub fn to_string(&self) -> Option<String> {
+  fn to_string(&self) -> Option<String> {
     match self {
       OwnedFrame::SimpleError { data, .. } => Some(data.to_string()),
       OwnedFrame::SimpleString { data, .. } => String::from_utf8(data.to_vec()).ok(),
@@ -624,8 +957,7 @@ impl OwnedFrame {
     }
   }
 
-  /// Attempt to read the frame as a byte slice.
-  pub fn as_bytes(&self) -> Option<&[u8]> {
+  fn as_bytes(&self) -> Option<&[u8]> {
     match self {
       OwnedFrame::SimpleError { data, .. } => Some(data.as_bytes()),
       OwnedFrame::SimpleString { data, .. } => Some(&data),
@@ -638,21 +970,61 @@ impl OwnedFrame {
     }
   }
 
-  /// Move the frame contents into a new [BytesFrame].
-  pub fn into_bytes_frame(self) -> BytesFrame {
-    unimplemented!()
+  fn encode_len(&self) -> usize {
+    resp3_utils::owned_encode_len(self)
   }
 
-  /// Read the number of bytes necessary to represent the frame and any associated attributes.
-  pub fn encode_len(&self) -> usize {
-    resp3_utils::owned_encode_len(self)
+  fn is_normal_pubsub_message(&self) -> bool {
+    // format is ["pubsub", "message", <channel>, <message>]
+    match self {
+      OwnedFrame::Array { data, .. } | OwnedFrame::Push { data, .. } => {
+        data.len() == 4
+          && data[0].as_str().map(|s| s == PUBSUB_PUSH_PREFIX).unwrap_or(false)
+          && data[1].as_str().map(|s| s == PUBSUB_PREFIX).unwrap_or(false)
+      },
+      _ => false,
+    }
+  }
+
+  fn is_pattern_pubsub_message(&self) -> bool {
+    // format is ["pubsub", "pmessage", <pattern>, <channel>, <message>]
+    match self {
+      OwnedFrame::Array { data, .. } | OwnedFrame::Push { data, .. } => {
+        data.len() == 5
+          && data[0].as_str().map(|s| s == PUBSUB_PUSH_PREFIX).unwrap_or(false)
+          && data[1].as_str().map(|s| s == PATTERN_PUBSUB_PREFIX).unwrap_or(false)
+      },
+      _ => false,
+    }
+  }
+
+  fn is_shard_pubsub_message(&self) -> bool {
+    // format is ["pubsub", "pmessage", <channel>, <message>]
+    match self {
+      OwnedFrame::Array { data, .. } | OwnedFrame::Push { data, .. } => {
+        data.len() == 4
+          && data[0].as_str().map(|s| s == PUBSUB_PUSH_PREFIX).unwrap_or(false)
+          && data[1].as_str().map(|s| s == SHARD_PUBSUB_PREFIX).unwrap_or(false)
+      },
+      _ => false,
+    }
   }
 }
 
-/// An enum describing the possible data types in RESP3 along with the corresponding Rust data type to represent the
-/// payload.
+impl OwnedFrame {
+  /// Move the frame contents into a new [BytesFrame].
+  #[cfg(feature = "zero-copy")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "zero-copy")))]
+  pub fn into_bytes_frame(self) -> BytesFrame {
+    resp3_utils::owned_to_bytes_frame(self)
+  }
+}
+
+/// An enum describing a RESP3 frame.
 ///
 /// <https://github.com/antirez/RESP3/blob/master/spec.md>
+#[cfg(feature = "zero-copy")]
+#[cfg_attr(docsrs, doc(cfg(feature = "zero-copy")))]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BytesFrame {
   /// A blob of bytes.
@@ -719,7 +1091,7 @@ pub enum BytesFrame {
   /// for certain aggregate types. The [can_hash](crate::resp3::types::FrameKind::can_hash) function can be used to
   /// detect this.
   Map {
-    data:       FrameMap<BytesFrame>,
+    data:       FrameMap<BytesFrame, BytesFrame>,
     attributes: Option<BytesAttributes>,
   },
   /// An unordered collection of other frames with a uniqueness constraint.
@@ -743,6 +1115,7 @@ pub enum BytesFrame {
   ChunkedString(Bytes),
 }
 
+#[cfg(feature = "zero-copy")]
 impl Hash for BytesFrame {
   fn hash<H: Hasher>(&self, state: &mut H) {
     use self::BytesFrame::*;
@@ -768,9 +1141,61 @@ impl Hash for BytesFrame {
   }
 }
 
-impl BytesFrame {
-  /// Read the attributes attached to the frame.
-  pub fn attributes(&self) -> Option<&BytesAttributes> {
+#[cfg(feature = "zero-copy")]
+impl Resp3Frame for BytesFrame {
+  type Attributes = BytesAttributes;
+
+  fn from_buffer(
+    target: FrameKind,
+    buf: impl IntoIterator<Item = Self>,
+    attributes: Option<Self::Attributes>,
+  ) -> Result<Self, RedisProtocolError> {
+    let mut data: Vec<_> = buf.into_iter().collect();
+
+    Ok(match target {
+      FrameKind::BlobString => {
+        let total_len = data.iter().fold(0, |m, f| m + f.len());
+        let mut buf = BytesMut::with_capacity(total_len);
+        for frame in data.into_iter() {
+          buf.extend(match frame {
+            BytesFrame::ChunkedString(chunk) => chunk,
+            BytesFrame::BlobString { data, .. } => data,
+            _ => {
+              return Err(RedisProtocolError::new(
+                RedisProtocolErrorKind::DecodeError,
+                "Expected chunked or blob string.",
+              ));
+            },
+          });
+        }
+
+        BytesFrame::BlobString {
+          data: buf.freeze(),
+          attributes,
+        }
+      },
+      FrameKind::Map => BytesFrame::Map {
+        attributes,
+        data: data
+          .chunks_exact_mut(2)
+          .map(|chunk| (chunk[0].take(), chunk[1].take()))
+          .collect(),
+      },
+      FrameKind::Set => BytesFrame::Set {
+        attributes,
+        data: data.into_iter().collect(),
+      },
+      FrameKind::Array => BytesFrame::Array { attributes, data },
+      _ => {
+        return Err(RedisProtocolError::new(
+          RedisProtocolErrorKind::DecodeError,
+          "Streaming frames only supported for blob strings, maps, sets, and arrays.",
+        ))
+      },
+    })
+  }
+
+  fn attributes(&self) -> Option<&Self::Attributes> {
     let attributes = match self {
       BytesFrame::Array { attributes, .. } => attributes,
       BytesFrame::Push { attributes, .. } => attributes,
@@ -791,8 +1216,7 @@ impl BytesFrame {
     attributes.as_ref()
   }
 
-  /// Take the attributes off this frame.
-  pub fn take_attributes(&mut self) -> Option<BytesAttributes> {
+  fn take_attributes(&mut self) -> Option<Self::Attributes> {
     let attributes = match self {
       BytesFrame::Array { attributes, .. } => attributes,
       BytesFrame::Push { attributes, .. } => attributes,
@@ -813,8 +1237,7 @@ impl BytesFrame {
     attributes.take()
   }
 
-  /// Read a mutable reference to any attributes attached to the frame.
-  pub fn attributes_mut(&mut self) -> Option<&mut BytesAttributes> {
+  fn attributes_mut(&mut self) -> Option<&mut Self::Attributes> {
     let attributes = match self {
       BytesFrame::Array { attributes, .. } => attributes,
       BytesFrame::Push { attributes, .. } => attributes,
@@ -836,7 +1259,7 @@ impl BytesFrame {
   }
 
   /// Attempt to add attributes to the frame, extending the existing attributes if needed.
-  pub fn add_attributes(&mut self, attributes: BytesAttributes) -> Result<(), RedisProtocolError> {
+  fn add_attributes(&mut self, attributes: Self::Attributes) -> Result<(), RedisProtocolError> {
     let _attributes = match self {
       BytesFrame::Array { attributes, .. } => attributes,
       BytesFrame::Push { attributes, .. } => attributes,
@@ -868,62 +1291,57 @@ impl BytesFrame {
     Ok(())
   }
 
-  /// Create a new `BytesFrame` that terminates a stream.
-  pub fn new_end_stream() -> Self {
-    BytesFrame::ChunkedString(Bytes::new())
-  }
-
-  /// A context-aware length function that returns the length of the inner frame contents.
-  ///
-  /// This does not return the encoded length, but rather the length of the contents of the frame such as the number
-  /// of elements in an array, the size of any inner buffers, etc.
-  ///
-  /// Note: `Null` has a length of 0 and `Hello`, `Number`, `Double`, and `Boolean` have a length of 1.
-  ///
-  /// See [encode_len](Self::encode_len) to read the number of bytes necessary to encode the frame.
-  pub fn len(&self) -> usize {
-    use self::BytesFrame::*;
-
-    match self {
-      Array { data, .. } | Push { data, .. } => data.len(),
-      BlobString { data, .. } | BlobError { data, .. } | BigNumber { data, .. } | ChunkedString(data) => data.len(),
-      SimpleString { data, .. } => data.len(),
-      SimpleError { data, .. } => data.len(),
-      Number { .. } | Double { .. } | Boolean { .. } => 1,
-      Null => 0,
-      VerbatimString { data, .. } => data.len(),
-      Map { data, .. } => data.len(),
-      Set { data, .. } => data.len(),
-      Hello { .. } => 1,
+  fn new_empty() -> Self {
+    BytesFrame::Number {
+      data:       0,
+      attributes: None,
     }
   }
 
-  /// Replace `self` with Null, returning the original value.
-  pub fn take(&mut self) -> BytesFrame {
+  fn new_end_stream() -> Self {
+    BytesFrame::ChunkedString(Bytes::new())
+  }
+
+  fn len(&self) -> usize {
+    match self {
+      BytesFrame::Array { data, .. } | BytesFrame::Push { data, .. } => data.len(),
+      BytesFrame::BlobString { data, .. }
+      | BytesFrame::BlobError { data, .. }
+      | BytesFrame::BigNumber { data, .. }
+      | BytesFrame::ChunkedString(data) => data.len(),
+      BytesFrame::SimpleString { data, .. } => data.len(),
+      BytesFrame::SimpleError { data, .. } => data.len(),
+      BytesFrame::Number { .. } | BytesFrame::Double { .. } | BytesFrame::Boolean { .. } => 1,
+      BytesFrame::Null => 0,
+      BytesFrame::VerbatimString { data, .. } => data.len(),
+      BytesFrame::Map { data, .. } => data.len(),
+      BytesFrame::Set { data, .. } => data.len(),
+      BytesFrame::Hello { .. } => 1,
+    }
+  }
+
+  fn take(&mut self) -> BytesFrame {
     mem::replace(self, BytesFrame::Null)
   }
 
-  /// Read the associated `FrameKind`.
-  pub fn kind(&self) -> FrameKind {
-    use self::BytesFrame::*;
-
+  fn kind(&self) -> FrameKind {
     match self {
-      Array { .. } => FrameKind::Array,
-      BlobString { .. } => FrameKind::BlobString,
-      SimpleString { .. } => FrameKind::SimpleString,
-      SimpleError { .. } => FrameKind::SimpleError,
-      Number { .. } => FrameKind::Number,
-      Null => FrameKind::Null,
-      Double { .. } => FrameKind::Double,
-      BlobError { .. } => FrameKind::BlobError,
-      VerbatimString { .. } => FrameKind::VerbatimString,
-      Boolean { .. } => FrameKind::Boolean,
-      Map { .. } => FrameKind::Map,
-      Set { .. } => FrameKind::Set,
-      Push { .. } => FrameKind::Push,
-      Hello { .. } => FrameKind::Hello,
-      BigNumber { .. } => FrameKind::BigNumber,
-      ChunkedString(inner) => {
+      BytesFrame::Array { .. } => FrameKind::Array,
+      BytesFrame::BlobString { .. } => FrameKind::BlobString,
+      BytesFrame::SimpleString { .. } => FrameKind::SimpleString,
+      BytesFrame::SimpleError { .. } => FrameKind::SimpleError,
+      BytesFrame::Number { .. } => FrameKind::Number,
+      BytesFrame::Null => FrameKind::Null,
+      BytesFrame::Double { .. } => FrameKind::Double,
+      BytesFrame::BlobError { .. } => FrameKind::BlobError,
+      BytesFrame::VerbatimString { .. } => FrameKind::VerbatimString,
+      BytesFrame::Boolean { .. } => FrameKind::Boolean,
+      BytesFrame::Map { .. } => FrameKind::Map,
+      BytesFrame::Set { .. } => FrameKind::Set,
+      BytesFrame::Push { .. } => FrameKind::Push,
+      BytesFrame::Hello { .. } => FrameKind::Hello,
+      BytesFrame::BigNumber { .. } => FrameKind::BigNumber,
+      BytesFrame::ChunkedString(inner) => {
         if inner.is_empty() {
           FrameKind::EndStream
         } else {
@@ -933,36 +1351,25 @@ impl BytesFrame {
     }
   }
 
-  /// Whether the frame is an array, map, or set.
-  pub fn is_aggregate_type(&self) -> bool {
-    matches!(
-      self,
-      BytesFrame::Map { .. } | BytesFrame::Set { .. } | BytesFrame::Array { .. }
-    )
-  }
-
-  /// Whether the frame is an empty chunked string, signifying the end of a chunked string stream.
-  pub fn is_end_stream_frame(&self) -> bool {
+  fn is_end_stream_frame(&self) -> bool {
     match self {
       BytesFrame::ChunkedString(s) => s.is_empty(),
       _ => false,
     }
   }
 
-  /// If the frame is a verbatim string then read the associated format.
-  pub fn verbatim_string_format(&self) -> Option<&VerbatimStringFormat> {
+  fn verbatim_string_format(&self) -> Option<&VerbatimStringFormat> {
     match self {
       BytesFrame::VerbatimString { format, .. } => Some(format),
       _ => None,
     }
   }
 
-  /// Read the frame as a string slice if it can be parsed as a UTF-8 string without allocating.
-  pub fn as_str(&self) -> Option<&str> {
+  fn as_str(&self) -> Option<&str> {
     match self {
       BytesFrame::SimpleError { data, .. } => Some(data),
-      BytesFrame::SimpleString { data, .. } => str::from_utf8(data).ok(),
-      BytesFrame::BlobError { data, .. }
+      BytesFrame::SimpleString { data, .. }
+      | BytesFrame::BlobError { data, .. }
       | BytesFrame::BlobString { data, .. }
       | BytesFrame::BigNumber { data, .. } => str::from_utf8(data).ok(),
       BytesFrame::VerbatimString { data, .. } => str::from_utf8(data).ok(),
@@ -971,12 +1378,11 @@ impl BytesFrame {
     }
   }
 
-  /// Read the frame as a `String` if it can be parsed as a UTF-8 string.
-  pub fn to_string(&self) -> Option<String> {
+  fn to_string(&self) -> Option<String> {
     match self {
       BytesFrame::SimpleError { data, .. } => Some(data.to_string()),
-      BytesFrame::SimpleString { data, .. } => String::from_utf8(data.to_vec()).ok(),
-      BytesFrame::BlobError { data, .. }
+      BytesFrame::SimpleString { data, .. }
+      | BytesFrame::BlobError { data, .. }
       | BytesFrame::BlobString { data, .. }
       | BytesFrame::BigNumber { data, .. } => String::from_utf8(data.to_vec()).ok(),
       BytesFrame::VerbatimString { data, .. } => String::from_utf8(data.to_vec()).ok(),
@@ -987,8 +1393,7 @@ impl BytesFrame {
     }
   }
 
-  /// Attempt to read the frame as a byte slice.
-  pub fn as_bytes(&self) -> Option<&[u8]> {
+  fn as_bytes(&self) -> Option<&[u8]> {
     match self {
       BytesFrame::SimpleError { data, .. } => Some(data.as_bytes()),
       BytesFrame::SimpleString { data, .. } => Some(&data),
@@ -1001,41 +1406,104 @@ impl BytesFrame {
     }
   }
 
-  /// Read the number of bytes necessary to represent the frame and any associated attributes.
-  pub fn encode_len(&self) -> usize {
+  fn encode_len(&self) -> usize {
     resp3_utils::bytes_encode_len(self)
   }
 
-  /// Copy the frame contents into a new [OwnedFrame].
-  pub fn to_owned_frame(&self) -> OwnedFrame {
-    unimplemented!()
-  }
-}
-
-/// An owned internal enum for the various frame representations.
-#[derive(Debug, Hash, Eq, PartialEq)]
-pub(crate) enum Owned {
-  Owned(OwnedFrame),
-  Bytes(BytesFrame),
-}
-// impl from owned
-
-impl Owned {
-  /// TODO docs
-  pub(crate) fn is_end_stream_frame(&self) -> bool {
+  // TODO make sure this hasn't changed across redis versions
+  fn is_normal_pubsub_message(&self) -> bool {
+    // format is ["pubsub", "message", <channel>, <message>]
     match self {
-      Owned::Owned(f) => f.is_end_stream_frame(),
-      Owned::Bytes(f) => f.is_end_stream_frame(),
+      BytesFrame::Array { data, .. } | BytesFrame::Push { data, .. } => {
+        data.len() == 4
+          && data[0].as_str().map(|s| s == PUBSUB_PUSH_PREFIX).unwrap_or(false)
+          && data[1].as_str().map(|s| s == PUBSUB_PREFIX).unwrap_or(false)
+      },
+      _ => false,
+    }
+  }
+
+  fn is_pattern_pubsub_message(&self) -> bool {
+    // format is ["pubsub", "pmessage", <pattern>, <channel>, <message>]
+    match self {
+      BytesFrame::Array { data, .. } | BytesFrame::Push { data, .. } => {
+        data.len() == 5
+          && data[0].as_str().map(|s| s == PUBSUB_PUSH_PREFIX).unwrap_or(false)
+          && data[1].as_str().map(|s| s == PATTERN_PUBSUB_PREFIX).unwrap_or(false)
+      },
+      _ => false,
+    }
+  }
+
+  fn is_shard_pubsub_message(&self) -> bool {
+    // format is ["pubsub", "pmessage", <channel>, <message>]
+    match self {
+      BytesFrame::Array { data, .. } | BytesFrame::Push { data, .. } => {
+        data.len() == 4
+          && data[0].as_str().map(|s| s == PUBSUB_PUSH_PREFIX).unwrap_or(false)
+          && data[1].as_str().map(|s| s == SHARD_PUBSUB_PREFIX).unwrap_or(false)
+      },
+      _ => false,
     }
   }
 }
 
-/// A convenience struct for the various frame representations.
-pub enum Borrowed<'a> {
-  Owned(&'a OwnedFrame),
-  Bytes(&'a BytesFrame),
+#[cfg(feature = "zero-copy")]
+impl BytesFrame {
+  /// Copy the frame contents into a new [OwnedFrame].
+  fn to_owned_frame(&self) -> OwnedFrame {
+    resp3_utils::bytes_to_owned_frame(self)
+  }
 }
-// TODO impl From refs
+
+/// An enum describing the possible return types from the stream decoding interface.
+#[derive(Debug, Eq, PartialEq)]
+pub enum DecodedFrame<T: Resp3Frame> {
+  Streaming(StreamedFrame<T>),
+  Complete(T),
+}
+
+impl<T: Resp3Frame> DecodedFrame<T> {
+  /// Add attributes to the decoded frame, if possible.
+  pub fn add_attributes(&mut self, attributes: T::Attributes) -> Result<(), RedisProtocolError> {
+    match self {
+      DecodedFrame::Streaming(inner) => inner.add_attributes(attributes),
+      DecodedFrame::Complete(inner) => inner.add_attributes(attributes),
+    }
+  }
+
+  /// Convert the decoded frame to a complete frame, returning an error if a streaming variant is found.
+  pub fn into_complete_frame(self) -> Result<T, RedisProtocolError> {
+    match self {
+      DecodedFrame::Complete(frame) => Ok(frame),
+      DecodedFrame::Streaming(_) => Err(RedisProtocolError::new(
+        RedisProtocolErrorKind::DecodeError,
+        "Expected complete frame.",
+      )),
+    }
+  }
+
+  /// Convert the decoded frame into a streaming frame, returning an error if a complete variant is found.
+  pub fn into_streaming_frame(self) -> Result<StreamedFrame<T>, RedisProtocolError> {
+    match self {
+      DecodedFrame::Streaming(frame) => Ok(frame),
+      DecodedFrame::Complete(_) => Err(RedisProtocolError::new(
+        RedisProtocolErrorKind::DecodeError,
+        "Expected streamed frame.",
+      )),
+    }
+  }
+
+  /// Whether the decoded frame starts a stream.
+  pub fn is_streaming(&self) -> bool {
+    matches!(self, DecodedFrame::Streaming(_))
+  }
+
+  /// Whether the decoded frame is a complete frame.
+  pub fn is_complete(&self) -> bool {
+    matches!(self, DecodedFrame::Complete(_))
+  }
+}
 
 /// A helper struct for reading and managing streaming data types.
 ///
@@ -1073,28 +1541,33 @@ pub enum Borrowed<'a> {
 /// }
 /// ```
 #[derive(Debug, Eq, PartialEq)]
-pub struct StreamedFrame {
+pub struct StreamedFrame<T: Resp3Frame> {
   /// The internal buffer of frames and attributes.
-  buffer:         VecDeque<Owned>,
+  buffer:          VecDeque<T>,
   /// Any leading attributes before the stream starts.
-  pub attributes: Option<FrameMap<Owned>>,
+  attribute_frame: T,
   /// The data type being streamed.
-  pub kind:       FrameKind,
+  pub kind:        FrameKind,
 }
 
-impl StreamedFrame {
+impl<T: Resp3Frame> StreamedFrame<T> {
   /// Create a new `StreamedFrame` from the first section of data in a streaming response.
   pub fn new(kind: FrameKind) -> Self {
     let buffer = VecDeque::new();
     StreamedFrame {
       buffer,
       kind,
-      attributes: None,
+      attribute_frame: T::new_empty(),
     }
   }
 
+  /// Add the provided attributes to the frame buffer.
+  pub fn add_attributes(&mut self, attributes: T::Attributes) -> Result<(), RedisProtocolError> {
+    self.attribute_frame.add_attributes(attributes)
+  }
+
   /// Convert the internal buffer into one frame matching `self.kind`, clearing the internal buffer.
-  pub fn into_bytes_frame(&mut self) -> Result<BytesFrame, RedisProtocolError> {
+  pub fn take(&mut self) -> Result<T, RedisProtocolError> {
     if !self.kind.is_streaming_type() {
       // try to catch invalid type errors early so the caller can modify the frame before we clear the buffer
       return Err(RedisProtocolError::new(
@@ -1108,50 +1581,13 @@ impl StreamedFrame {
       self.buffer.pop_back();
     }
     let buffer = mem::replace(&mut self.buffer, VecDeque::new());
-    let attributes = self.attributes.take();
-
-    let mut frame = match self.kind {
-      FrameKind::BlobString => resp3_utils::reconstruct_blobstring(buffer)?,
-      FrameKind::Map => resp3_utils::reconstruct_map(buffer)?,
-      FrameKind::Set => resp3_utils::reconstruct_set(buffer)?,
-      FrameKind::Array => resp3_utils::reconstruct_array(buffer)?,
-      _ => {
-        return Err(RedisProtocolError::new(
-          RedisProtocolErrorKind::DecodeError,
-          "Streaming frames only supported for blob strings, maps, sets, and arrays.",
-        ))
-      },
-    };
-    frame.add_attributes(attributes);
-
-    Ok(frame)
-  }
-
-  /// Convert the internal buffer into one frame matching `self.kind`, clearing the internal buffer.
-  pub fn into_owned_frame(&mut self) -> Result<(), RedisProtocolError> {
-    if !self.kind.is_streaming_type() {
-      // try to catch invalid type errors early so the caller can modify the frame before we clear the buffer
-      return Err(RedisProtocolError::new(
-        RedisProtocolErrorKind::DecodeError,
-        "Only blob strings, sets, maps, and arrays can be streamed.",
-      ));
-    }
-
-    if self.is_finished() {
-      // the last frame is an empty chunked string when the stream is finished
-      self.buffer.pop_back();
-    }
-    unimplemented!()
+    let attributes = self.attribute_frame.take_attributes();
+    T::from_buffer(self.kind, buffer, attributes)
   }
 
   /// Add a frame to the internal buffer.
-  pub fn add_bytes_frame(&mut self, data: BytesFrame) {
-    self.buffer.push_back(data.into());
-  }
-
-  /// Add a frame to the internal buffer.
-  pub fn add_owned_frame(&mut self, data: OwnedFrame) {
-    self.buffer.push_back(data.into());
+  pub fn add_frame(&mut self, frame: T) {
+    self.buffer.push_back(frame);
   }
 
   /// Whether the last frame represents the terminating sequence at the end of a frame stream.
@@ -1172,10 +1608,8 @@ mod tests {
     streaming_buf.add_frame((FrameKind::ChunkedString, "bar").try_into().unwrap());
     streaming_buf.add_frame((FrameKind::ChunkedString, "baz").try_into().unwrap());
     streaming_buf.add_frame(BytesFrame::new_end_stream());
-    let frame = streaming_buf
-      .into_frame()
-      .expect("Failed to build frame from chunked stream");
 
+    let frame = streaming_buf.take().expect("Failed to build frame from chunked stream");
     assert_eq!(frame.as_str(), Some("foobarbaz"));
   }
 
@@ -1187,17 +1621,14 @@ mod tests {
     attributes.insert((FrameKind::SimpleString, "c").try_into().unwrap(), 3.into());
 
     let mut streaming_buf = StreamedFrame::new(FrameKind::BlobString);
-    streaming_buf.attributes = Some(attributes.clone());
+    streaming_buf.add_attributes(attributes.clone()).unwrap();
 
     streaming_buf.add_frame((FrameKind::ChunkedString, "foo").try_into().unwrap());
     streaming_buf.add_frame((FrameKind::ChunkedString, "bar").try_into().unwrap());
     streaming_buf.add_frame((FrameKind::ChunkedString, "baz").try_into().unwrap());
     streaming_buf.add_frame(BytesFrame::new_end_stream());
 
-    let frame = streaming_buf
-      .into_frame()
-      .expect("Failed to build frame from chunked stream");
-
+    let frame = streaming_buf.take().expect("Failed to build frame from chunked stream");
     assert_eq!(frame.as_str(), Some("foobarbaz"));
     assert_eq!(frame.attributes(), Some(&attributes));
   }

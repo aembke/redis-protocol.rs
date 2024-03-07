@@ -5,14 +5,20 @@ use crate::{
     utils as resp2_utils,
     utils::{bulkstring_encode_len, error_encode_len, integer_encode_len, simplestring_encode_len},
   },
-  types::_Range,
+  types::{_Range, SHARD_PUBSUB_PREFIX},
   utils,
 };
 use alloc::{string::String, vec::Vec};
-use bytes::{Bytes, BytesMut};
 use bytes_utils::Str;
-use core::{mem, str};
-use nom::AsBytes;
+use core::{
+  fmt::{self, Debug},
+  hash::{Hash, Hasher},
+  mem,
+  str,
+};
+
+#[cfg(feature = "zero-copy")]
+use bytes::{Bytes, BytesMut};
 
 /// Byte prefix before a simple string type.
 pub const SIMPLESTRING_BYTE: u8 = b'+';
@@ -42,6 +48,11 @@ pub enum FrameKind {
 }
 
 impl FrameKind {
+  /// Whether the frame is an error.
+  pub fn is_error(&self) -> bool {
+    matches!(self, FrameKind::Error)
+  }
+
   /// Read the frame type from the RESP2 byte prefix.
   pub fn from_byte(d: u8) -> Option<FrameKind> {
     use self::FrameKind::*;
@@ -68,6 +79,20 @@ impl FrameKind {
       Array => ARRAY_BYTE,
     }
   }
+
+  /// A function used to differentiate data types that may have the same inner binary representation when hashing.
+  pub fn hash_prefix(&self) -> &'static str {
+    use self::FrameKind::*;
+
+    match *self {
+      Array => "a",
+      BulkString => "b",
+      SimpleString => "s",
+      Error => "e",
+      Integer => "i",
+      Null => "N",
+    }
+  }
 }
 
 /// A reference-free frame type representing ranges into an associated buffer, typically used to implement zero-copy
@@ -86,6 +111,37 @@ pub enum RangeFrame {
   Array(Vec<RangeFrame>),
   /// A null value.
   Null,
+}
+
+// TODO docs
+///
+pub trait Resp2Frame: Debug + Hash + Eq {
+  /// Replace `self` with Null, returning the original value.
+  fn take(&mut self) -> Self;
+
+  /// Read the `FrameKind` value for this frame.
+  fn kind(&self) -> FrameKind;
+
+  /// Attempt to read the frame value as a string slice.
+  fn as_str(&self) -> Option<&str>;
+
+  /// Attempt to read the frame value as a byte slice.
+  fn as_bytes(&self) -> Option<&[u8]>;
+
+  /// Copy and read the inner value as a string, if possible.
+  fn to_string(&self) -> Option<String>;
+
+  /// Read the number of bytes needed to encode this frame.
+  fn encode_len(&self) -> usize;
+
+  /// Whether the frame is a message from a `subscribe` call.
+  fn is_normal_pubsub_message(&self) -> bool;
+
+  /// Whether the frame is a message from a `psubscribe` call.
+  fn is_pattern_pubsub_message(&self) -> bool;
+
+  /// Whether the frame is a message from a `ssubscribe` call.
+  fn is_shard_pubsub_message(&self) -> bool;
 }
 
 /// A RESP2 frame.
@@ -119,9 +175,24 @@ impl OwnedFrame {
       OwnedFrame::Null => BytesFrame::Null,
     }
   }
+}
 
-  /// Read the number of bytes needed to encode this frame.
-  pub fn encode_len(&self) -> usize {
+impl Hash for OwnedFrame {
+  fn hash<H: Hasher>(&self, state: &mut H) {
+    self.kind().hash_prefix().hash(state);
+
+    match self {
+      OwnedFrame::SimpleString(b) | OwnedFrame::BulkString(b) => b.hash(state),
+      OwnedFrame::Error(s) => s.hash(state),
+      OwnedFrame::Integer(i) => i.hash(state),
+      OwnedFrame::Array(f) => f.iter().for_each(|f| f.hash(state)),
+      OwnedFrame::Null => NULL.hash(state),
+    }
+  }
+}
+
+impl Resp2Frame for OwnedFrame {
+  fn encode_len(&self) -> usize {
     match self {
       OwnedFrame::BulkString(b) => bulkstring_encode_len(&b),
       OwnedFrame::Array(frames) => frames
@@ -134,21 +205,11 @@ impl OwnedFrame {
     }
   }
 
-  /// Replace `self` with Null, returning the original value.
-  pub fn take(&mut self) -> OwnedFrame {
+  fn take(&mut self) -> OwnedFrame {
     mem::replace(self, OwnedFrame::Null)
   }
 
-  /// Whether the frame is an error.
-  pub fn is_error(&self) -> bool {
-    match self.kind() {
-      FrameKind::Error => true,
-      _ => false,
-    }
-  }
-
-  /// Read the `FrameKind` value for this frame.
-  pub fn kind(&self) -> FrameKind {
+  fn kind(&self) -> FrameKind {
     match self {
       OwnedFrame::SimpleString(_) => FrameKind::SimpleString,
       OwnedFrame::Error(_) => FrameKind::Error,
@@ -159,8 +220,7 @@ impl OwnedFrame {
     }
   }
 
-  /// Attempt to read the frame value as a string slice.
-  pub fn as_str(&self) -> Option<&str> {
+  fn as_str(&self) -> Option<&str> {
     match self {
       OwnedFrame::BulkString(b) => str::from_utf8(b).ok(),
       OwnedFrame::SimpleString(s) => str::from_utf8(s).ok(),
@@ -169,8 +229,7 @@ impl OwnedFrame {
     }
   }
 
-  /// Attempt to read the frame value as a byte slice.
-  pub fn as_bytes(&self) -> Option<&[u8]> {
+  fn as_bytes(&self) -> Option<&[u8]> {
     Some(match self {
       OwnedFrame::BulkString(b) => b,
       OwnedFrame::SimpleString(s) => s,
@@ -179,26 +238,56 @@ impl OwnedFrame {
     })
   }
 
-  /// Whether the framed is a Moved or Ask error.
-  pub fn is_moved_or_ask_error(&self) -> bool {
+  fn to_string(&self) -> Option<String> {
     match self {
-      OwnedFrame::Error(s) => utils::is_cluster_error(s),
+      OwnedFrame::BulkString(b) | OwnedFrame::SimpleString(b) => String::from_utf8(b.to_vec()).ok(),
+      OwnedFrame::Error(b) => Some(b.clone()),
+      OwnedFrame::Integer(i) => Some(i.to_string()),
+      _ => None,
+    }
+  }
+
+  fn is_normal_pubsub_message(&self) -> bool {
+    // format is ["message", <channel>, <message>]
+    match self {
+      OwnedFrame::Array(data) => {
+        data.len() == 3
+          && data[0].kind() == FrameKind::BulkString
+          && data[0].as_str().map(|s| s == PUBSUB_PREFIX).unwrap_or(false)
+      },
       _ => false,
     }
   }
 
-  /// Copy and read the inner value as a string, if possible.
-  pub fn to_string(&self) -> Option<String> {
+  fn is_pattern_pubsub_message(&self) -> bool {
+    // format is ["pmessage", <pattern>, <channel>, <message>]
     match self {
-      OwnedFrame::BulkString(b) | OwnedFrame::SimpleString(b) => String::from_utf8(b.to_vec()).ok(),
-      OwnedFrame::Error(b) => Some(b.clone()),
-      _ => None,
+      OwnedFrame::Array(data) => {
+        data.len() == 4
+          && data[0].kind() == FrameKind::BulkString
+          && data[0].as_str().map(|s| s == PATTERN_PUBSUB_PREFIX).unwrap_or(false)
+      },
+      _ => false,
+    }
+  }
+
+  fn is_shard_pubsub_message(&self) -> bool {
+    // format is ["smessage", <channel>, <message>]
+    match self {
+      OwnedFrame::Array(data) => {
+        data.len() == 3
+          && data[0].kind() == FrameKind::BulkString
+          && data[0].as_str().map(|s| s == SHARD_PUBSUB_PREFIX).unwrap_or(false)
+      },
+      _ => false,
     }
   }
 }
 
 /// A RESP2 frame that uses [Bytes](bytes::Bytes) and [Str](bytes_utils::Str) as the backing types for dynamically
 /// sized frame types.
+#[cfg(feature = "zero-copy")]
+#[cfg_attr(docsrs, doc(cfg(feature = "zero-copy")))]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BytesFrame {
   /// A RESP2 simple string.
@@ -215,6 +304,116 @@ pub enum BytesFrame {
   Null,
 }
 
+#[cfg(feature = "zero-copy")]
+impl Hash for BytesFrame {
+  fn hash<H: Hasher>(&self, state: &mut H) {
+    self.kind().hash_prefix().hash(state);
+
+    match self {
+      BytesFrame::SimpleString(b) | BytesFrame::BulkString(b) => b.hash(state),
+      BytesFrame::Error(s) => s.hash(state),
+      BytesFrame::Integer(i) => i.hash(state),
+      BytesFrame::Array(f) => f.iter().for_each(|f| f.hash(state)),
+      BytesFrame::Null => NULL.hash(state),
+    }
+  }
+}
+
+#[cfg(feature = "zero-copy")]
+impl Resp2Frame for BytesFrame {
+  fn encode_len(&self) -> usize {
+    match self {
+      BytesFrame::BulkString(b) => bulkstring_encode_len(&b),
+      BytesFrame::Array(frames) => frames
+        .iter()
+        .fold(1 + digits_in_number(frames.len()) + 2, |m, f| m + f.encode_len()),
+      BytesFrame::Null => NULL.as_bytes().len(),
+      BytesFrame::SimpleString(s) => simplestring_encode_len(s),
+      BytesFrame::Error(s) => error_encode_len(s),
+      BytesFrame::Integer(i) => integer_encode_len(*i),
+    }
+  }
+
+  fn take(&mut self) -> BytesFrame {
+    mem::replace(self, BytesFrame::Null)
+  }
+
+  fn kind(&self) -> FrameKind {
+    match self {
+      BytesFrame::SimpleString(_) => FrameKind::SimpleString,
+      BytesFrame::Error(_) => FrameKind::Error,
+      BytesFrame::Integer(_) => FrameKind::Integer,
+      BytesFrame::BulkString(_) => FrameKind::BulkString,
+      BytesFrame::Array(_) => FrameKind::Array,
+      BytesFrame::Null => FrameKind::Null,
+    }
+  }
+
+  fn as_str(&self) -> Option<&str> {
+    match self {
+      BytesFrame::BulkString(b) => str::from_utf8(b).ok(),
+      BytesFrame::SimpleString(s) => str::from_utf8(s).ok(),
+      BytesFrame::Error(s) => Some(s),
+      _ => None,
+    }
+  }
+
+  fn as_bytes(&self) -> Option<&[u8]> {
+    Some(match self {
+      BytesFrame::BulkString(b) => b,
+      BytesFrame::SimpleString(s) => s,
+      BytesFrame::Error(s) => s.as_bytes(),
+      _ => return None,
+    })
+  }
+
+  fn to_string(&self) -> Option<String> {
+    match self {
+      BytesFrame::BulkString(b) | BytesFrame::SimpleString(b) => String::from_utf8(b.to_vec()).ok(),
+      BytesFrame::Error(b) => Some(b.to_string()),
+      BytesFrame::Integer(i) => Some(i.to_string()),
+      _ => None,
+    }
+  }
+
+  fn is_normal_pubsub_message(&self) -> bool {
+    // format is ["message", <channel>, <message>]
+    match self {
+      BytesFrame::Array(data) => {
+        data.len() == 3
+          && data[0].kind() == FrameKind::BulkString
+          && data[0].as_str().map(|s| s == PUBSUB_PREFIX).unwrap_or(false)
+      },
+      _ => false,
+    }
+  }
+
+  fn is_pattern_pubsub_message(&self) -> bool {
+    // format is ["pmessage", <pattern>, <channel>, <message>]
+    match self {
+      BytesFrame::Array(data) => {
+        data.len() == 4
+          && data[0].kind() == FrameKind::BulkString
+          && data[0].as_str().map(|s| s == PATTERN_PUBSUB_PREFIX).unwrap_or(false)
+      },
+      _ => false,
+    }
+  }
+
+  fn is_shard_pubsub_message(&self) -> bool {
+    // format is ["smessage", <channel>, <message>]
+    match self {
+      BytesFrame::Array(data) => {
+        data.len() == 3
+          && data[0].kind() == FrameKind::BulkString
+          && data[0].as_str().map(|s| s == SHARD_PUBSUB_PREFIX).unwrap_or(false)
+      },
+      _ => false,
+    }
+  }
+}
+
+#[cfg(feature = "zero-copy")]
 impl BytesFrame {
   /// Copy the contents into a new [OwnedFrame](crate::resp2::types::OwnedFrame).
   pub fn to_owned_frame(&self) -> OwnedFrame {
@@ -228,100 +427,6 @@ impl BytesFrame {
       },
       BytesFrame::Null => OwnedFrame::Null,
     }
-  }
-
-  /// Replace `self` with Null, returning the original value.
-  pub fn take(&mut self) -> BytesFrame {
-    mem::replace(self, BytesFrame::Null)
-  }
-
-  /// Whether the frame is an error.
-  pub fn is_error(&self) -> bool {
-    match self.kind() {
-      FrameKind::Error => true,
-      _ => false,
-    }
-  }
-
-  /// Read the `FrameKind` value for this frame.
-  pub fn kind(&self) -> FrameKind {
-    match self {
-      BytesFrame::SimpleString(_) => FrameKind::SimpleString,
-      BytesFrame::Error(_) => FrameKind::Error,
-      BytesFrame::Integer(_) => FrameKind::Integer,
-      BytesFrame::BulkString(_) => FrameKind::BulkString,
-      BytesFrame::Array(_) => FrameKind::Array,
-      BytesFrame::Null => FrameKind::Null,
-    }
-  }
-
-  /// Attempt to read the frame value as a string slice.
-  pub fn as_str(&self) -> Option<&str> {
-    match self {
-      BytesFrame::BulkString(b) => str::from_utf8(b).ok(),
-      BytesFrame::SimpleString(s) => str::from_utf8(s).ok(),
-      BytesFrame::Error(s) => Some(s),
-      _ => None,
-    }
-  }
-
-  /// Attempt to read the frame value as a byte slice.
-  pub fn as_bytes(&self) -> Option<&[u8]> {
-    Some(match self {
-      BytesFrame::BulkString(b) => b,
-      BytesFrame::SimpleString(s) => s,
-      BytesFrame::Error(s) => s.as_bytes(),
-      _ => return None,
-    })
-  }
-
-  /// Whether the framed is a Moved or Ask error.
-  pub fn is_moved_or_ask_error(&self) -> bool {
-    match self {
-      BytesFrame::Error(s) => utils::is_cluster_error(s),
-      _ => false,
-    }
-  }
-
-  /// Copy and read the inner value as a string, if possible.
-  pub fn to_string(&self) -> Option<String> {
-    match self {
-      BytesFrame::BulkString(b) | BytesFrame::SimpleString(b) => String::from_utf8(b.to_vec()).ok(),
-      BytesFrame::Error(s) => Some(s.to_string()),
-      _ => None,
-    }
-  }
-
-  /// Read the number of bytes needed to encode this frame.
-  pub fn encode_len(&self) -> usize {
-    match self {
-      BytesFrame::BulkString(b) => bulkstring_encode_len(&b),
-      BytesFrame::Array(frames) => frames
-        .iter()
-        .fold(1 + digits_in_number(frames.len()) + 2, |m, f| m + f.encode_len()),
-      BytesFrame::Null => NULL.as_bytes().len(),
-      BytesFrame::SimpleString(s) => simplestring_encode_len(s),
-      BytesFrame::Error(s) => error_encode_len(&*s),
-      BytesFrame::Integer(i) => integer_encode_len(*i),
-    }
-  }
-}
-
-/// Convenience wrapper type for the various frame representations.
-pub enum BorrowedFrame<'a> {
-  Owned(&'a OwnedFrame),
-  Bytes(&'a BytesFrame),
-}
-
-impl<'a> From<&'a OwnedFrame> for BorrowedFrame<'a> {
-  fn from(value: &'a OwnedFrame) -> Self {
-    BorrowedFrame::Owned(value)
-  }
-}
-
-impl<'a> From<&'a BytesFrame> for BorrowedFrame<'a> {
-  fn from(value: &'a BytesFrame) -> Self {
-    BorrowedFrame::Bytes(value)
   }
 }
 

@@ -1,24 +1,33 @@
 use crate::{
   error::{RedisProtocolError, RedisProtocolErrorKind},
   resp3::types::*,
-  utils::{digits_in_number, PATTERN_PUBSUB_PREFIX, PUBSUB_PREFIX, PUBSUB_PUSH_PREFIX},
+  utils::digits_in_number,
 };
-use alloc::{borrow::Cow, collections::VecDeque, format, string::ToString, vec::Vec};
-use bytes::BytesMut;
+use alloc::{borrow::Cow, format, string::ToString, vec::Vec};
+use core::hash::{Hash, Hasher};
+
+#[cfg(feature = "zero-copy")]
+use bytes::{Bytes, BytesMut};
+#[cfg(feature = "zero-copy")]
 use bytes_utils::Str;
-use core::hash::Hash;
 
 #[cfg(feature = "hashbrown")]
 use hashbrown::{HashMap, HashSet};
 #[cfg(feature = "index-map")]
 use indexmap::{IndexMap, IndexSet};
+use nom::Slice;
 #[cfg(feature = "std")]
 use std::collections::{HashMap, HashSet};
 
 pub const BOOLEAN_ENCODE_LEN: usize = 4;
 
+pub fn hash_tuple<H: Hasher>(state: &mut H, range: &(usize, usize)) {
+  range.0.hash(state);
+  range.1.hash(state);
+}
+
 #[cfg(not(feature = "index-map"))]
-pub fn new_set<K>(capacity: Option<usize>) -> HashSet<K> {
+pub fn new_set<K: Hash + Eq>(capacity: Option<usize>) -> HashSet<K> {
   if let Some(capacity) = capacity {
     HashSet::with_capacity(capacity)
   } else {
@@ -27,7 +36,7 @@ pub fn new_set<K>(capacity: Option<usize>) -> HashSet<K> {
 }
 
 #[cfg(feature = "index-map")]
-pub fn new_set<K>(capacity: Option<usize>) -> IndexSet<K> {
+pub fn new_set<K: Hash + Eq>(capacity: Option<usize>) -> IndexSet<K> {
   if let Some(capacity) = capacity {
     IndexSet::with_capacity(capacity)
   } else {
@@ -36,7 +45,7 @@ pub fn new_set<K>(capacity: Option<usize>) -> IndexSet<K> {
 }
 
 #[cfg(not(feature = "index-map"))]
-pub fn new_map<K, V>(capacity: Option<usize>) -> HashMap<K, V> {
+pub fn new_map<K: Hash + Eq, V>(capacity: Option<usize>) -> HashMap<K, V> {
   if let Some(capacity) = capacity {
     HashMap::with_capacity(capacity)
   } else {
@@ -45,7 +54,7 @@ pub fn new_map<K, V>(capacity: Option<usize>) -> HashMap<K, V> {
 }
 
 #[cfg(feature = "index-map")]
-pub fn new_map<K, V>(capacity: Option<usize>) -> IndexMap<K, V> {
+pub fn new_map<K: Hash + Eq, V>(capacity: Option<usize>) -> IndexMap<K, V> {
   if let Some(capacity) = capacity {
     IndexMap::with_capacity(capacity)
   } else {
@@ -54,7 +63,7 @@ pub fn new_map<K, V>(capacity: Option<usize>) -> IndexMap<K, V> {
 }
 
 #[cfg(feature = "index-map")]
-pub fn hashmap_to_frame_map<T: Hash + Eq>(data: HashMap<T, T>) -> FrameMap<T> {
+pub fn hashmap_to_frame_map<K: Hash + Eq, V>(data: HashMap<K, V>) -> FrameMap<K, V> {
   let mut out = IndexMap::with_capacity(data.len());
   for (key, value) in data.into_iter() {
     out.insert(key, value);
@@ -64,7 +73,7 @@ pub fn hashmap_to_frame_map<T: Hash + Eq>(data: HashMap<T, T>) -> FrameMap<T> {
 }
 
 #[cfg(not(feature = "index-map"))]
-pub fn hashmap_to_frame_map<T: Hash + Eq>(data: HashMap<T, T>) -> FrameMap<T> {
+pub fn hashmap_to_frame_map<K: Hash + Eq, V>(data: HashMap<K, V>) -> FrameMap<K, V> {
   data
 }
 
@@ -79,7 +88,7 @@ pub fn hashset_to_frame_set<T: Hash + Eq>(data: HashSet<T>) -> FrameSet<T> {
 }
 
 #[cfg(not(feature = "index-map"))]
-pub fn hashset_to_frame_set(data: HashSet<Frame>) -> FrameSet {
+pub fn hashset_to_frame_set<T: Hash + Eq>(data: HashSet<T>) -> FrameSet<T> {
   data
 }
 
@@ -148,25 +157,27 @@ pub fn auth_encode_len(username: Option<&str>, password: Option<&str>) -> usize 
 // the byte array container type. These types often incur some overhead to convert between, and rather than make any
 // of those trade-offs I decided to just copy a few private functions.
 
-pub fn bytes_array_or_push_encode_len(frames: &Vec<BytesFrame>) -> usize {
+#[cfg(feature = "zero-copy")]
+pub fn bytes_array_or_push_encode_len(frames: &[BytesFrame]) -> usize {
   frames
     .iter()
     .fold(length_prefix_encode_len(frames.len()), |m, f| m + bytes_encode_len(f))
 }
 
-pub fn owned_array_or_push_encode_len(frames: &Vec<OwnedFrame>) -> usize {
+pub fn owned_array_or_push_encode_len(frames: &[OwnedFrame]) -> usize {
   frames
     .iter()
     .fold(length_prefix_encode_len(frames.len()), |m, f| m + owned_encode_len(f))
 }
 
-pub fn owned_map_encode_len(map: &FrameMap<OwnedFrame>) -> usize {
+pub fn owned_map_encode_len(map: &FrameMap<OwnedFrame, OwnedFrame>) -> usize {
   map.iter().fold(length_prefix_encode_len(map.len()), |m, (k, v)| {
     m + owned_encode_len(k) + owned_encode_len(v)
   })
 }
 
-pub fn bytes_map_encode_len(map: &FrameMap<BytesFrame>) -> usize {
+#[cfg(feature = "zero-copy")]
+pub fn bytes_map_encode_len(map: &FrameMap<BytesFrame, BytesFrame>) -> usize {
   map.iter().fold(length_prefix_encode_len(map.len()), |m, (k, v)| {
     m + bytes_encode_len(k) + bytes_encode_len(v)
   })
@@ -178,12 +189,14 @@ pub fn owned_set_encode_len(set: &FrameSet<OwnedFrame>) -> usize {
     .fold(length_prefix_encode_len(set.len()), |m, f| m + owned_encode_len(f))
 }
 
+#[cfg(feature = "zero-copy")]
 pub fn bytes_set_encode_len(set: &FrameSet<BytesFrame>) -> usize {
   set
     .iter()
     .fold(length_prefix_encode_len(set.len()), |m, f| m + bytes_encode_len(f))
 }
 
+#[cfg(feature = "zero-copy")]
 pub fn bytes_hello_encode_len(username: &Option<Str>, password: &Option<Str>) -> usize {
   HELLO.as_bytes().len()
     + 3
@@ -202,6 +215,7 @@ pub fn owned_hello_encode_len(username: &Option<String>, password: &Option<Strin
     )
 }
 
+#[cfg(feature = "zero-copy")]
 pub fn bytes_attribute_encode_len(attributes: &Option<BytesAttributes>) -> usize {
   attributes.as_ref().map(|a| bytes_map_encode_len(a)).unwrap_or(0)
 }
@@ -211,6 +225,7 @@ pub fn owned_attribute_encode_len(attributes: &Option<OwnedAttributes>) -> usize
 }
 
 /// Returns the number of bytes necessary to represent the frame and any associated attributes.
+#[cfg(feature = "zero-copy")]
 pub fn bytes_encode_len(data: &BytesFrame) -> usize {
   use BytesFrame::*;
 
@@ -284,22 +299,182 @@ pub fn owned_encode_len(data: &OwnedFrame) -> usize {
   }
 }
 
-pub fn is_normal_pubsub(frames: &Vec<Frame>) -> bool {
-  (frames.len() == 4 || frames.len() == 5)
-    && frames[0].as_str().map(|s| s == PUBSUB_PUSH_PREFIX).unwrap_or(false)
-    && frames[1].as_str().map(|s| s == PUBSUB_PREFIX).unwrap_or(false)
+#[cfg(feature = "zero-copy")]
+/// Convert a `BytesFrame` to an `OwnedFrame` by copying the frame contents.
+pub fn bytes_to_owned_frame(frame: &BytesFrame) -> OwnedFrame {
+  match frame {
+    BytesFrame::Array { data, attributes } => OwnedFrame::Array {
+      attributes: attributes.as_ref().map(bytes_to_owned_attrs),
+      data:       data.iter().map(bytes_to_owned_frame).collect(),
+    },
+    BytesFrame::Push { data, attributes } => OwnedFrame::Push {
+      attributes: attributes.as_ref().map(bytes_to_owned_attrs),
+      data:       data.iter().map(bytes_to_owned_frame).collect(),
+    },
+    BytesFrame::BlobString { data, attributes } => OwnedFrame::BlobString {
+      attributes: attributes.as_ref().map(bytes_to_owned_attrs),
+      data:       data.to_vec(),
+    },
+    BytesFrame::BlobError { data, attributes } => OwnedFrame::BlobError {
+      attributes: attributes.as_ref().map(bytes_to_owned_attrs),
+      data:       data.to_vec(),
+    },
+    BytesFrame::BigNumber { data, attributes } => OwnedFrame::BigNumber {
+      attributes: attributes.as_ref().map(bytes_to_owned_attrs),
+      data:       data.to_vec(),
+    },
+    BytesFrame::ChunkedString(data) => OwnedFrame::ChunkedString(data.to_vec()),
+    BytesFrame::SimpleString { data, attributes } => OwnedFrame::SimpleString {
+      attributes: attributes.as_ref().map(bytes_to_owned_attrs),
+      data:       data.to_vec(),
+    },
+    BytesFrame::SimpleError { data, attributes } => OwnedFrame::SimpleError {
+      attributes: attributes.as_ref().map(bytes_to_owned_attrs),
+      data:       data.to_string(),
+    },
+    BytesFrame::Number { data, attributes } => OwnedFrame::Number {
+      attributes: attributes.as_ref().map(bytes_to_owned_attrs),
+      data:       *data,
+    },
+    BytesFrame::Double { data, attributes } => OwnedFrame::Double {
+      attributes: attributes.as_ref().map(bytes_to_owned_attrs),
+      data:       *data,
+    },
+    BytesFrame::Boolean { data, attributes } => OwnedFrame::Boolean {
+      attributes: attributes.as_ref().map(bytes_to_owned_attrs),
+      data:       *data,
+    },
+    BytesFrame::Null => OwnedFrame::Null,
+    BytesFrame::VerbatimString {
+      data,
+      attributes,
+      format,
+    } => OwnedFrame::VerbatimString {
+      format:     format.clone(),
+      attributes: attributes.as_ref().map(bytes_to_owned_attrs),
+      data:       data.to_vec(),
+    },
+    BytesFrame::Map { data, attributes } => OwnedFrame::Map {
+      attributes: attributes.as_ref().map(bytes_to_owned_attrs),
+      data:       data
+        .iter()
+        .map(|(k, v)| (bytes_to_owned_frame(k), bytes_to_owned_frame(v)))
+        .collect(),
+    },
+    BytesFrame::Set { data, attributes } => OwnedFrame::Set {
+      attributes: attributes.as_ref().map(bytes_to_owned_attrs),
+      data:       data.iter().map(bytes_to_owned_frame).collect(),
+    },
+    BytesFrame::Hello {
+      version,
+      username,
+      password,
+    } => OwnedFrame::Hello {
+      version:  version.clone(),
+      username: username.as_ref().map(|s| s.to_string()),
+      password: password.as_ref().map(|s| s.to_string()),
+    },
+  }
 }
 
-pub fn is_pattern_pubsub(frames: &Vec<Frame>) -> bool {
-  (frames.len() == 4 || frames.len() == 5)
-    && frames[0].as_str().map(|s| s == PUBSUB_PUSH_PREFIX).unwrap_or(false)
-    && frames[1].as_str().map(|s| s == PATTERN_PUBSUB_PREFIX).unwrap_or(false)
+#[cfg(feature = "zero-copy")]
+/// Convert bytes attributes to owned attributes.
+pub fn bytes_to_owned_attrs(attributes: &BytesAttributes) -> OwnedAttributes {
+  attributes
+    .iter()
+    .map(|(k, v)| (bytes_to_owned_frame(k), bytes_to_owned_frame(v)))
+    .collect()
+}
+
+#[cfg(feature = "zero-copy")]
+/// Convert a `BytesFrame` to an `OwnedFrame` by moving the frame contents.
+pub fn owned_to_bytes_frame(frame: OwnedFrame) -> BytesFrame {
+  match frame {
+    OwnedFrame::Array { data, attributes } => BytesFrame::Array {
+      attributes: attributes.map(owned_to_bytes_attrs),
+      data:       data.into_iter().map(owned_to_bytes_frame).collect(),
+    },
+    OwnedFrame::Push { data, attributes } => BytesFrame::Push {
+      attributes: attributes.map(owned_to_bytes_attrs),
+      data:       data.into_iter().map(owned_to_bytes_frame).collect(),
+    },
+    OwnedFrame::BlobString { data, attributes } => BytesFrame::BlobString {
+      attributes: attributes.map(owned_to_bytes_attrs),
+      data:       data.into(),
+    },
+    OwnedFrame::BlobError { data, attributes } => BytesFrame::BlobError {
+      attributes: attributes.map(owned_to_bytes_attrs),
+      data:       data.into(),
+    },
+    OwnedFrame::BigNumber { data, attributes } => BytesFrame::BigNumber {
+      attributes: attributes.map(owned_to_bytes_attrs),
+      data:       data.into(),
+    },
+    OwnedFrame::ChunkedString(data) => BytesFrame::ChunkedString(data.into()),
+    OwnedFrame::SimpleString { data, attributes } => BytesFrame::SimpleString {
+      attributes: attributes.map(owned_to_bytes_attrs),
+      data:       data.into(),
+    },
+    OwnedFrame::SimpleError { data, attributes } => BytesFrame::SimpleError {
+      attributes: attributes.map(owned_to_bytes_attrs),
+      data:       data.into(),
+    },
+    OwnedFrame::Number { data, attributes } => BytesFrame::Number {
+      attributes: attributes.map(owned_to_bytes_attrs),
+      data,
+    },
+    OwnedFrame::Double { data, attributes } => BytesFrame::Double {
+      attributes: attributes.map(owned_to_bytes_attrs),
+      data,
+    },
+    OwnedFrame::Boolean { data, attributes } => BytesFrame::Boolean {
+      attributes: attributes.map(owned_to_bytes_attrs),
+      data,
+    },
+    OwnedFrame::Null => BytesFrame::Null,
+    OwnedFrame::VerbatimString {
+      data,
+      attributes,
+      format,
+    } => BytesFrame::VerbatimString {
+      format,
+      attributes: attributes.map(owned_to_bytes_attrs),
+      data: data.into(),
+    },
+    OwnedFrame::Map { data, attributes } => BytesFrame::Map {
+      attributes: attributes.map(owned_to_bytes_attrs),
+      data:       data
+        .into_iter()
+        .map(|(k, v)| (owned_to_bytes_frame(k), owned_to_bytes_frame(v)))
+        .collect(),
+    },
+    OwnedFrame::Set { data, attributes } => BytesFrame::Set {
+      attributes: attributes.map(owned_to_bytes_attrs),
+      data:       data.into_iter().map(owned_to_bytes_frame).collect(),
+    },
+    OwnedFrame::Hello {
+      version,
+      username,
+      password,
+    } => BytesFrame::Hello {
+      version,
+      username: username.map(|s| s.into()),
+      password: password.map(|s| s.into()),
+    },
+  }
+}
+
+/// Convert bytes attributes to owned attributes.
+#[cfg(feature = "zero-copy")]
+pub fn owned_to_bytes_attrs(attributes: OwnedAttributes) -> BytesAttributes {
+  attributes
+    .into_iter()
+    .map(|(k, v)| (owned_to_bytes_frame(k), owned_to_bytes_frame(v)))
+    .collect()
 }
 
 /// Return the string representation of a double, accounting for `inf` and `-inf`.
-///
-/// NaN is not checked here.
-pub fn f64_to_redis_string(data: &f64) -> Cow<'static, str> {
+pub fn f64_to_redis_string(data: f64) -> Cow<'static, str> {
   if data.is_infinite() {
     if data.is_sign_negative() {
       Cow::Borrowed(NEG_INFINITY)
@@ -311,105 +486,267 @@ pub fn f64_to_redis_string(data: &f64) -> Cow<'static, str> {
   }
 }
 
-pub fn reconstruct_blobstring(
-  frames: VecDeque<Owned>,
-  attributes: Option<FrameMap<Owned>>,
-) -> Result<Frame, RedisProtocolError> {
-  let total_len = frames.iter().fold(0, |m, f| m + f.len());
-  let mut data = BytesMut::with_capacity(total_len);
+/// TODO docs
+fn build_owned_attributes(
+  buf: &[u8],
+  attributes: Option<&RangeAttributes>,
+) -> Result<Option<OwnedAttributes>, RedisProtocolError> {
+  if let Some(attributes) = attributes {
+    let mut out = new_map(Some(attributes.len()));
+    for (key, value) in attributes.into_iter() {
+      let key = build_owned_frame(buf, key)?;
+      let value = build_owned_frame(buf, value)?;
+      out.insert(key, value);
+    }
 
-  for frame in frames.into_iter() {
-    data.extend_from_slice(match frame {
-      Frame::ChunkedString(ref inner) => inner,
-      Frame::BlobString { ref data, .. } => &data,
-      _ => {
-        return Err(RedisProtocolError::new(
-          RedisProtocolErrorKind::DecodeError,
-          format!("Cannot create blob string from {:?}", frame.kind()),
-        ))
-      },
-    });
+    Ok(Some(out))
+  } else {
+    Ok(None)
   }
+}
 
-  Ok(Frame::BlobString {
-    data: data.freeze(),
-    attributes,
+/// TODO docs
+#[cfg(feature = "zero-copy")]
+fn build_bytes_attributes(
+  buf: &Bytes,
+  attributes: Option<&RangeAttributes>,
+) -> Result<Option<BytesAttributes>, RedisProtocolError> {
+  if let Some(attributes) = attributes {
+    let mut out = new_map(Some(attributes.len()));
+    for (key, value) in attributes.into_iter() {
+      let key = build_bytes_frame(buf, key)?;
+      let value = build_bytes_frame(buf, value)?;
+      out.insert(key, value);
+    }
+
+    Ok(Some(out))
+  } else {
+    Ok(None)
+  }
+}
+
+/// Move or copy the contents of `buf` based on the ranges in the provided frame.
+pub fn build_owned_frame(buf: &[u8], frame: &RangeFrame) -> Result<OwnedFrame, RedisProtocolError> {
+  Ok(match frame {
+    RangeFrame::SimpleString { data, attributes } => OwnedFrame::SimpleString {
+      data:       buf[data.0 .. data.1].to_vec(),
+      attributes: build_owned_attributes(buf, attributes.as_ref())?,
+    },
+    RangeFrame::SimpleError { data, attributes } => OwnedFrame::SimpleError {
+      data:       String::from_utf8(buf[data.0 .. data.1].to_vec())?,
+      attributes: build_owned_attributes(buf, attributes.as_ref())?,
+    },
+    RangeFrame::BlobString { data, attributes } => OwnedFrame::BlobString {
+      data:       buf[data.0 .. data.1].to_vec(),
+      attributes: build_owned_attributes(buf, attributes.as_ref())?,
+    },
+    RangeFrame::BlobError { data, attributes } => OwnedFrame::BlobError {
+      data:       buf[data.0 .. data.1].to_vec(),
+      attributes: build_owned_attributes(buf, attributes.as_ref())?,
+    },
+    RangeFrame::Number { data, attributes } => OwnedFrame::Number {
+      data:       *data,
+      attributes: build_owned_attributes(buf, attributes.as_ref())?,
+    },
+    RangeFrame::Double { data, attributes } => OwnedFrame::Double {
+      data:       *data,
+      attributes: build_owned_attributes(buf, attributes.as_ref())?,
+    },
+    RangeFrame::Boolean { data, attributes } => OwnedFrame::Boolean {
+      data:       *data,
+      attributes: build_owned_attributes(buf, attributes.as_ref())?,
+    },
+    RangeFrame::Null => OwnedFrame::Null,
+    RangeFrame::VerbatimString {
+      data,
+      attributes,
+      format,
+    } => OwnedFrame::VerbatimString {
+      data:       buf[data.0 .. data.1].to_vec(),
+      format:     format.clone(),
+      attributes: build_owned_attributes(buf, attributes.as_ref())?,
+    },
+    RangeFrame::BigNumber { data, attributes } => OwnedFrame::BigNumber {
+      data:       buf[data.0 .. data.1].to_vec(),
+      attributes: build_owned_attributes(buf, attributes.as_ref())?,
+    },
+    RangeFrame::ChunkedString(data) => OwnedFrame::ChunkedString(buf[data.0 .. data.1].to_vec()),
+    RangeFrame::Hello {
+      version,
+      username,
+      password,
+    } => OwnedFrame::Hello {
+      version:  version.clone(),
+      username: if let Some(username) = username {
+        Some(String::from_utf8(buf[username.0 .. username.1].to_vec())?)
+      } else {
+        None
+      },
+      password: if let Some(password) = password {
+        Some(String::from_utf8(buf[password.0 .. password.1].to_vec())?)
+      } else {
+        None
+      },
+    },
+    RangeFrame::Array { data, attributes } => OwnedFrame::Array {
+      data:       data.iter().map(|f| build_owned_frame(buf, f)).collect()?,
+      attributes: build_owned_attributes(buf, attributes.as_ref())?,
+    },
+    RangeFrame::Push { data, attributes } => OwnedFrame::Push {
+      data:       data.iter().map(|f| build_owned_frame(buf, f)).collect()?,
+      attributes: build_owned_attributes(buf, attributes.as_ref())?,
+    },
+    RangeFrame::Set { data, attributes } => OwnedFrame::Set {
+      data:       data.iter().map(|f| build_owned_frame(buf, f)).collect()?,
+      attributes: build_owned_attributes(buf, attributes.as_ref())?,
+    },
+    RangeFrame::Map { data, attributes } => OwnedFrame::Map {
+      data:       data
+        .iter()
+        .map(|(k, v)| {
+          let key = build_owned_frame(buf, k)?;
+          let value = build_owned_frame(buf, v)?;
+          Ok((key, value))
+        })
+        .collect()?,
+      attributes: build_owned_attributes(buf, attributes.as_ref())?,
+    },
   })
 }
 
-pub fn reconstruct_array(
-  frames: VecDeque<Owned>,
-  attributes: Option<FrameMap<Owned>>,
-) -> Result<Frame, RedisProtocolError> {
-  let mut data = Vec::with_capacity(frames.len());
-
-  for frame in frames.into_iter() {
-    data.push(frame);
-  }
-  Ok(Frame::Array { data, attributes })
-}
-
-pub fn reconstruct_map(
-  mut frames: VecDeque<Owned>,
-  attributes: Option<FrameMap<Owned>>,
-) -> Result<Frame, RedisProtocolError> {
-  if frames.is_empty() {
-    return Ok(Frame::Map {
-      data: new_map(None),
+/// Use the `Bytes` interface to create owned views into the provided buffer for each of the provided range frames.
+#[cfg(feature = "zero-copy")]
+pub fn build_bytes_frame(buf: &Bytes, frame: &RangeFrame) -> Result<BytesFrame, RedisProtocolError> {
+  Ok(match frame {
+    RangeFrame::SimpleString { data, attributes } => BytesFrame::SimpleString {
+      data:       buf.slice(data.0 .. data.1),
+      attributes: build_bytes_attributes(buf, attributes.as_ref())?,
+    },
+    RangeFrame::SimpleError { data, attributes } => BytesFrame::SimpleError {
+      data:       Str::from_inner(buf.slice(data.0 .. data.1))?,
+      attributes: build_bytes_attributes(buf, attributes.as_ref())?,
+    },
+    RangeFrame::BlobString { data, attributes } => BytesFrame::BlobString {
+      data:       buf.slice(data.0 .. data.1),
+      attributes: build_bytes_attributes(buf, attributes.as_ref())?,
+    },
+    RangeFrame::BlobError { data, attributes } => BytesFrame::BlobError {
+      data:       buf.slice(data.0 .. data.1),
+      attributes: build_bytes_attributes(buf, attributes.as_ref())?,
+    },
+    RangeFrame::Number { data, attributes } => BytesFrame::Number {
+      data:       *data,
+      attributes: build_bytes_attributes(buf, attributes.as_ref())?,
+    },
+    RangeFrame::Double { data, attributes } => BytesFrame::Double {
+      data:       *data,
+      attributes: build_bytes_attributes(buf, attributes.as_ref())?,
+    },
+    RangeFrame::Boolean { data, attributes } => BytesFrame::Boolean {
+      data:       *data,
+      attributes: build_bytes_attributes(buf, attributes.as_ref())?,
+    },
+    RangeFrame::Null => BytesFrame::Null,
+    RangeFrame::VerbatimString {
+      data,
       attributes,
-    });
-  }
-
-  if frames.len() % 2 != 0 {
-    return Err(RedisProtocolError::new(
-      RedisProtocolErrorKind::DecodeError,
-      "Map must have an even number of inner frames.",
-    ));
-  }
-
-  let mut data = new_map(Some(frames.len() / 2));
-  while frames.len() > 0 {
-    let value = frames.pop_back().unwrap();
-    let key = match frames.pop_back() {
-      Some(f) => f,
-      None => {
-        return Err(RedisProtocolError::new(
-          RedisProtocolErrorKind::DecodeError,
-          "Missing map key.",
-        ))
+      format,
+    } => BytesFrame::VerbatimString {
+      data:       buf.slice(data.0 .. data.1),
+      format:     format.clone(),
+      attributes: build_bytes_attributes(buf, attributes.as_ref())?,
+    },
+    RangeFrame::BigNumber { data, attributes } => BytesFrame::BigNumber {
+      data:       buf.slice(data.0 .. data.1),
+      attributes: build_bytes_attributes(buf, attributes.as_ref())?,
+    },
+    RangeFrame::ChunkedString(data) => BytesFrame::ChunkedString(buf.slice(data.0 .. data.1)),
+    RangeFrame::Hello {
+      version,
+      username,
+      password,
+    } => BytesFrame::Hello {
+      version:  version.clone(),
+      username: if let Some(username) = username {
+        Some(Str::from_inner(buf.slice(username.0 .. username.1))?)
+      } else {
+        None
       },
-    };
-
-    if !key.can_hash() {
-      return Err(RedisProtocolError::new(
-        RedisProtocolErrorKind::DecodeError,
-        format!("{:?} cannot be used as hash key.", key.kind()),
-      ));
-    }
-
-    data.insert(key, value);
-  }
-
-  Ok(Frame::Map { data, attributes })
+      password: if let Some(password) = password {
+        Some(Str::from_inner(buf.slice(password.0 .. password.1))?)
+      } else {
+        None
+      },
+    },
+    RangeFrame::Array { data, attributes } => BytesFrame::Array {
+      data:       data.iter().map(|f| build_owned_frame(buf, f)).collect()?,
+      attributes: build_bytes_attributes(buf, attributes.as_ref())?,
+    },
+    RangeFrame::Push { data, attributes } => BytesFrame::Push {
+      data:       data.iter().map(|f| build_owned_frame(buf, f)).collect()?,
+      attributes: build_bytes_attributes(buf, attributes.as_ref())?,
+    },
+    RangeFrame::Set { data, attributes } => BytesFrame::Set {
+      data:       data.iter().map(|f| build_owned_frame(buf, f)).collect()?,
+      attributes: build_bytes_attributes(buf, attributes.as_ref())?,
+    },
+    RangeFrame::Map { data, attributes } => BytesFrame::Map {
+      data:       data
+        .iter()
+        .map(|(k, v)| {
+          let key = build_owned_frame(buf, k)?;
+          let value = build_owned_frame(buf, v)?;
+          Ok((key, value))
+        })
+        .collect()?,
+      attributes: build_bytes_attributes(buf, attributes.as_ref())?,
+    },
+  })
 }
 
-pub fn reconstruct_set(
-  frames: VecDeque<Owned>,
-  attributes: Option<FrameMap<Owned>>,
-) -> Result<Owned, RedisProtocolError> {
-  let mut data = new_set(Some(frames.len()));
+/// Split off and [freeze](bytes::BytesMut::freeze) `amt` bytes from `buf` and return owned views into the buffer
+/// based on the provided range frame.
+///
+/// The returned `Bytes` represents the `Bytes` buffer that was sliced off `buf`. The returned frames hold
+/// owned `Bytes` views to slices within this buffer.
+#[cfg(feature = "zero-copy")]
+pub fn freeze_parse(
+  buf: &mut BytesMut,
+  frame: &RangeFrame,
+  amt: usize,
+) -> Result<(BytesFrame, Bytes), RedisProtocolError> {
+  let buffer = buf.split_to(amt).freeze();
+  let frame = build_bytes_frame(&buffer, frame)?;
+  Ok((frame, buffer))
+}
 
-  for frame in frames.into_iter() {
-    if !frame.can_hash() {
-      return Err(RedisProtocolError::new(
-        RedisProtocolErrorKind::DecodeError,
-        format!("{:?} cannot be used as hash key.", frame.kind()),
-      ));
-    }
+/// Convert a streaming range frame into an owned streaming frame.
+pub fn build_owned_streaming_frame(
+  buf: &[u8],
+  frame: &StreamedRangeFrame,
+) -> Result<StreamedFrame<OwnedFrame>, RedisProtocolError> {
+  let attributes = build_owned_attributes(buf, frame.attributes.as_ref())?;
+  let mut streamed = StreamedFrame::new(frame.kind);
 
-    data.insert(frame);
+  if let Some(attributes) = attributes {
+    streamed.add_attributes(attributes)?;
   }
-  Ok(Frame::Set { data, attributes })
+  Ok(streamed)
+}
+
+/// Convert a streaming range frame into a streaming bytes frame.
+#[cfg(feature = "zero-copy")]
+pub fn build_bytes_streaming_frame(
+  buf: &Bytes,
+  frame: &StreamedRangeFrame,
+) -> Result<StreamedFrame<BytesFrame>, RedisProtocolError> {
+  let attributes = build_bytes_attributes(buf, frame.attributes.as_ref())?;
+  let mut streamed = StreamedFrame::new(frame.kind);
+
+  if let Some(attributes) = attributes {
+    streamed.add_attributes(attributes)?;
+  }
+  Ok(streamed)
 }
 
 #[cfg(test)]
@@ -420,13 +757,13 @@ mod tests {
   };
   use alloc::vec;
 
-  fn create_attributes() -> (FrameMap, usize) {
+  fn create_bytes_attributes() -> (FrameMap<BytesFrame>, usize) {
     let mut out = new_map(None);
-    let key = Frame::SimpleString {
+    let key = BytesFrame::SimpleString {
       data:       "foo".into(),
       attributes: None,
     };
-    let value = Frame::Number {
+    let value = BytesFrame::Number {
       data:       42,
       attributes: None,
     };
@@ -438,28 +775,28 @@ mod tests {
   #[test]
   fn should_reconstruct_blobstring() {
     let mut streamed_frame = StreamedFrame::new(FrameKind::BlobString);
-    streamed_frame.add_frame(Frame::ChunkedString("foo".as_bytes().into()));
-    streamed_frame.add_frame(Frame::ChunkedString("bar".as_bytes().into()));
-    streamed_frame.add_frame(Frame::ChunkedString("baz".as_bytes().into()));
+    streamed_frame.add_bytes_frame(BytesFrame::ChunkedString("foo".as_bytes().into()));
+    streamed_frame.add_bytes_frame(BytesFrame::ChunkedString("bar".as_bytes().into()));
+    streamed_frame.add_bytes_frame(BytesFrame::ChunkedString("baz".as_bytes().into()));
 
-    let expected = Frame::BlobString {
+    let expected = BytesFrame::BlobString {
       data:       "foobarbaz".as_bytes().into(),
       attributes: None,
     };
-    assert_eq!(streamed_frame.into_frame().unwrap(), expected);
+    assert_eq!(streamed_frame.take_bytes_frame().unwrap(), expected);
 
     let mut streamed_frame = StreamedFrame::new(FrameKind::BlobString);
-    streamed_frame.add_frame(Frame::ChunkedString("foo".as_bytes().into()));
-    streamed_frame.add_frame(Frame::ChunkedString("bar".as_bytes().into()));
-    streamed_frame.add_frame(Frame::ChunkedString("baz".as_bytes().into()));
-    let (attributes, _) = create_attributes();
+    streamed_frame.add_bytes_frame(BytesFrame::ChunkedString("foo".as_bytes().into()));
+    streamed_frame.add_bytes_frame(BytesFrame::ChunkedString("bar".as_bytes().into()));
+    streamed_frame.add_bytes_frame(BytesFrame::ChunkedString("baz".as_bytes().into()));
+    let (attributes, _) = create_bytes_attributes();
     streamed_frame.attributes = Some(attributes.clone());
 
-    let expected = Frame::BlobString {
+    let expected = BytesFrame::BlobString {
       data:       "foobarbaz".as_bytes().into(),
       attributes: Some(attributes),
     };
-    assert_eq!(streamed_frame.into_frame().unwrap(), expected);
+    assert_eq!(streamed_frame.take_bytes_frame().unwrap(), expected);
   }
 
   #[test]

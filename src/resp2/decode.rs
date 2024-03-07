@@ -12,7 +12,6 @@ use crate::{
   utils,
 };
 use alloc::vec::Vec;
-use bytes::{Bytes, BytesMut};
 use core::str;
 use nom::{
   bytes::streaming::{take as nom_take, take_until as nom_take_until},
@@ -22,6 +21,9 @@ use nom::{
   Err as NomErr,
   IResult,
 };
+
+#[cfg(feature = "zero-copy")]
+use bytes::{Bytes, BytesMut};
 
 pub(crate) const NULL_LEN: isize = -1;
 
@@ -35,14 +37,6 @@ fn to_i64(s: &[u8]) -> Result<i64, RedisParseError<&[u8]>> {
   str::from_utf8(s)?
     .parse::<i64>()
     .map_err(|_| RedisParseError::new_custom("to_i64", "Failed to parse as integer."))
-}
-
-pub fn isize_to_usize<T>(s: isize) -> Result<usize, RedisParseError<T>> {
-  if s >= 0 {
-    Ok(s as usize)
-  } else {
-    Err(RedisParseError::new_custom("isize_to_usize", "Invalid length."))
-  }
 }
 
 fn d_read_to_crlf(input: (&[u8], usize)) -> DResult<usize> {
@@ -123,7 +117,7 @@ fn d_parse_bulkstring_or_null(input: (&[u8], usize)) -> DResult<RangeFrame> {
   if len == NULL_LEN {
     d_parse_null((input, offset))
   } else {
-    d_parse_bulkstring((input, offset), etry!(isize_to_usize(len)))
+    d_parse_bulkstring((input, offset), etry!(utils::isize_to_usize(len)))
   }
 }
 
@@ -145,7 +139,7 @@ fn d_parse_array(input: (&[u8], usize)) -> DResult<RangeFrame> {
   if len == NULL_LEN {
     d_parse_null((input, offset))
   } else {
-    let len = etry!(isize_to_usize(len));
+    let len = etry!(utils::isize_to_usize(len));
     let ((input, offset), frames) = d_parse_array_frames((input, offset), len)?;
     Ok(((input, offset), RangeFrame::Array(frames)))
   }
@@ -167,8 +161,8 @@ fn d_parse_frame(input: (&[u8], usize)) -> DResult<RangeFrame> {
 
 /// Attempt to the decode the contents of `buf`, returning frames that reference ranges into the provided buffer.
 ///
-/// This is the generic interface behind the zero-copy [decode_bytes](crate::resp2::decode::decode_bytes) interface,
-/// and can be used to implement zero-copy deserialization into other types.
+/// This is the generic interface behind the zero-copy interface and can be used to implement zero-copy
+/// deserialization into other types.
 pub fn decode_range(buf: &[u8]) -> Result<Option<(RangeFrame, usize)>, RedisProtocolError> {
   let (offset, len) = (0, buf.len());
 
@@ -185,7 +179,7 @@ pub fn decode_range(buf: &[u8]) -> Result<Option<(RangeFrame, usize)>, RedisProt
 }
 
 /// Attempt to decode the contents of `buf`, returning the first valid frame and the number of bytes consumed.
-pub fn decode_owned(buf: &[u8]) -> Result<Option<(OwnedFrame, usize)>, RedisProtocolError> {
+pub fn decode(buf: &[u8]) -> Result<Option<(OwnedFrame, usize)>, RedisProtocolError> {
   let (frame, amt) = match decode_range(buf)? {
     Some(result) => result,
     None => return Ok(None),
@@ -198,8 +192,9 @@ pub fn decode_owned(buf: &[u8]) -> Result<Option<(OwnedFrame, usize)>, RedisProt
 ///
 /// The returned frame(s) will hold owned views into the original buffer via [slice](bytes::Bytes::slice).
 ///
-/// Unlike [decode_bytes_mut](decode_bytes_mut), this function will not modify the input buffer. It is the caller's
-/// responsibility to manage any related cursors, etc.
+/// Unlike [decode_bytes_mut](decode_bytes_mut), this function will not modify the input buffer.
+#[cfg(feature = "zero-copy")]
+#[cfg_attr(docsrs, doc(cfg(feature = "zero-copy")))]
 pub fn decode_bytes(buf: &Bytes) -> Result<Option<(BytesFrame, usize)>, RedisProtocolError> {
   let (frame, amt) = match decode_range(&*buf)? {
     Some(result) => result,
@@ -214,7 +209,9 @@ pub fn decode_bytes(buf: &Bytes) -> Result<Option<(BytesFrame, usize)>, RedisPro
 ///
 /// The returned frame(s) will hold owned views into the original buffer.
 ///
-/// This function is designed to work best with the [codec](tokio_util::codec) interface.
+/// This function is designed to work best with a [codec](tokio_util::codec) interface.
+#[cfg(feature = "zero-copy")]
+#[cfg_attr(docsrs, doc(cfg(feature = "zero-copy")))]
 pub fn decode_bytes_mut(buf: &mut BytesMut) -> Result<Option<(BytesFrame, usize)>, RedisProtocolError> {
   let (frame, amt) = match decode_range(&*buf)? {
     Some(result) => result,

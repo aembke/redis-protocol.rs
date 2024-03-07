@@ -9,8 +9,11 @@ use bytes::{Bytes, BytesMut};
 use bytes_utils::Str;
 use cookie_factory::GenError;
 use core::str;
-use crc16::{State, XMODEM};
 use nom::error::ErrorKind as NomErrorKind;
+
+use crate::error::RedisParseError;
+#[cfg(feature = "routing")]
+use crc16::{State, XMODEM};
 
 pub(crate) const KB: usize = 1024;
 /// A pre-defined zeroed out KB of data, used to speed up extending buffers while encoding.
@@ -26,6 +29,7 @@ pub fn digits_in_number(d: usize) -> usize {
   ((d as f64).log10()).floor() as usize + 1
 }
 
+/// Returns the number of bytes necessary to encode a string representation of `d`.
 #[cfg(feature = "libm")]
 pub fn digits_in_number(d: usize) -> usize {
   if d == 0 {
@@ -35,165 +39,25 @@ pub fn digits_in_number(d: usize) -> usize {
   libm::floor(libm::log10(d as f64)) as usize + 1
 }
 
-// TODO maybe move this to resp3 utils
-#[cfg(feature = "std")]
-pub fn hash_tuple<H: std::hash::Hasher>(state: &mut H, range: &(usize, usize)) {
-  use std::hash::Hash;
-
-  range.0.hash(state);
-  range.1.hash(state);
-}
-
-/// A utility function to translate RESP2 frames to RESP3 frames.
-///
-/// RESP2 frames and RESP3 frames are somewhat different, but RESP3 is largely a superset of RESP2.
-///
-/// Redis handles the protocol choice based on the response to the `HELLO` command, so developers of higher level
-/// clients can be faced with a decision on which `Frame` struct to expose to callers. This function can allow callers
-/// to take a dependency on the RESP3 interface by lazily translating RESP2 frames to RESP3 frames.
-///
-/// **Important**: RESP3 pubsub payloads have an additional ["pubsub"](crate::types::PUBSUB_PUSH_PREFIX) SimpleString
-/// prefix frame.
-///
-/// For example, a RESP2 pubsub payload uses the format:
-///
-/// ```rust
-/// # use redis_protocol::resp2::types::OwnedFrame;
-/// OwnedFrame::Array(vec![
-///   OwnedFrame::SimpleString("message|pmessage|smessage".into()),
-///   OwnedFrame::BulkString("<channel>".into()),
-///   OwnedFrame::BulkString("<message>".into()),
-/// ])
-/// ```
-
-/// whereas a RESP3 pubsub payload uses the format:
-///
-/// ```rust
-/// # use redis_protocol::resp3::types::OwnedFrame;
-/// OwnedFrame::Array(vec![
-///   OwnedFrame::SimpleString("pubsub".into()),
-///   OwnedFrame::SimpleString("message|pmessage|smessage".into()),
-///   OwnedFrame::BulkString("<channel>".into()),
-///   OwnedFrame::BulkString("<message>".into()),
-/// ])
-/// ```
-///
-/// This function will add the "pubsub" prefix shown above, but callers should be aware of this for any relevant [duck typing](https://en.wikipedia.org/wiki/Duck_typing) use cases.
-pub fn resp2_to_resp3(frame: Resp2Frame) -> Resp3Frame {
-  if frame.is_normal_pubsub() {
-    let mut out = Vec::with_capacity(4);
-    out.push(Resp3Frame::SimpleString {
-      data:       PUBSUB_PUSH_PREFIX.into(),
-      attributes: None,
-    });
-    out.push(Resp3Frame::SimpleString {
-      data:       PUBSUB_PREFIX.into(),
-      attributes: None,
-    });
-    if let Resp2Frame::Array(mut inner) = frame {
-      // unwrap checked in is_normal_pubsub
-      let message = inner.pop().unwrap();
-      let channel = inner.pop().unwrap();
-      out.push(resp2_to_resp3(channel));
-      out.push(resp2_to_resp3(message));
-    } else {
-      panic!("Invalid pubsub frame conversion to resp3. This is a bug.");
-    }
-
-    return Resp3Frame::Push {
-      data:       out,
-      attributes: None,
-    };
-  }
-  if frame.is_pattern_pubsub_message() {
-    let mut out = Vec::with_capacity(4);
-    out.push(Resp3Frame::SimpleString {
-      data:       PUBSUB_PUSH_PREFIX.into(),
-      attributes: None,
-    });
-    out.push(Resp3Frame::SimpleString {
-      data:       PATTERN_PUBSUB_PREFIX.into(),
-      attributes: None,
-    });
-    if let Resp2Frame::Array(mut inner) = frame {
-      // unwrap checked in is_normal_pubsub
-      let message = inner.pop().unwrap();
-      let channel = inner.pop().unwrap();
-      out.push(resp2_to_resp3(channel));
-      out.push(resp2_to_resp3(message));
-    } else {
-      panic!("Invalid pattern pubsub frame conversion to resp3. This is a bug.");
-    }
-
-    return Resp3Frame::Push {
-      data:       out,
-      attributes: None,
-    };
-  }
-
-  match frame {
-    Resp2Frame::Integer(i) => Resp3Frame::Number {
-      data:       i,
-      attributes: None,
-    },
-    Resp2Frame::Error(s) => Resp3Frame::SimpleError {
-      data:       s,
-      attributes: None,
-    },
-    Resp2Frame::BulkString(d) => {
-      if d.len() < 6 {
-        match str::from_utf8(&d).ok() {
-          Some(s) => match s.as_ref() {
-            "true" => Resp3Frame::Boolean {
-              data:       true,
-              attributes: None,
-            },
-            "false" => Resp3Frame::Boolean {
-              data:       false,
-              attributes: None,
-            },
-            _ => Resp3Frame::BlobString {
-              data:       d,
-              attributes: None,
-            },
-          },
-          None => Resp3Frame::BlobString {
-            data:       d,
-            attributes: None,
-          },
-        }
-      } else {
-        Resp3Frame::BlobString {
-          data:       d,
-          attributes: None,
-        }
-      }
-    },
-    Resp2Frame::SimpleString(s) => Resp3Frame::SimpleString {
-      data:       s,
-      attributes: None,
-    },
-    Resp2Frame::Null => Resp3Frame::Null,
-    Resp2Frame::Array(data) => Resp3Frame::Array {
-      data:       data.into_iter().map(resp2_to_resp3).collect(),
-      attributes: None,
-    },
-  }
-}
-
 pub fn check_offset(x: &(&mut [u8], usize)) -> Result<(), GenError> {
   if x.1 > x.0.len() {
-    error!("Invalid offset of {} with buf len {}", x.1, x.0.len());
     Err(GenError::InvalidOffset)
   } else {
     Ok(())
   }
 }
 
-// this is faster than repeat(0).take(amt) at the cost of some memory
-pub fn zero_extend(buf: &mut BytesMut, mut amt: usize) {
-  trace!("allocating more, len: {}, amt: {}", buf.len(), amt);
+pub fn isize_to_usize<'a, T>(val: isize) -> Result<usize, RedisParseError<T>> {
+  if val >= 0 {
+    Ok(val as usize)
+  } else {
+    Err(RedisParseError::new_custom("isize_to_usize", "Invalid length."))
+  }
+}
 
+// FIXME what the hell is this
+// this is faster than repeat(0).take(amt) at the cost of some memory
+pub(crate) fn zero_extend(buf: &mut BytesMut, mut amt: usize) {
   buf.reserve(amt);
   while amt >= KB {
     buf.extend_from_slice(ZEROED_KB);
@@ -205,7 +69,7 @@ pub fn zero_extend(buf: &mut BytesMut, mut amt: usize) {
 }
 
 /// Whether an error payload is a `MOVED` or `ASK` redirection.
-pub fn is_cluster_error(payload: &str) -> bool {
+pub(crate) fn is_redirection(payload: &str) -> bool {
   if payload.starts_with("MOVED") || payload.starts_with("ASK") {
     payload.split(" ").count() == 3
   } else {
@@ -214,6 +78,7 @@ pub fn is_cluster_error(payload: &str) -> bool {
 }
 
 /// Perform a crc16 XMODEM operation against a string slice.
+#[cfg(feature = "routing")]
 fn crc16_xmodem(key: &[u8]) -> u16 {
   State::<XMODEM>::calculate(key) % REDIS_CLUSTER_SLOTS
 }
@@ -229,6 +94,8 @@ fn crc16_xmodem(key: &[u8]) -> u16 {
 /// # use redis_protocol::redis_keyslot;
 /// assert_eq!(redis_keyslot(b"8xjx7vWrfPq54mKfFD3Y1CcjjofpnAcQ"), 5458);
 /// ```
+#[cfg(feature = "routing")]
+#[cfg_attr(docsrs, doc(cfg(feature = "routing")))]
 pub fn redis_keyslot(key: &[u8]) -> u16 {
   let (mut i, mut j): (Option<usize>, Option<usize>) = (None, None);
 
