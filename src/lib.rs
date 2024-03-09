@@ -22,33 +22,35 @@ extern crate log;
 #[macro_use]
 extern crate cookie_factory;
 
+#[cfg(feature = "zero-copy")]
+#[cfg_attr(docsrs, doc(cfg(feature = "zero-copy")))]
 pub extern crate bytes;
+#[cfg(feature = "zero-copy")]
+#[cfg_attr(docsrs, doc(cfg(feature = "zero-copy")))]
 pub extern crate bytes_utils;
-extern crate core;
 #[cfg(feature = "codec")]
 #[cfg_attr(docsrs, doc(cfg(feature = "codec")))]
 pub extern crate tokio_util;
 
 #[macro_use]
 mod macros;
-// TODO docs
+/// Error types.
 pub mod error;
 mod utils;
 
 #[cfg(feature = "routing")]
 pub use utils::redis_keyslot;
-///
-// TODO doc
+
+/// A cluster routing interface.
 #[cfg(feature = "routing")]
 #[cfg_attr(docsrs, doc(cfg(feature = "routing")))]
 pub mod routing;
 
-/// Types and functions for implementing the RESP2 protocol.
+///  A RESP2 interface.
 pub mod resp2;
-/// Types and functions for implementing the RESP3 protocol.
+/// A RESP3 interface.
 pub mod resp3;
-///
-// TODO doc
+/// Common types across RESP versions.
 pub mod types;
 
-pub use utils::{digits_in_number, resp2_to_resp3, str_to_f64};
+pub use utils::{digits_in_number, str_to_f64};

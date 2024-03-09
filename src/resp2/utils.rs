@@ -1,10 +1,12 @@
 use crate::{
   error::{RedisProtocolError, RedisProtocolErrorKind},
-  resp2::types::{BytesFrame, FrameKind, OwnedFrame, RangeFrame, NULL},
+  resp2::types::{FrameKind, OwnedFrame, RangeFrame, NULL},
   utils::digits_in_number,
 };
 use alloc::{string::String, vec::Vec};
 
+#[cfg(feature = "zero-copy")]
+use crate::resp2::types::BytesFrame;
 #[cfg(feature = "zero-copy")]
 use bytes::{Bytes, BytesMut};
 #[cfg(feature = "zero-copy")]
@@ -32,9 +34,9 @@ pub fn integer_encode_len(i: i64) -> usize {
 /// Move or copy the contents of `buf` based on the ranges in the provided frame.
 pub fn build_owned_frame(buf: &[u8], frame: &RangeFrame) -> Result<OwnedFrame, RedisProtocolError> {
   Ok(match frame {
-    RangeFrame::Error((start, end)) => OwnedFrame::Error(String::from_utf8(buf[start .. end].to_owned())?),
-    RangeFrame::SimpleString((start, end)) => OwnedFrame::SimpleString(buf[start .. end].to_owned()),
-    RangeFrame::BulkString((start, end)) => OwnedFrame::BulkString(buf[start .. end].to_owned()),
+    RangeFrame::Error((start, end)) => OwnedFrame::Error(String::from_utf8(buf[*start .. *end].to_vec())?),
+    RangeFrame::SimpleString((start, end)) => OwnedFrame::SimpleString(buf[*start .. *end].to_owned()),
+    RangeFrame::BulkString((start, end)) => OwnedFrame::BulkString(buf[*start .. *end].to_owned()),
     RangeFrame::Integer(i) => OwnedFrame::Integer(*i),
     RangeFrame::Null => OwnedFrame::Null,
     RangeFrame::Array(frames) => {

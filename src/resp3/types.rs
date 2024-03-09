@@ -471,7 +471,8 @@ impl Hash for RangeFrame {
   }
 }
 
-/// TODO docs
+/// A frame type representing ranges into an associated buffer that contains the starting portion of a streaming
+/// frame.
 #[derive(Debug)]
 pub struct StreamedRangeFrame {
   pub kind:       FrameKind,
@@ -479,18 +480,23 @@ pub struct StreamedRangeFrame {
 }
 
 impl StreamedRangeFrame {
-  ///
+  /// Create a new streamed frame with the provided frame type.
   pub fn new(kind: FrameKind) -> Self {
     StreamedRangeFrame { kind, attributes: None }
   }
 
-  ///
-  pub fn add_attributes(&mut self, attributes: RangeAttributes) -> Result<(), RedisProtocolError> {
-    unimplemented!()
+  /// Add range attributes to the frame.
+  pub fn add_attributes(&mut self, attributes: RangeAttributes) {
+    if let Some(attributes) = self.attributes.as_mut() {
+      attributes.extend(attributes);
+    } else {
+      self.attributes = Some(attributes);
+    }
   }
 }
 
-/// TODO docs
+/// A reference-free frame type representing ranges into an associated buffer, typically used to implement zero-copy
+/// parsing.
 #[derive(Debug)]
 pub enum DecodedRangeFrame {
   Complete(RangeFrame),
@@ -501,7 +507,7 @@ impl DecodedRangeFrame {
   /// Add attributes to the decoded frame, if possible.
   pub fn add_attributes(&mut self, attributes: RangeAttributes) -> Result<(), RedisProtocolError> {
     match self {
-      DecodedRangeFrame::Streaming(inner) => inner.add_attributes(attributes),
+      DecodedRangeFrame::Streaming(inner) => Ok(inner.add_attributes(attributes)),
       DecodedRangeFrame::Complete(inner) => inner.add_attributes(attributes),
     }
   }
@@ -518,9 +524,8 @@ impl DecodedRangeFrame {
   }
 }
 
-// TODO docs
-///
-pub trait Resp3Frame: Debug + Hash + Eq {
+/// Generic operations on a RESP3 frame.
+pub trait Resp3Frame: Debug + Hash + Eq + Sized {
   type Attributes;
 
   /// Create the target aggregate type based on a buffered set of chunked frames.
@@ -592,7 +597,7 @@ pub trait Resp3Frame: Debug + Hash + Eq {
   fn is_shard_pubsub_message(&self) -> bool;
 }
 
-/// An enum describing a RESP3 frame.
+/// An enum describing a RESP3 frame that uses owned byte containers.
 ///
 /// <https://github.com/antirez/RESP3/blob/master/spec.md>
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1020,6 +1025,70 @@ impl OwnedFrame {
   }
 }
 
+impl<B: Into<Vec<u8>>> TryFrom<(FrameKind, B)> for OwnedFrame {
+  type Error = RedisProtocolError;
+
+  fn try_from((kind, buf): (FrameKind, B)) -> Result<Self, Self::Error> {
+    Ok(match kind {
+      FrameKind::SimpleString => OwnedFrame::SimpleString {
+        data:       buf.into(),
+        attributes: None,
+      },
+      FrameKind::SimpleError => OwnedFrame::SimpleError {
+        data:       String::from_utf8(buf.into())?,
+        attributes: None,
+      },
+      FrameKind::BlobString => OwnedFrame::BlobString {
+        data:       buf.into(),
+        attributes: None,
+      },
+      FrameKind::BlobError => OwnedFrame::BlobError {
+        data:       buf.into(),
+        attributes: None,
+      },
+      FrameKind::BigNumber => OwnedFrame::BigNumber {
+        data:       buf.into(),
+        attributes: None,
+      },
+      FrameKind::ChunkedString => OwnedFrame::ChunkedString(buf.into()),
+      FrameKind::Null => OwnedFrame::Null,
+      _ => {
+        return Err(RedisProtocolError::new(
+          RedisProtocolErrorKind::Unknown,
+          "Cannot convert to frame.",
+        ))
+      },
+    })
+  }
+}
+
+impl From<i64> for OwnedFrame {
+  fn from(value: i64) -> Self {
+    OwnedFrame::Number {
+      data:       value,
+      attributes: None,
+    }
+  }
+}
+
+impl From<bool> for OwnedFrame {
+  fn from(value: bool) -> Self {
+    OwnedFrame::Boolean {
+      data:       value,
+      attributes: None,
+    }
+  }
+}
+
+impl From<f64> for OwnedFrame {
+  fn from(value: f64) -> Self {
+    OwnedFrame::Double {
+      data:       value,
+      attributes: None,
+    }
+  }
+}
+
 /// An enum describing a RESP3 frame.
 ///
 /// <https://github.com/antirez/RESP3/blob/master/spec.md>
@@ -1113,6 +1182,74 @@ pub enum BytesFrame {
   },
   /// One chunk of a streaming blob.
   ChunkedString(Bytes),
+}
+
+#[cfg(feature = "zero-copy")]
+impl<B: Into<Bytes>> TryFrom<(FrameKind, B)> for BytesFrame {
+  type Error = RedisProtocolError;
+
+  fn try_from((kind, buf): (FrameKind, B)) -> Result<Self, Self::Error> {
+    Ok(match kind {
+      FrameKind::SimpleString => BytesFrame::SimpleString {
+        data:       buf.into(),
+        attributes: None,
+      },
+      FrameKind::SimpleError => BytesFrame::SimpleError {
+        data:       Str::from_inner(buf.into())?,
+        attributes: None,
+      },
+      FrameKind::BlobString => BytesFrame::BlobString {
+        data:       buf.into(),
+        attributes: None,
+      },
+      FrameKind::BlobError => BytesFrame::BlobError {
+        data:       buf.into(),
+        attributes: None,
+      },
+      FrameKind::BigNumber => BytesFrame::BigNumber {
+        data:       buf.into(),
+        attributes: None,
+      },
+      FrameKind::ChunkedString => BytesFrame::ChunkedString(buf.into()),
+      FrameKind::Null => BytesFrame::Null,
+      _ => {
+        return Err(RedisProtocolError::new(
+          RedisProtocolErrorKind::Unknown,
+          "Cannot convert to frame.",
+        ))
+      },
+    })
+  }
+}
+
+#[cfg(feature = "zero-copy")]
+impl From<i64> for BytesFrame {
+  fn from(value: i64) -> Self {
+    BytesFrame::Number {
+      data:       value,
+      attributes: None,
+    }
+  }
+}
+
+#[cfg(feature = "zero-copy")]
+impl From<bool> for BytesFrame {
+  fn from(value: bool) -> Self {
+    BytesFrame::Boolean {
+      data:       value,
+      attributes: None,
+    }
+  }
+}
+
+#[cfg(feature = "zero-copy")]
+impl From<f64> for BytesFrame {
+  fn from(value: f64) -> Self {
+    BytesFrame::Double {
+      data:       value,
+      attributes: None,
+    }
+  }
 }
 
 #[cfg(feature = "zero-copy")]
@@ -1507,37 +1644,41 @@ impl<T: Resp3Frame> DecodedFrame<T> {
 
 /// A helper struct for reading and managing streaming data types.
 ///
-/// ```rust edition2018
-/// # use bytes::Bytes;
-/// use redis_protocol::resp3::decode::streaming::decode;
+/// ```rust
+/// use redis_protocol::resp3::decode::streaming;
 ///
 /// fn main() {
-///   let parts: Vec<Bytes> = vec!["*?\r\n".into(), ":1\r\n".into(), ":2\r\n".into(), ".\r\n".into()];
+///   // decode the streamed array `[1,2]` one element at a time
+///   let parts: Vec<Vec<u8>> = vec![
+///     "*?\r\n".into(),
+///     ":1\r\n".into(),
+///     ":2\r\n".into(),
+///     ".\r\n".into(),
+///   ];
 ///
-///   let (frame, _) = decode(&parts[0]).unwrap().unwrap();
+///   let (frame, _) = streaming::decode(&parts[0]).unwrap().unwrap();
 ///   assert!(frame.is_streaming());
 ///   let mut streaming = frame.into_streaming_frame().unwrap();
 ///   println!("Reading streaming {:?}", streaming.kind);
 ///
-///   let (frame, _) = decode(&parts[1]).unwrap().unwrap();
+///   let (frame, _) = streaming::decode(&parts[1]).unwrap().unwrap();
 ///   assert!(frame.is_complete());
 ///   // add frames to the buffer until we reach the terminating byte sequence
 ///   streaming.add_frame(frame.into_complete_frame().unwrap());
 ///
-///   let (frame, _) = decode(&parts[2]).unwrap().unwrap();
+///   let (frame, _) = streaming::decode(&parts[2]).unwrap().unwrap();
 ///   assert!(frame.is_complete());
 ///   streaming.add_frame(frame.into_complete_frame().unwrap());
 ///
-///   let (frame, _) = decode(&parts[3]).unwrap().unwrap();
+///   let (frame, _) = streaming::decode(&parts[3]).unwrap().unwrap();
 ///   assert!(frame.is_complete());
 ///   streaming.add_frame(frame.into_complete_frame().unwrap());
 ///
 ///   assert!(streaming.is_finished());
 ///   // convert the buffer into one frame
-///   let result = streaming.into_frame().unwrap();
+///   let result = streaming.take().unwrap();
 ///
-///   // BytesFrame::Array { data: [1, 2], attributes: None }
-///   println!("{:?}", result);
+///   println!("{:?}", result); // OwnedFrame::Array { data: [1, 2], attributes: None }
 /// }
 /// ```
 #[derive(Debug, Eq, PartialEq)]

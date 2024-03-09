@@ -5,12 +5,13 @@ use crate::{
     utils as resp2_utils,
     utils::{bulkstring_encode_len, error_encode_len, integer_encode_len, simplestring_encode_len},
   },
-  types::{_Range, SHARD_PUBSUB_PREFIX},
+  resp3::types::OwnedFrame as Resp3OwnedFrame,
+  types::{_Range, PATTERN_PUBSUB_PREFIX, PUBSUB_PREFIX, PUBSUB_PUSH_PREFIX, SHARD_PUBSUB_PREFIX},
   utils,
 };
 use alloc::{string::String, vec::Vec};
-use bytes_utils::Str;
 use core::{
+  convert::{From, TryFrom},
   fmt::{self, Debug},
   hash::{Hash, Hasher},
   mem,
@@ -18,7 +19,11 @@ use core::{
 };
 
 #[cfg(feature = "zero-copy")]
+use crate::resp3::types::BytesFrame as Resp3BytesFrame;
+#[cfg(feature = "zero-copy")]
 use bytes::{Bytes, BytesMut};
+#[cfg(feature = "zero-copy")]
+use bytes_utils::Str;
 
 /// Byte prefix before a simple string type.
 pub const SIMPLESTRING_BYTE: u8 = b'+';
@@ -33,8 +38,6 @@ pub const ARRAY_BYTE: u8 = b'*';
 
 /// The binary representation of NULL in RESP2.
 pub const NULL: &'static str = "$-1\r\n";
-
-pub use crate::utils::{PATTERN_PUBSUB_PREFIX, PUBSUB_PREFIX};
 
 /// An enum representing the type of RESP frame.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -113,8 +116,7 @@ pub enum RangeFrame {
   Null,
 }
 
-// TODO docs
-///
+/// Generic operations on a RESP2 frame.
 pub trait Resp2Frame: Debug + Hash + Eq {
   /// Replace `self` with Null, returning the original value.
   fn take(&mut self) -> Self;
@@ -163,6 +165,8 @@ pub enum OwnedFrame {
 
 impl OwnedFrame {
   /// Move the frame contents into a new [BytesFrame](crate::resp2::types::BytesFrame).
+  #[cfg(feature = "zero-copy")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "zero-copy")))]
   pub fn into_bytes_frame(self) -> BytesFrame {
     match self {
       OwnedFrame::SimpleString(s) => BytesFrame::SimpleString(s.into()),
@@ -173,6 +177,48 @@ impl OwnedFrame {
         BytesFrame::Array(frames.into_iter().map(|frame| frame.to_bytes_frame()).collect())
       },
       OwnedFrame::Null => BytesFrame::Null,
+    }
+  }
+
+  /// Convert the frame to RESP3.
+  ///
+  /// For the most part RESP3 is a superset of RESP2, but there is one notable difference with publish-subscribe
+  /// messages - in RESP3 pubsub arrays have an additional prefix frame with the SimpleString value "pubsub". This
+  /// function will add this frame.
+  pub fn into_resp3(self) -> Resp3OwnedFrame {
+    let is_pubsub =
+      self.is_normal_pubsub_message() || self.is_pattern_pubsub_message() || self.is_shard_pubsub_message();
+    if is_pubsub {
+      let prefix = Resp3OwnedFrame::SimpleString {
+        data:       PUBSUB_PUSH_PREFIX.as_bytes().to_vec(),
+        attributes: None,
+      };
+      let frames = match self {
+        OwnedFrame::Array(inner) => {
+          let mut buf = Vec::with_capacity(inner.len() + 1);
+          buf.push(prefix);
+          buf.extend(inner.into_iter().map(|f| f.into_resp3()));
+          buf
+        },
+        _ => unreachable!(),
+      };
+
+      Resp3OwnedFrame::Push {
+        data:       frames,
+        attributes: None,
+      }
+    } else {
+      match self {
+        OwnedFrame::SimpleString(data) => Resp3OwnedFrame::SimpleString { data, attributes: None },
+        OwnedFrame::Error(data) => Resp3OwnedFrame::SimpleError { data, attributes: None },
+        OwnedFrame::Integer(data) => Resp3OwnedFrame::Number { data, attributes: None },
+        OwnedFrame::BulkString(data) => Resp3OwnedFrame::BlobString { data, attributes: None },
+        OwnedFrame::Array(frames) => Resp3OwnedFrame::Array {
+          data:       frames.into_iter().map(|f| f.into_resp3()).collect(),
+          attributes: None,
+        },
+        OwnedFrame::Null => Resp3OwnedFrame::Null,
+      }
     }
   }
 }
@@ -428,9 +474,72 @@ impl BytesFrame {
       BytesFrame::Null => OwnedFrame::Null,
     }
   }
+
+  /// Convert the frame to RESP3.
+  ///
+  /// For the most part RESP3 is a superset of RESP2, but there is one notable difference with publish-subscribe
+  /// messages - in RESP3 pubsub arrays have an additional prefix frame with the SimpleString value "pubsub". This
+  /// function will add this frame.
+  pub fn into_resp3(self) -> Resp3BytesFrame {
+    let is_pubsub =
+      self.is_normal_pubsub_message() || self.is_pattern_pubsub_message() || self.is_shard_pubsub_message();
+    if is_pubsub {
+      let prefix = Resp3BytesFrame::SimpleString {
+        data:       Bytes::from_static(PUBSUB_PUSH_PREFIX.as_bytes()),
+        attributes: None,
+      };
+      let frames = match self {
+        BytesFrame::Array(inner) => {
+          let mut buf = Vec::with_capacity(inner.len() + 1);
+          buf.push(prefix);
+          buf.extend(inner);
+          buf
+        },
+        _ => unreachable!(),
+      };
+
+      Resp3BytesFrame::Push {
+        data:       frames,
+        attributes: None,
+      }
+    } else {
+      match self {
+        BytesFrame::SimpleString(data) => Resp3BytesFrame::SimpleString { data, attributes: None },
+        BytesFrame::Error(data) => Resp3BytesFrame::SimpleError { data, attributes: None },
+        BytesFrame::Integer(data) => Resp3BytesFrame::Number { data, attributes: None },
+        BytesFrame::BulkString(data) => Resp3BytesFrame::BlobString { data, attributes: None },
+        BytesFrame::Array(frames) => Resp3BytesFrame::Array {
+          data:       frames.into_iter().map(|f| f.upgrade()).collect(),
+          attributes: None,
+        },
+        BytesFrame::Null => Resp3BytesFrame::Null,
+      }
+    }
+  }
+}
+
+#[cfg(feature = "zero-copy")]
+impl<B: Into<Bytes>> TryFrom<(FrameKind, B)> for BytesFrame {
+  type Error = RedisProtocolError;
+
+  fn try_from((kind, buf): (FrameKind, B)) -> Result<Self, Self::Error> {
+    Ok(match kind {
+      FrameKind::SimpleString => BytesFrame::SimpleString(buf.into()),
+      FrameKind::Error => BytesFrame::Error(Str::from_inner(buf.into())?),
+      FrameKind::BulkString => BytesFrame::BulkString(buf.into()),
+      FrameKind::Null => BytesFrame::Null,
+      _ => {
+        return Err(RedisProtocolError::new(
+          RedisProtocolErrorKind::Unknown,
+          "Cannot convert to frame.",
+        ))
+      },
+    })
+  }
 }
 
 #[cfg(test)]
+#[cfg(feature = "zero-copy")]
 mod tests {
   use super::*;
 
@@ -457,97 +566,33 @@ mod tests {
 
   #[test]
   fn should_parse_pattern_pubsub_message() {
-    let frames = vec![
+    let frame = BytesFrame::Array(vec![
       BytesFrame::BulkString("pmessage".into()),
       BytesFrame::BulkString("fo*".into()),
       BytesFrame::BulkString("foo".into()),
       BytesFrame::BulkString("bar".into()),
-    ];
-    assert!(resp2_utils::is_pattern_pubsub(&frames));
-    let frame = BytesFrame::Array(frames);
-
-    let (channel, message) = frame.parse_as_pubsub().expect("Expected pubsub frames");
-
-    assert_eq!(channel, "foo");
-    assert_eq!(message, "bar");
+    ]);
+    assert!(frame.is_pattern_pubsub_message());
   }
 
   #[test]
-  fn should_parse_pubsub_message() {
-    let frames = vec![
+  fn should_parse_normal_pubsub_message() {
+    let frame = BytesFrame::Array(vec![
       BytesFrame::BulkString("message".into()),
       BytesFrame::BulkString("foo".into()),
       BytesFrame::BulkString("bar".into()),
-    ];
-    assert!(!resp2_utils::is_pattern_pubsub(&frames));
-    let frame = BytesFrame::Array(frames);
-
-    let (channel, message) = frame.parse_as_pubsub().expect("Expected pubsub frames");
-
-    assert_eq!(channel, "foo");
-    assert_eq!(message, "bar");
-  }
-
-  #[test]
-  #[should_panic]
-  fn should_fail_parsing_non_pubsub_message() {
-    let frame = BytesFrame::Array(vec![
-      BytesFrame::BulkString("baz".into()),
-      BytesFrame::BulkString("foo".into()),
     ]);
-
-    frame.parse_as_pubsub().expect("Expected non pubsub frames");
+    assert!(frame.is_normal_pubsub_message());
   }
 
   #[test]
-  fn should_check_frame_types() {
-    let f = BytesFrame::Null;
-    assert!(f.is_null());
-    assert!(!f.is_string());
-    assert!(!f.is_error());
-    assert!(!f.is_array());
-    assert!(!f.is_integer());
-    assert!(!f.is_moved_or_ask_error());
-
-    let f = BytesFrame::BulkString("foo".as_bytes().into());
-    assert!(!f.is_null());
-    assert!(f.is_string());
-    assert!(!f.is_error());
-    assert!(!f.is_array());
-    assert!(!f.is_integer());
-    assert!(!f.is_moved_or_ask_error());
-
-    let f = BytesFrame::SimpleString("foo".into());
-    assert!(!f.is_null());
-    assert!(f.is_string());
-    assert!(!f.is_error());
-    assert!(!f.is_array());
-    assert!(!f.is_integer());
-    assert!(!f.is_moved_or_ask_error());
-
-    let f = BytesFrame::Error("foo".into());
-    assert!(!f.is_null());
-    assert!(!f.is_string());
-    assert!(f.is_error());
-    assert!(!f.is_array());
-    assert!(!f.is_integer());
-    assert!(!f.is_moved_or_ask_error());
-
-    let f = BytesFrame::Array(vec![BytesFrame::SimpleString("foo".into())]);
-    assert!(!f.is_null());
-    assert!(!f.is_string());
-    assert!(!f.is_error());
-    assert!(f.is_array());
-    assert!(!f.is_integer());
-    assert!(!f.is_moved_or_ask_error());
-
-    let f = BytesFrame::Integer(10);
-    assert!(!f.is_null());
-    assert!(!f.is_string());
-    assert!(!f.is_error());
-    assert!(!f.is_array());
-    assert!(f.is_integer());
-    assert!(!f.is_moved_or_ask_error());
+  fn should_parse_shard_pubsub_message() {
+    let frame = BytesFrame::Array(vec![
+      BytesFrame::BulkString("smessage".into()),
+      BytesFrame::BulkString("foo".into()),
+      BytesFrame::BulkString("bar".into()),
+    ]);
+    assert!(frame.is_shard_pubsub_message());
   }
 
   #[test]

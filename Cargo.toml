@@ -31,8 +31,7 @@ pretty_env_logger = "0.5"
 [features]
 default = ["std"]
 index-map = ["indexmap"]
-# TODO check this
-zero-copy = ["bytes", "bytes-utils", "bytes/default", "bytes-utils/std"]
+zero-copy = ["bytes", "bytes-utils"]
 decode-logs = []
 alloc = ["nom/alloc"]
 std = ["cookie-factory/default", "nom/default"]

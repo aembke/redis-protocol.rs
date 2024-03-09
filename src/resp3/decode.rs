@@ -30,7 +30,7 @@ fn map_complete_frame(frame: RangeFrame) -> DecodedRangeFrame {
   DecodedRangeFrame::Complete(frame)
 }
 
-fn expect_complete_index_frame(frame: DecodedRangeFrame) -> Result<RangeFrame, RedisParseError<&'_ [u8]>> {
+fn expect_complete_index_frame<T>(frame: DecodedRangeFrame) -> Result<RangeFrame, RedisParseError<T>> {
   frame
     .into_complete_frame()
     .map_err(|e| RedisParseError::new_custom("expect_complete_frame", format!("{:?}", e)))
@@ -81,7 +81,7 @@ fn to_verbatimstring_format<T>(s: &[u8]) -> Result<VerbatimStringFormat, RedisPa
   }
 }
 
-fn to_map<'a>(mut data: Vec<RangeFrame>) -> Result<FrameMap<RangeFrame, RangeFrame>, RedisParseError<&'_ [u8]>> {
+fn to_map<T>(mut data: Vec<RangeFrame>) -> Result<FrameMap<RangeFrame, RangeFrame>, RedisParseError<T>> {
   if data.len() % 2 != 0 {
     return Err(RedisParseError::new_custom("to_map", "Invalid hashmap frame length."));
   }
@@ -97,14 +97,14 @@ fn to_map<'a>(mut data: Vec<RangeFrame>) -> Result<FrameMap<RangeFrame, RangeFra
   Ok(out)
 }
 
-fn to_set(data: Vec<RangeFrame>) -> Result<FrameSet<RangeFrame>, RedisParseError<&'_ [u8]>> {
+fn to_set<T>(data: Vec<RangeFrame>) -> Result<FrameSet<RangeFrame>, RedisParseError<T>> {
   Ok(data.into_iter().collect())
 }
 
-fn attach_attributes(
+fn attach_attributes<T>(
   attributes: RangeAttributes,
   mut frame: DecodedRangeFrame,
-) -> Result<DecodedRangeFrame, RedisParseError<&'_ [u8]>> {
+) -> Result<DecodedRangeFrame, RedisParseError<T>> {
   if let Err(e) = frame.add_attributes(attributes) {
     Err(RedisParseError::new_custom("attach_attributes", format!("{:?}", e)))
   } else {
@@ -562,7 +562,7 @@ pub mod streaming {
         DecodedFrame::Streaming(resp3_utils::build_bytes_streaming_frame(buf, &frame)?),
         amt,
       )),
-      None => None,
+      _ => None,
     })
   }
 

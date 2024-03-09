@@ -4,10 +4,7 @@
 
 use crate::{
   error::{RedisParseError, RedisProtocolError, RedisProtocolErrorKind},
-  resp2::{
-    types::*,
-    utils::{build_bytes_frame, build_owned_frame, freeze_parse},
-  },
+  resp2::{types::*, utils::build_owned_frame},
   types::*,
   utils,
 };
@@ -19,9 +16,10 @@ use nom::{
   number::streaming::be_u8,
   sequence::terminated as nom_terminated,
   Err as NomErr,
-  IResult,
 };
 
+#[cfg(feature = "zero-copy")]
+use crate::resp2::utils::{build_bytes_frame, freeze_parse};
 #[cfg(feature = "zero-copy")]
 use bytes::{Bytes, BytesMut};
 
@@ -212,27 +210,37 @@ pub fn decode_bytes(buf: &Bytes) -> Result<Option<(BytesFrame, usize)>, RedisPro
 /// This function is designed to work best with a [codec](tokio_util::codec) interface.
 #[cfg(feature = "zero-copy")]
 #[cfg_attr(docsrs, doc(cfg(feature = "zero-copy")))]
-pub fn decode_bytes_mut(buf: &mut BytesMut) -> Result<Option<(BytesFrame, usize)>, RedisProtocolError> {
+pub fn decode_bytes_mut(buf: &mut BytesMut) -> Result<Option<(BytesFrame, usize, Bytes)>, RedisProtocolError> {
   let (frame, amt) = match decode_range(&*buf)? {
     Some(result) => result,
     None => return Ok(None),
   };
-  let (frame, _) = freeze_parse(buf, &frame, amt)?;
+  let (frame, buf) = freeze_parse(buf, &frame, amt)?;
 
-  Ok(Some((frame, amt)))
+  Ok(Some((frame, amt, buf)))
 }
 
 #[cfg(test)]
+#[cfg(feature = "zero-copy")]
 mod tests {
   use super::*;
-  use crate::resp2::{decode::tests::*, types::Frame};
-  use nom::AsBytes;
+  use crate::resp2::decode::tests::*;
 
-  fn decode_and_verify_some(bytes: &Bytes, expected: &(Option<Frame>, usize)) {
-    let mut bytes = BytesMut::from(bytes.as_bytes());
+  pub const PADDING: &'static str = "FOOBARBAZ";
+
+  pub fn pretty_print_panic(e: RedisProtocolError) {
+    panic!("{:?}", e);
+  }
+
+  pub fn panic_no_decode() {
+    panic!("Failed to decode bytes. None returned");
+  }
+
+  fn decode_and_verify_some(bytes: &Bytes, expected: &(Option<BytesFrame>, usize)) {
+    let mut bytes = BytesMut::from(bytes);
     let total_len = bytes.len();
 
-    let (frame, len, buf) = match decode_mut(&mut bytes) {
+    let (frame, len, buf) = match decode_bytes_mut(&mut bytes) {
       Ok(Some((f, l, b))) => (Some(f), l, b),
       Ok(None) => return panic_no_decode(),
       Err(e) => return pretty_print_panic(e),
@@ -244,12 +252,12 @@ mod tests {
     assert_eq!(buf.len() + bytes.len(), total_len, "total len matched");
   }
 
-  fn decode_and_verify_padded_some(bytes: &Bytes, expected: &(Option<Frame>, usize)) {
-    let mut bytes = BytesMut::from(bytes.as_bytes());
+  fn decode_and_verify_padded_some(bytes: &Bytes, expected: &(Option<BytesFrame>, usize)) {
+    let mut bytes = BytesMut::from(bytes);
     bytes.extend_from_slice(PADDING.as_bytes());
     let total_len = bytes.len();
 
-    let (frame, len, buf) = match decode_mut(&mut bytes) {
+    let (frame, len, buf) = match decode_bytes_mut(&mut bytes) {
       Ok(Some((f, l, b))) => (Some(f), l, b),
       Ok(None) => return panic_no_decode(),
       Err(e) => return pretty_print_panic(e),
@@ -262,8 +270,8 @@ mod tests {
   }
 
   fn decode_and_verify_none(bytes: &Bytes) {
-    let mut bytes = BytesMut::from(bytes.as_bytes());
-    let (frame, len, buf) = match decode_mut(&mut bytes) {
+    let mut bytes = BytesMut::from(bytes);
+    let (frame, len, buf) = match decode_bytes_mut(&mut bytes) {
       Ok(Some((f, l, b))) => (Some(f), l, b),
       Ok(None) => (None, 0, Bytes::new()),
       Err(e) => return pretty_print_panic(e),
@@ -276,7 +284,7 @@ mod tests {
 
   #[test]
   fn should_decode_llen_res_example() {
-    let expected = (Some(Frame::Integer(48293)), 8);
+    let expected = (Some(BytesFrame::Integer(48293)), 8);
     let bytes: Bytes = ":48293\r\n".into();
 
     decode_and_verify_some(&bytes, &expected);
@@ -285,7 +293,7 @@ mod tests {
 
   #[test]
   fn should_decode_simple_string() {
-    let expected = (Some(Frame::SimpleString("string".into())), 9);
+    let expected = (Some(BytesFrame::SimpleString("string".into())), 9);
     let bytes: Bytes = "+string\r\n".into();
 
     decode_and_verify_some(&bytes, &expected);
@@ -295,7 +303,7 @@ mod tests {
   #[test]
   #[should_panic]
   fn should_decode_simple_string_incomplete() {
-    let expected = (Some(Frame::SimpleString("string".into())), 9);
+    let expected = (Some(BytesFrame::SimpleString("string".into())), 9);
     let bytes: Bytes = "+stri".into();
 
     decode_and_verify_some(&bytes, &expected);
@@ -304,7 +312,7 @@ mod tests {
 
   #[test]
   fn should_decode_bulk_string() {
-    let expected = (Some(Frame::BulkString("foo".into())), 9);
+    let expected = (Some(BytesFrame::BulkString("foo".into())), 9);
     let bytes: Bytes = "$3\r\nfoo\r\n".into();
 
     decode_and_verify_some(&bytes, &expected);
@@ -314,7 +322,7 @@ mod tests {
   #[test]
   #[should_panic]
   fn should_decode_bulk_string_incomplete() {
-    let expected = (Some(Frame::BulkString("foo".into())), 9);
+    let expected = (Some(BytesFrame::BulkString("foo".into())), 9);
     let bytes: Bytes = "$3\r\nfo".into();
 
     decode_and_verify_some(&bytes, &expected);
@@ -324,9 +332,9 @@ mod tests {
   #[test]
   fn should_decode_array_no_nulls() {
     let expected = (
-      Some(Frame::Array(vec![
-        Frame::SimpleString("Foo".into()),
-        Frame::SimpleString("Bar".into()),
+      Some(BytesFrame::Array(vec![
+        BytesFrame::SimpleString("Foo".into()),
+        BytesFrame::SimpleString("Bar".into()),
       ])),
       16,
     );
@@ -341,10 +349,10 @@ mod tests {
     let bytes: Bytes = "*3\r\n$3\r\nFoo\r\n$-1\r\n$3\r\nBar\r\n".into();
 
     let expected = (
-      Some(Frame::Array(vec![
-        Frame::BulkString("Foo".into()),
-        Frame::Null,
-        Frame::BulkString("Bar".into()),
+      Some(BytesFrame::Array(vec![
+        BytesFrame::BulkString("Foo".into()),
+        BytesFrame::Null,
+        BytesFrame::BulkString("Bar".into()),
       ])),
       bytes.len(),
     );
@@ -357,7 +365,7 @@ mod tests {
   fn should_decode_normal_error() {
     let bytes: Bytes = "-WRONGTYPE Operation against a key holding the wrong kind of value\r\n".into();
     let expected = (
-      Some(Frame::Error(
+      Some(BytesFrame::Error(
         "WRONGTYPE Operation against a key holding the wrong kind of value".into(),
       )),
       bytes.len(),
@@ -370,7 +378,7 @@ mod tests {
   #[test]
   fn should_decode_moved_error() {
     let bytes: Bytes = "-MOVED 3999 127.0.0.1:6381\r\n".into();
-    let expected = (Some(Frame::Error("MOVED 3999 127.0.0.1:6381".into())), bytes.len());
+    let expected = (Some(BytesFrame::Error("MOVED 3999 127.0.0.1:6381".into())), bytes.len());
 
     decode_and_verify_some(&bytes, &expected);
     decode_and_verify_padded_some(&bytes, &expected);
@@ -379,7 +387,7 @@ mod tests {
   #[test]
   fn should_decode_ask_error() {
     let bytes: Bytes = "-ASK 3999 127.0.0.1:6381\r\n".into();
-    let expected = (Some(Frame::Error("ASK 3999 127.0.0.1:6381".into())), bytes.len());
+    let expected = (Some(BytesFrame::Error("ASK 3999 127.0.0.1:6381".into())), bytes.len());
 
     decode_and_verify_some(&bytes, &expected);
     decode_and_verify_padded_some(&bytes, &expected);
@@ -395,6 +403,6 @@ mod tests {
   #[should_panic]
   fn should_error_on_junk() {
     let mut bytes: BytesMut = "foobarbazwibblewobble".into();
-    let _ = decode_mut(&mut bytes).map_err(|e| pretty_print_panic(e));
+    let _ = decode_bytes_mut(&mut bytes).map_err(|e| pretty_print_panic(e));
   }
 }

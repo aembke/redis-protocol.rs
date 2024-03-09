@@ -193,6 +193,7 @@ pub fn extend_encode(buf: &mut BytesMut, frame: &BytesFrame) -> Result<usize, Re
 }
 
 #[cfg(test)]
+#[cfg(feature = "zero-copy")]
 mod tests {
   use super::*;
   use crate::utils::*;

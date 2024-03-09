@@ -753,14 +753,15 @@ pub fn build_bytes_streaming_frame(
 }
 
 #[cfg(test)]
+#[cfg(feature = "zero-copy")]
 mod tests {
   use crate::resp3::{
     types::*,
-    utils::{encode_len, new_map, new_set},
+    utils::{bytes_encode_len, new_map, new_set},
   };
   use alloc::vec;
 
-  fn create_bytes_attributes() -> (FrameMap<BytesFrame>, usize) {
+  fn create_attributes() -> (FrameMap<BytesFrame, BytesFrame>, usize) {
     let mut out = new_map(None);
     let key = BytesFrame::SimpleString {
       data:       "foo".into(),
@@ -792,8 +793,8 @@ mod tests {
     streamed_frame.add_bytes_frame(BytesFrame::ChunkedString("foo".as_bytes().into()));
     streamed_frame.add_bytes_frame(BytesFrame::ChunkedString("bar".as_bytes().into()));
     streamed_frame.add_bytes_frame(BytesFrame::ChunkedString("baz".as_bytes().into()));
-    let (attributes, _) = create_bytes_attributes();
-    streamed_frame.attributes = Some(attributes.clone());
+    let (attributes, _) = create_attributes();
+    streamed_frame.add_attributes(attributes.clone()).unwrap();
 
     let expected = BytesFrame::BlobString {
       data:       "foobarbaz".as_bytes().into(),
@@ -805,30 +806,30 @@ mod tests {
   #[test]
   fn should_reconstruct_array() {
     let mut streamed_frame = StreamedFrame::new(FrameKind::Array);
-    streamed_frame.add_frame(Frame::SimpleString {
+    streamed_frame.add_frame(BytesFrame::SimpleString {
       data:       "foo".into(),
       attributes: None,
     });
-    streamed_frame.add_frame(Frame::Number {
+    streamed_frame.add_frame(BytesFrame::Number {
       data:       42,
       attributes: None,
     });
-    streamed_frame.add_frame(Frame::Boolean {
+    streamed_frame.add_frame(BytesFrame::Boolean {
       data:       true,
       attributes: None,
     });
 
-    let expected = Frame::Array {
+    let expected = BytesFrame::Array {
       data:       vec![
-        Frame::SimpleString {
+        BytesFrame::SimpleString {
           data:       "foo".into(),
           attributes: None,
         },
-        Frame::Number {
+        BytesFrame::Number {
           data:       42,
           attributes: None,
         },
-        Frame::Boolean {
+        BytesFrame::Boolean {
           data:       true,
           attributes: None,
         },
@@ -839,31 +840,31 @@ mod tests {
 
     let (attributes, _) = create_attributes();
     let mut streamed_frame = StreamedFrame::new(FrameKind::Array);
-    streamed_frame.add_frame(Frame::SimpleString {
+    streamed_frame.add_frame(BytesFrame::SimpleString {
       data:       "foo".into(),
       attributes: None,
     });
-    streamed_frame.add_frame(Frame::Number {
+    streamed_frame.add_frame(BytesFrame::Number {
       data:       42,
       attributes: Some(attributes.clone()),
     });
-    streamed_frame.add_frame(Frame::Boolean {
+    streamed_frame.add_frame(BytesFrame::Boolean {
       data:       true,
       attributes: None,
     });
-    streamed_frame.attributes = Some(attributes.clone());
+    streamed_frame.add_attributes(attributes.clone()).unwrap();
 
-    let expected = Frame::Array {
+    let expected = BytesFrame::Array {
       data:       vec![
-        Frame::SimpleString {
+        BytesFrame::SimpleString {
           data:       "foo".into(),
           attributes: None,
         },
-        Frame::Number {
+        BytesFrame::Number {
           data:       42,
           attributes: Some(attributes.clone()),
         },
-        Frame::Boolean {
+        BytesFrame::Boolean {
           data:       true,
           attributes: None,
         },
@@ -875,19 +876,19 @@ mod tests {
 
   #[test]
   fn should_reconstruct_map() {
-    let mut k1 = Frame::SimpleString {
+    let mut k1 = BytesFrame::SimpleString {
       data:       "a".into(),
       attributes: None,
     };
-    let v1 = Frame::Number {
+    let v1 = BytesFrame::Number {
       data:       42,
       attributes: None,
     };
-    let k2 = Frame::BlobString {
+    let k2 = BytesFrame::BlobString {
       data:       "b".as_bytes().into(),
       attributes: None,
     };
-    let v2 = Frame::Boolean {
+    let v2 = BytesFrame::Boolean {
       data:       true,
       attributes: None,
     };
@@ -901,26 +902,26 @@ mod tests {
     let mut expected = new_map(None);
     expected.insert(k1.clone(), v1.clone());
     expected.insert(k2.clone(), v2.clone());
-    let expected = Frame::Map {
+    let expected = BytesFrame::Map {
       data:       expected,
       attributes: None,
     };
     assert_eq!(streamed_frame.into_frame().unwrap(), expected);
 
     let (attributes, _) = create_attributes();
-    let _ = k1.add_attributes(attributes.clone()).unwrap();
+    k1.add_attributes(attributes.clone()).unwrap();
 
     let mut streamed_frame = StreamedFrame::new(FrameKind::Map);
     streamed_frame.add_frame(k1.clone());
     streamed_frame.add_frame(v1.clone());
     streamed_frame.add_frame(k2.clone());
     streamed_frame.add_frame(v2.clone());
-    streamed_frame.attributes = Some(attributes.clone());
+    streamed_frame.add_attributes(attributes.clone()).unwrap();
 
     let mut expected = new_map(None);
     expected.insert(k1.clone(), v1.clone());
     expected.insert(k2.clone(), v2.clone());
-    let expected = Frame::Map {
+    let expected = BytesFrame::Map {
       data:       expected,
       attributes: Some(attributes),
     };
@@ -930,15 +931,15 @@ mod tests {
   #[test]
   #[should_panic]
   fn should_reconstruct_map_odd_elements() {
-    let k1 = Frame::SimpleString {
+    let k1 = BytesFrame::SimpleString {
       data:       "a".into(),
       attributes: None,
     };
-    let v1 = Frame::Number {
+    let v1 = BytesFrame::Number {
       data:       42,
       attributes: None,
     };
-    let k2 = Frame::BlobString {
+    let k2 = BytesFrame::BlobString {
       data:       "b".as_bytes().into(),
       attributes: None,
     };
@@ -953,19 +954,19 @@ mod tests {
 
   #[test]
   fn should_reconstruct_set() {
-    let mut v1 = Frame::SimpleString {
+    let mut v1 = BytesFrame::SimpleString {
       data:       "a".into(),
       attributes: None,
     };
-    let v2 = Frame::Number {
+    let v2 = BytesFrame::Number {
       data:       42,
       attributes: None,
     };
-    let v3 = Frame::BlobString {
+    let v3 = BytesFrame::BlobString {
       data:       "b".as_bytes().into(),
       attributes: None,
     };
-    let v4 = Frame::Boolean {
+    let v4 = BytesFrame::Boolean {
       data:       true,
       attributes: None,
     };
@@ -981,28 +982,28 @@ mod tests {
     expected.insert(v2.clone());
     expected.insert(v3.clone());
     expected.insert(v4.clone());
-    let expected = Frame::Set {
+    let expected = BytesFrame::Set {
       data:       expected,
       attributes: None,
     };
     assert_eq!(streamed_frame.into_frame().unwrap(), expected);
 
     let (attributes, _) = create_attributes();
-    let _ = v1.add_attributes(attributes.clone()).unwrap();
+    v1.add_attributes(attributes.clone()).unwrap();
 
     let mut streamed_frame = StreamedFrame::new(FrameKind::Set);
     streamed_frame.add_frame(v1.clone());
     streamed_frame.add_frame(v2.clone());
     streamed_frame.add_frame(v3.clone());
     streamed_frame.add_frame(v4.clone());
-    streamed_frame.attributes = Some(attributes.clone());
+    streamed_frame.add_attributes(attributes.clone()).unwrap();
 
     let mut expected = new_set(None);
     expected.insert(v1);
     expected.insert(v2);
     expected.insert(v3);
     expected.insert(v4);
-    let expected = Frame::Set {
+    let expected = BytesFrame::Set {
       data:       expected,
       attributes: Some(attributes),
     };
@@ -1012,50 +1013,50 @@ mod tests {
   #[test]
   fn should_reconstruct_nested_array() {
     let mut streamed_frame = StreamedFrame::new(FrameKind::Array);
-    streamed_frame.add_frame(Frame::SimpleString {
+    streamed_frame.add_frame(BytesFrame::SimpleString {
       data:       "foo".into(),
       attributes: None,
     });
-    streamed_frame.add_frame(Frame::Array {
+    streamed_frame.add_frame(BytesFrame::Array {
       data:       vec![
-        Frame::SimpleString {
+        BytesFrame::SimpleString {
           data:       "foo".into(),
           attributes: None,
         },
-        Frame::Null,
-        Frame::BigNumber {
+        BytesFrame::Null,
+        BytesFrame::BigNumber {
           data:       "123456789".as_bytes().into(),
           attributes: None,
         },
       ],
       attributes: None,
     });
-    streamed_frame.add_frame(Frame::Boolean {
+    streamed_frame.add_frame(BytesFrame::Boolean {
       data:       true,
       attributes: None,
     });
 
-    let expected = Frame::Array {
+    let expected = BytesFrame::Array {
       data:       vec![
-        Frame::SimpleString {
+        BytesFrame::SimpleString {
           data:       "foo".into(),
           attributes: None,
         },
-        Frame::Array {
+        BytesFrame::Array {
           data:       vec![
-            Frame::SimpleString {
+            BytesFrame::SimpleString {
               data:       "foo".into(),
               attributes: None,
             },
-            Frame::Null,
-            Frame::BigNumber {
+            BytesFrame::Null,
+            BytesFrame::BigNumber {
               data:       "123456789".as_bytes().into(),
               attributes: None,
             },
           ],
           attributes: None,
         },
-        Frame::Boolean {
+        BytesFrame::Boolean {
           data:       true,
           attributes: None,
         },
@@ -1066,51 +1067,51 @@ mod tests {
 
     let (attributes, _) = create_attributes();
     let mut streamed_frame = StreamedFrame::new(FrameKind::Array);
-    streamed_frame.add_frame(Frame::SimpleString {
+    streamed_frame.add_frame(BytesFrame::SimpleString {
       data:       "foo".into(),
       attributes: None,
     });
-    streamed_frame.add_frame(Frame::Array {
+    streamed_frame.add_frame(BytesFrame::Array {
       data:       vec![
-        Frame::SimpleString {
+        BytesFrame::SimpleString {
           data:       "foo".into(),
           attributes: None,
         },
-        Frame::Null,
-        Frame::BigNumber {
+        BytesFrame::Null,
+        BytesFrame::BigNumber {
           data:       "123456789".as_bytes().into(),
           attributes: Some(attributes.clone()),
         },
       ],
       attributes: None,
     });
-    streamed_frame.add_frame(Frame::Boolean {
+    streamed_frame.add_frame(BytesFrame::Boolean {
       data:       true,
       attributes: Some(attributes.clone()),
     });
-    streamed_frame.attributes = Some(attributes.clone());
+    streamed_frame.add_attributes(attributes.clone()).unwrap();
 
-    let expected = Frame::Array {
+    let expected = BytesFrame::Array {
       data:       vec![
-        Frame::SimpleString {
+        BytesFrame::SimpleString {
           data:       "foo".into(),
           attributes: None,
         },
-        Frame::Array {
+        BytesFrame::Array {
           data:       vec![
-            Frame::SimpleString {
+            BytesFrame::SimpleString {
               data:       "foo".into(),
               attributes: None,
             },
-            Frame::Null,
-            Frame::BigNumber {
+            BytesFrame::Null,
+            BytesFrame::BigNumber {
               data:       "123456789".as_bytes().into(),
               attributes: Some(attributes.clone()),
             },
           ],
           attributes: None,
         },
-        Frame::Boolean {
+        BytesFrame::Boolean {
           data:       true,
           attributes: Some(attributes.clone()),
         },
@@ -1122,29 +1123,29 @@ mod tests {
 
   #[test]
   fn should_reconstruct_nested_map() {
-    let k1 = Frame::SimpleString {
+    let k1 = BytesFrame::SimpleString {
       data:       "a".into(),
       attributes: None,
     };
-    let mut v1 = Frame::Number {
+    let mut v1 = BytesFrame::Number {
       data:       42,
       attributes: None,
     };
-    let k2 = Frame::BlobString {
+    let k2 = BytesFrame::BlobString {
       data:       "b".as_bytes().into(),
       attributes: None,
     };
-    let inner_k1 = Frame::SimpleString {
+    let inner_k1 = BytesFrame::SimpleString {
       data:       "b".into(),
       attributes: None,
     };
-    let mut inner_v1 = Frame::BlobString {
+    let mut inner_v1 = BytesFrame::BlobString {
       data:       "foobarbaz".as_bytes().into(),
       attributes: None,
     };
     let mut inner_map = new_map(None);
     inner_map.insert(inner_k1.clone(), inner_v1.clone());
-    let v2 = Frame::Map {
+    let v2 = BytesFrame::Map {
       data:       inner_map,
       attributes: None,
     };
@@ -1158,18 +1159,18 @@ mod tests {
     let mut expected = new_map(None);
     expected.insert(k1.clone(), v1.clone());
     expected.insert(k2.clone(), v2.clone());
-    let expected = Frame::Map {
+    let expected = BytesFrame::Map {
       data:       expected,
       attributes: None,
     };
     assert_eq!(streamed_frame.into_frame().unwrap(), expected);
 
     let (attributes, _) = create_attributes();
-    let _ = v1.add_attributes(attributes.clone()).unwrap();
-    let _ = inner_v1.add_attributes(attributes.clone()).unwrap();
+    v1.add_attributes(attributes.clone()).unwrap();
+    inner_v1.add_attributes(attributes.clone()).unwrap();
     let mut inner_map = new_map(None);
     inner_map.insert(inner_k1, inner_v1);
-    let v2 = Frame::Map {
+    let v2 = BytesFrame::Map {
       data:       inner_map,
       attributes: None,
     };
@@ -1179,12 +1180,12 @@ mod tests {
     streamed_frame.add_frame(v1.clone());
     streamed_frame.add_frame(k2.clone());
     streamed_frame.add_frame(v2.clone());
-    streamed_frame.attributes = Some(attributes.clone());
+    streamed_frame.add_attributes(attributes.clone()).unwrap();
 
     let mut expected = new_map(None);
     expected.insert(k1.clone(), v1.clone());
     expected.insert(k2.clone(), v2.clone());
-    let expected = Frame::Map {
+    let expected = BytesFrame::Map {
       data:       expected,
       attributes: Some(attributes),
     };
@@ -1193,224 +1194,224 @@ mod tests {
 
   #[test]
   fn should_get_encode_len_blobstring() {
-    let mut frame = Frame::BlobString {
+    let mut frame = BytesFrame::BlobString {
       data:       "foobarbaz".as_bytes().into(),
       attributes: None,
     };
     let expected_len = 1 + 1 + 2 + 9 + 2;
-    assert_eq!(encode_len(&frame).unwrap(), expected_len);
+    assert_eq!(bytes_encode_len(&frame), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
-    let _ = frame.add_attributes(attributes).unwrap();
-    assert_eq!(encode_len(&frame).unwrap(), expected_len + attributes_len);
+    frame.add_attributes(attributes.clone()).unwrap();
+    assert_eq!(bytes_encode_len(&frame), expected_len + attributes_len);
   }
 
   #[test]
   fn should_get_encode_len_bloberror() {
-    let mut frame = Frame::BlobError {
+    let mut frame = BytesFrame::BlobError {
       data:       "foobarbaz".as_bytes().into(),
       attributes: None,
     };
     let expected_len = 1 + 1 + 2 + 9 + 2;
-    assert_eq!(encode_len(&frame).unwrap(), expected_len);
+    assert_eq!(bytes_encode_len(&frame), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
-    let _ = frame.add_attributes(attributes).unwrap();
-    assert_eq!(encode_len(&frame).unwrap(), expected_len + attributes_len);
+    frame.add_attributes(attributes.clone()).unwrap();
+    assert_eq!(bytes_encode_len(&frame), expected_len + attributes_len);
   }
 
   #[test]
   fn should_get_encode_len_bignumber() {
-    let mut frame = Frame::BigNumber {
+    let mut frame = BytesFrame::BigNumber {
       data:       "123456789".as_bytes().into(),
       attributes: None,
     };
     let expected_len = 1 + 9 + 2;
-    assert_eq!(encode_len(&frame).unwrap(), expected_len);
+    assert_eq!(bytes_encode_len(&frame), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
-    let _ = frame.add_attributes(attributes).unwrap();
-    assert_eq!(encode_len(&frame).unwrap(), expected_len + attributes_len);
+    frame.add_attributes(attributes.clone()).unwrap();
+    assert_eq!(bytes_encode_len(&frame), expected_len + attributes_len);
   }
 
   #[test]
   fn should_get_encode_len_bool() {
-    let mut frame = Frame::Boolean {
+    let mut frame = BytesFrame::Boolean {
       data:       true,
       attributes: None,
     };
     let expected_len = 1 + 1 + 2;
-    assert_eq!(encode_len(&frame).unwrap(), expected_len);
+    assert_eq!(bytes_encode_len(&frame), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
-    let _ = frame.add_attributes(attributes).unwrap();
-    assert_eq!(encode_len(&frame).unwrap(), expected_len + attributes_len);
+    frame.add_attributes(attributes.clone()).unwrap();
+    assert_eq!(bytes_encode_len(&frame), expected_len + attributes_len);
 
-    let mut frame = Frame::Boolean {
+    let mut frame = BytesFrame::Boolean {
       data:       false,
       attributes: None,
     };
     let expected_len = 1 + 1 + 2;
-    assert_eq!(encode_len(&frame).unwrap(), expected_len);
+    assert_eq!(bytes_encode_len(&frame), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
-    let _ = frame.add_attributes(attributes).unwrap();
-    assert_eq!(encode_len(&frame).unwrap(), expected_len + attributes_len);
+    frame.add_attributes(attributes.clone()).unwrap();
+    assert_eq!(bytes_encode_len(&frame), expected_len + attributes_len);
   }
 
   #[test]
   fn should_get_encode_len_number() {
-    let mut frame = Frame::Number {
+    let mut frame = BytesFrame::Number {
       data:       500,
       attributes: None,
     };
     let expected_len = 1 + 3 + 2;
-    assert_eq!(encode_len(&frame).unwrap(), expected_len);
+    assert_eq!(bytes_encode_len(&frame), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
-    let _ = frame.add_attributes(attributes).unwrap();
-    assert_eq!(encode_len(&frame).unwrap(), expected_len + attributes_len);
+    frame.add_attributes(attributes.clone()).unwrap();
+    assert_eq!(bytes_encode_len(&frame), expected_len + attributes_len);
   }
 
   #[test]
   fn should_get_encode_len_negative_number() {
-    let mut frame = Frame::Number {
+    let mut frame = BytesFrame::Number {
       data:       -500,
       attributes: None,
     };
     let expected_len = 1 + 4 + 2;
-    assert_eq!(encode_len(&frame).unwrap(), expected_len);
+    assert_eq!(bytes_encode_len(&frame), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
-    let _ = frame.add_attributes(attributes).unwrap();
-    assert_eq!(encode_len(&frame).unwrap(), expected_len + attributes_len);
+    frame.add_attributes(attributes.clone()).unwrap();
+    assert_eq!(bytes_encode_len(&frame), expected_len + attributes_len);
   }
 
   #[test]
   fn should_get_encode_len_double() {
-    let mut frame = Frame::Double {
+    let mut frame = BytesFrame::Double {
       data:       500.123,
       attributes: None,
     };
     let expected_len = 1 + 7 + 2;
-    assert_eq!(encode_len(&frame).unwrap(), expected_len);
+    assert_eq!(bytes_encode_len(&frame), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
-    let _ = frame.add_attributes(attributes).unwrap();
-    assert_eq!(encode_len(&frame).unwrap(), expected_len + attributes_len);
+    frame.add_attributes(attributes.clone()).unwrap();
+    assert_eq!(bytes_encode_len(&frame), expected_len + attributes_len);
   }
 
   #[test]
   fn should_get_encode_len_negative_double() {
-    let mut frame = Frame::Double {
+    let mut frame = BytesFrame::Double {
       data:       -500.123,
       attributes: None,
     };
     let expected_len = 1 + 8 + 2;
-    assert_eq!(encode_len(&frame).unwrap(), expected_len);
+    assert_eq!(bytes_encode_len(&frame), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
-    let _ = frame.add_attributes(attributes).unwrap();
-    assert_eq!(encode_len(&frame).unwrap(), expected_len + attributes_len);
+    frame.add_attributes(attributes.clone()).unwrap();
+    assert_eq!(bytes_encode_len(&frame), expected_len + attributes_len);
   }
 
   #[test]
   fn should_get_encode_len_inf_double() {
-    let mut frame = Frame::Double {
+    let mut frame = BytesFrame::Double {
       data:       f64::INFINITY,
       attributes: None,
     };
     let expected_len = 1 + 3 + 2;
-    assert_eq!(encode_len(&frame).unwrap(), expected_len);
+    assert_eq!(bytes_encode_len(&frame), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
-    let _ = frame.add_attributes(attributes).unwrap();
-    assert_eq!(encode_len(&frame).unwrap(), expected_len + attributes_len);
+    frame.add_attributes(attributes.clone()).unwrap();
+    assert_eq!(bytes_encode_len(&frame), expected_len + attributes_len);
 
-    let mut frame = Frame::Double {
+    let mut frame = BytesFrame::Double {
       data:       f64::NEG_INFINITY,
       attributes: None,
     };
     let expected_len = 1 + 4 + 2;
-    assert_eq!(encode_len(&frame).unwrap(), expected_len);
+    assert_eq!(bytes_encode_len(&frame), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
-    let _ = frame.add_attributes(attributes).unwrap();
-    assert_eq!(encode_len(&frame).unwrap(), expected_len + attributes_len);
+    frame.add_attributes(attributes.clone()).unwrap();
+    assert_eq!(bytes_encode_len(&frame), expected_len + attributes_len);
   }
 
   #[test]
   fn should_get_encode_len_null() {
-    let frame = Frame::Null;
+    let frame = BytesFrame::Null;
     let expected_len = 3;
-    assert_eq!(encode_len(&frame).unwrap(), expected_len);
+    assert_eq!(bytes_encode_len(&frame), expected_len);
   }
 
   #[test]
   fn should_get_encode_len_hello() {
-    let frame = Frame::Hello {
-      version: RespVersion::RESP3,
-      auth:    None,
+    let frame = BytesFrame::Hello {
+      version:  RespVersion::RESP3,
+      username: None,
+      password: None,
     };
     let expected_len = 5 + 1 + 1 + 1;
-    assert_eq!(encode_len(&frame).unwrap(), expected_len);
+    assert_eq!(bytes_encode_len(&frame), expected_len);
 
-    let frame = Frame::Hello {
-      version: RespVersion::RESP2,
-      auth:    None,
+    let frame = BytesFrame::Hello {
+      version:  RespVersion::RESP2,
+      username: None,
+      password: None,
     };
     let expected_len = 5 + 1 + 1 + 1;
-    assert_eq!(encode_len(&frame).unwrap(), expected_len);
+    assert_eq!(bytes_encode_len(&frame), expected_len);
 
-    let frame = Frame::Hello {
-      version: RespVersion::RESP3,
-      auth:    Some(Auth {
-        username: "foo".into(),
-        password: "bar".into(),
-      }),
+    let frame = BytesFrame::Hello {
+      version:  RespVersion::RESP3,
+      username: Some("foo".into()),
+      password: Some("bar".into()),
     };
     let expected_len = 5 + 1 + 1 + 1 + 4 + 1 + 3 + 1 + 3 + 1;
-    assert_eq!(encode_len(&frame).unwrap(), expected_len);
+    assert_eq!(bytes_encode_len(&frame), expected_len);
   }
 
   #[test]
   fn should_get_encode_len_verbatimstring() {
-    let mut frame = Frame::VerbatimString {
+    let mut frame = BytesFrame::VerbatimString {
       format:     VerbatimStringFormat::Markdown,
       data:       "foobarbaz".into(),
       attributes: None,
     };
     let expected_len = 1 + 2 + 2 + 3 + 1 + 9 + 2;
-    assert_eq!(encode_len(&frame).unwrap(), expected_len);
+    assert_eq!(bytes_encode_len(&frame), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
-    let _ = frame.add_attributes(attributes).unwrap();
-    assert_eq!(encode_len(&frame).unwrap(), expected_len + attributes_len);
+    frame.add_attributes(attributes.clone()).unwrap();
+    assert_eq!(bytes_encode_len(&frame), expected_len + attributes_len);
 
-    let mut frame = Frame::VerbatimString {
+    let mut frame = BytesFrame::VerbatimString {
       format:     VerbatimStringFormat::Text,
       data:       "foobarbaz".into(),
       attributes: None,
     };
     let expected_len = 1 + 2 + 2 + 3 + 1 + 9 + 2;
-    assert_eq!(encode_len(&frame).unwrap(), expected_len);
+    assert_eq!(bytes_encode_len(&frame), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
-    let _ = frame.add_attributes(attributes).unwrap();
-    assert_eq!(encode_len(&frame).unwrap(), expected_len + attributes_len);
+    frame.add_attributes(attributes.clone()).unwrap();
+    assert_eq!(bytes_encode_len(&frame), expected_len + attributes_len);
   }
 
   #[test]
   fn should_get_encode_len_chunked_string() {
-    let frame = Frame::ChunkedString("foobarbaz".as_bytes().into());
+    let frame = BytesFrame::ChunkedString("foobarbaz".as_bytes().into());
     let expected_len = 1 + 1 + 2 + 9 + 2;
-    assert_eq!(encode_len(&frame).unwrap(), expected_len);
+    assert_eq!(bytes_encode_len(&frame), expected_len);
   }
 
   #[test]
   fn should_get_encode_len_end_stream() {
-    let end_frame = Frame::new_end_stream();
+    let end_frame = BytesFrame::new_end_stream();
     let expected_len = 1 + 1 + 2;
-    assert_eq!(encode_len(&end_frame).unwrap(), expected_len);
+    assert_eq!(bytes_encode_len(&end_frame), expected_len);
   }
 }

@@ -1,5 +1,8 @@
-use alloc::{borrow::Cow, format, string::String};
-use bytes_utils::string::Utf8Error as BytesUtf8Error;
+use alloc::{
+  borrow::Cow,
+  format,
+  string::{FromUtf8Error, String},
+};
 use cookie_factory::GenError;
 use core::{borrow::Borrow, fmt, fmt::Debug, str::Utf8Error};
 use nom::{
@@ -7,6 +10,10 @@ use nom::{
   Err as NomError,
   Needed,
 };
+use std::error::Error;
+
+#[cfg(feature = "zero-copy")]
+use bytes_utils::string::Utf8Error as BytesUtf8Error;
 
 #[cfg(feature = "std")]
 use std::io::Error as IoError;
@@ -78,8 +85,8 @@ impl RedisProtocolErrorKind {
 /// The default error type used with all external functions in this library.
 #[derive(Debug, Eq, PartialEq)]
 pub struct RedisProtocolError {
-  desc: Cow<'static, str>,
-  kind: RedisProtocolErrorKind,
+  details: Cow<'static, str>,
+  kind:    RedisProtocolErrorKind,
 }
 
 impl RedisProtocolError {
@@ -90,23 +97,23 @@ impl RedisProtocolError {
   pub fn new<S: Into<Cow<'static, str>>>(kind: RedisProtocolErrorKind, desc: S) -> Self {
     RedisProtocolError {
       kind,
-      desc: desc.into(),
+      details: desc.into(),
     }
   }
 
-  pub fn description(&self) -> &str {
-    self.desc.borrow()
+  pub fn details(&self) -> &str {
+    self.details.borrow()
   }
 
   pub fn new_empty() -> Self {
     RedisProtocolError {
-      kind: RedisProtocolErrorKind::Unknown,
-      desc: "".into(),
+      kind:    RedisProtocolErrorKind::Unknown,
+      details: "".into(),
     }
   }
 
   pub fn to_string(&self) -> String {
-    format!("{}: {}", self.kind.to_str(), self.desc)
+    format!("{}: {}", self.kind.to_str(), self.details)
   }
 
   pub fn kind(&self) -> &RedisProtocolErrorKind {
@@ -116,7 +123,7 @@ impl RedisProtocolError {
 
 impl fmt::Display for RedisProtocolError {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "{}: {}", self.kind.to_str(), self.desc)
+    write!(f, "{}: {}", self.kind.to_str(), self.details)
   }
 }
 
@@ -140,8 +147,8 @@ impl From<NomError<nom::error::Error<&[u8]>>> for RedisProtocolError {
   fn from(e: NomError<nom::error::Error<&[u8]>>) -> Self {
     if let NomError::Incomplete(Needed::Size(ref s)) = e {
       RedisProtocolError {
-        kind: RedisProtocolErrorKind::BufferTooSmall(s.get()),
-        desc: Cow::Borrowed(""),
+        kind:    RedisProtocolErrorKind::BufferTooSmall(s.get()),
+        details: Cow::Borrowed(""),
       }
     } else {
       let desc = match e {
@@ -151,8 +158,8 @@ impl From<NomError<nom::error::Error<&[u8]>>> for RedisProtocolError {
       };
 
       RedisProtocolError {
-        kind: RedisProtocolErrorKind::DecodeError,
-        desc: Cow::Owned(desc),
+        kind:    RedisProtocolErrorKind::DecodeError,
+        details: Cow::Owned(desc),
       }
     }
   }
@@ -162,13 +169,13 @@ impl From<NomError<&[u8]>> for RedisProtocolError {
   fn from(e: NomError<&[u8]>) -> Self {
     if let NomError::Incomplete(Needed::Size(ref s)) = e {
       RedisProtocolError {
-        kind: RedisProtocolErrorKind::BufferTooSmall(s.get()),
-        desc: Cow::Borrowed(""),
+        kind:    RedisProtocolErrorKind::BufferTooSmall(s.get()),
+        details: Cow::Borrowed(""),
       }
     } else {
       RedisProtocolError {
-        kind: RedisProtocolErrorKind::DecodeError,
-        desc: Cow::Owned(format!("{:?}", e)),
+        kind:    RedisProtocolErrorKind::DecodeError,
+        details: Cow::Owned(format!("{:?}", e)),
       }
     }
   }
@@ -190,6 +197,13 @@ where
   }
 }
 
+impl From<FromUtf8Error> for RedisProtocolError {
+  fn from(e: FromUtf8Error) -> Self {
+    RedisProtocolError::new(RedisProtocolErrorKind::Unknown, format!("{:?}", e))
+  }
+}
+
+#[cfg(feature = "zero-copy")]
 impl<B> From<BytesUtf8Error<B>> for RedisProtocolError {
   fn from(e: BytesUtf8Error<B>) -> Self {
     e.utf8_error().into()
@@ -285,6 +299,7 @@ impl<I> From<nom::Err<RedisParseError<I>>> for RedisParseError<I> {
   }
 }
 
+#[cfg(feature = "zero-copy")]
 impl<B, I> From<BytesUtf8Error<B>> for RedisParseError<I> {
   fn from(e: BytesUtf8Error<B>) -> Self {
     e.utf8_error().into()
@@ -294,6 +309,20 @@ impl<B, I> From<BytesUtf8Error<B>> for RedisParseError<I> {
 impl<I> From<Utf8Error> for RedisParseError<I> {
   fn from(e: Utf8Error) -> Self {
     RedisParseError::new_custom("parse_utf8", format!("{}", e))
+  }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for RedisProtocolError {
+  fn description(&self) -> &str {
+    self.details()
+  }
+
+  fn source(&self) -> Option<&(dyn Error + 'static)> {
+    match self.kind {
+      RedisProtocolErrorKind::IO(ref e) => Some(e),
+      _ => None,
+    }
   }
 }
 

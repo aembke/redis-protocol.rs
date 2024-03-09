@@ -49,7 +49,7 @@ macro_rules! encode_attributes (
   }
 );
 
-fn gen_simplestring<'a, A: Into<BorrowedAttrs>>(
+fn gen_simplestring<'a, A: Into<BorrowedAttrs<'a>>>(
   mut x: (&'a mut [u8], usize),
   data: &[u8],
   attributes: Option<A>,
@@ -62,7 +62,7 @@ fn gen_simplestring<'a, A: Into<BorrowedAttrs>>(
   )
 }
 
-fn gen_simpleerror<'a, A: Into<BorrowedAttrs>>(
+fn gen_simpleerror<'a, A: Into<BorrowedAttrs<'a>>>(
   mut x: (&'a mut [u8], usize),
   data: &str,
   attributes: Option<A>,
@@ -75,8 +75,8 @@ fn gen_simpleerror<'a, A: Into<BorrowedAttrs>>(
   )
 }
 
-fn gen_number<A: Into<BorrowedAttrs>>(
-  mut x: (&mut [u8], usize),
+fn gen_number<'a, A: Into<BorrowedAttrs<'a>>>(
+  mut x: (&'a mut [u8], usize),
   data: i64,
   attributes: Option<A>,
 ) -> Result<(&mut [u8], usize), GenError> {
@@ -92,8 +92,8 @@ fn gen_null(x: (&mut [u8], usize)) -> Result<(&mut [u8], usize), GenError> {
   do_gen!(x, gen_slice!(NULL.as_bytes()))
 }
 
-fn gen_double<A: Into<BorrowedAttrs>>(
-  mut x: (&mut [u8], usize),
+fn gen_double<'a, A: Into<BorrowedAttrs<'a>>>(
+  mut x: (&'a mut [u8], usize),
   data: f64,
   attributes: Option<A>,
 ) -> Result<(&mut [u8], usize), GenError> {
@@ -106,8 +106,8 @@ fn gen_double<A: Into<BorrowedAttrs>>(
   )
 }
 
-fn gen_boolean<A: Into<BorrowedAttrs>>(
-  mut x: (&mut [u8], usize),
+fn gen_boolean<'a, A: Into<BorrowedAttrs<'a>>>(
+  mut x: (&'a mut [u8], usize),
   data: bool,
   attributes: Option<A>,
 ) -> Result<(&mut [u8], usize), GenError> {
@@ -117,7 +117,7 @@ fn gen_boolean<A: Into<BorrowedAttrs>>(
   do_gen!(x, gen_slice!(data.as_bytes()))
 }
 
-fn gen_bignumber<'a, A: Into<BorrowedAttrs>>(
+fn gen_bignumber<'a, A: Into<BorrowedAttrs<'a>>>(
   mut x: (&'a mut [u8], usize),
   data: &[u8],
   attributes: Option<A>,
@@ -130,7 +130,7 @@ fn gen_bignumber<'a, A: Into<BorrowedAttrs>>(
   )
 }
 
-fn gen_blobstring<'a, A: Into<BorrowedAttrs>>(
+fn gen_blobstring<'a, A: Into<BorrowedAttrs<'a>>>(
   mut x: (&'a mut [u8], usize),
   data: &[u8],
   attributes: Option<A>,
@@ -147,7 +147,7 @@ fn gen_blobstring<'a, A: Into<BorrowedAttrs>>(
   )
 }
 
-fn gen_bloberror<'a, A: Into<BorrowedAttrs>>(
+fn gen_bloberror<'a, A: Into<BorrowedAttrs<'a>>>(
   mut x: (&'a mut [u8], usize),
   data: &[u8],
   attributes: Option<A>,
@@ -164,7 +164,7 @@ fn gen_bloberror<'a, A: Into<BorrowedAttrs>>(
   )
 }
 
-fn gen_verbatimstring<'a, A: Into<BorrowedAttrs>>(
+fn gen_verbatimstring<'a, A: Into<BorrowedAttrs<'a>>>(
   mut x: (&'a mut [u8], usize),
   data: &[u8],
   format: &VerbatimStringFormat,
@@ -185,7 +185,7 @@ fn gen_verbatimstring<'a, A: Into<BorrowedAttrs>>(
   )
 }
 
-fn gen_owned_array<'a, A: Into<BorrowedAttrs>>(
+fn gen_owned_array<'a, A: Into<BorrowedAttrs<'a>>>(
   mut x: (&'a mut [u8], usize),
   data: &[OwnedFrame],
   attributes: Option<A>,
@@ -228,7 +228,7 @@ fn gen_bytes_array<'a, A: Into<BorrowedAttrs>>(
   Ok(x)
 }
 
-fn gen_owned_map<'a, A: Into<BorrowedAttrs>>(
+fn gen_owned_map<'a, A: Into<BorrowedAttrs<'a>>>(
   mut x: (&'a mut [u8], usize),
   data: &FrameMap<OwnedFrame, OwnedFrame>,
   attributes: Option<A>,
@@ -273,7 +273,7 @@ fn gen_bytes_map<'a, A: Into<BorrowedAttrs>>(
   Ok(x)
 }
 
-fn gen_owned_set<'a, A: Into<BorrowedAttrs>>(
+fn gen_owned_set<'a, A: Into<BorrowedAttrs<'a>>>(
   mut x: (&'a mut [u8], usize),
   data: &FrameSet<OwnedFrame>,
   attributes: Option<A>,
@@ -355,7 +355,7 @@ fn gen_bytes_attribute<'a>(
   Ok(x)
 }
 
-fn gen_owned_push<'a, A: Into<BorrowedAttrs>>(
+fn gen_owned_push<'a, A: Into<BorrowedAttrs<'a>>>(
   mut x: (&'a mut [u8], usize),
   data: &[OwnedFrame],
   attributes: Option<A>,
