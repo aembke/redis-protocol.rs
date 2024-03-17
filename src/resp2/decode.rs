@@ -3,7 +3,7 @@
 //! <https://redis.io/topics/protocol#resp-protocol-description>
 
 use crate::{
-  error::{RedisParseError, RedisProtocolError, RedisProtocolErrorKind},
+  error::{RedisParseError, RedisProtocolError},
   resp2::{types::*, utils::build_owned_frame},
   types::*,
   utils,
@@ -190,7 +190,7 @@ pub fn decode(buf: &[u8]) -> Result<Option<(OwnedFrame, usize)>, RedisProtocolEr
 ///
 /// The returned frame(s) will hold owned views into the original buffer via [slice](bytes::Bytes::slice).
 ///
-/// Unlike [decode_bytes_mut](decode_bytes_mut), this function will not modify the input buffer.
+/// Unlike [decode_bytes_mut], this function will not modify the input buffer.
 #[cfg(feature = "bytes")]
 #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
 pub fn decode_bytes(buf: &Bytes) -> Result<Option<(BytesFrame, usize)>, RedisProtocolError> {

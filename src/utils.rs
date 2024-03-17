@@ -1,15 +1,11 @@
 use crate::error::{RedisParseError, RedisProtocolError, RedisProtocolErrorKind};
-use alloc::vec::Vec;
 use cookie_factory::GenError;
-use core::{iter::repeat, str};
-
-#[cfg(feature = "bytes")]
-use bytes::BytesMut;
-
-#[cfg(feature = "routing")]
+use core::str;
 use crc16::{State, XMODEM};
 
-pub const REDIS_CLUSTER_SLOTS: u16 = 16384;
+use crate::types::REDIS_CLUSTER_SLOTS;
+#[cfg(feature = "bytes")]
+use bytes::BytesMut;
 
 /// Returns the number of bytes necessary to encode a string representation of `d`.
 #[cfg(feature = "std")]
@@ -30,14 +26,6 @@ pub fn digits_in_number(d: usize) -> usize {
   libm::floor(libm::log10(d as f64)) as usize + 1
 }
 
-pub fn check_offset(x: &(&mut [u8], usize)) -> Result<(), GenError> {
-  if x.1 > x.0.len() {
-    Err(GenError::InvalidOffset)
-  } else {
-    Ok(())
-  }
-}
-
 pub fn isize_to_usize<'a, T>(val: isize) -> Result<usize, RedisParseError<T>> {
   if val >= 0 {
     Ok(val as usize)
@@ -46,37 +34,11 @@ pub fn isize_to_usize<'a, T>(val: isize) -> Result<usize, RedisParseError<T>> {
   }
 }
 
+/// Extend the buffer by `amt`.
 #[cfg(feature = "bytes")]
 #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
 pub fn zero_extend(buf: &mut BytesMut, amt: usize) {
-  buf.reserve(amt);
-  buf.extend(repeat(0).take(amt));
-}
-
-#[cfg(feature = "bytes")]
-fn zero_extend_1(buf: &mut BytesMut, amt: usize) {
-  buf.reserve(amt);
-  buf.extend(repeat(0).take(amt));
-}
-
-#[cfg(feature = "bytes")]
-fn zero_extend_2(buf: &mut BytesMut, amt: usize) {
-  use bytes::BufMut;
-
-  buf.reserve(amt);
-  let offset = buf.len();
-  for _ in 0 .. amt {
-    buf.put_u8(0);
-  }
-  unsafe {
-    buf.set_len(offset);
-  }
-}
-
-#[cfg(feature = "bytes")]
-fn zero_extend_3(buf: &mut BytesMut, amt: usize) {
-  buf.reserve(amt);
-  buf.extend(vec![0; amt])
+  buf.resize(buf.len() + amt, 0);
 }
 
 /// Whether an error payload is a `MOVED` or `ASK` redirection.
@@ -89,7 +51,6 @@ pub(crate) fn is_redirection(payload: &str) -> bool {
 }
 
 /// Perform a crc16 XMODEM operation against a string slice.
-#[cfg(feature = "routing")]
 fn crc16_xmodem(key: &[u8]) -> u16 {
   State::<XMODEM>::calculate(key) % REDIS_CLUSTER_SLOTS
 }
@@ -105,8 +66,6 @@ fn crc16_xmodem(key: &[u8]) -> u16 {
 /// # use redis_protocol::redis_keyslot;
 /// assert_eq!(redis_keyslot(b"8xjx7vWrfPq54mKfFD3Y1CcjjofpnAcQ"), 5458);
 /// ```
-#[cfg(feature = "routing")]
-#[cfg_attr(docsrs, doc(cfg(feature = "routing")))]
 pub fn redis_keyslot(key: &[u8]) -> u16 {
   let (mut i, mut j): (Option<usize>, Option<usize>) = (None, None);
 
@@ -163,14 +122,13 @@ pub fn str_to_f64(s: &str) -> Result<f64, RedisProtocolError> {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use alloc::vec::Vec;
 
-  #[cfg(feature = "routing")]
   fn read_kitten_file() -> Vec<u8> {
     include_bytes!("../tests/kitten.jpeg").to_vec()
   }
 
   #[test]
-  #[cfg(feature = "routing")]
   fn should_crc16_123456789() {
     let key = "123456789";
     // 31C3
@@ -181,7 +139,6 @@ mod tests {
   }
 
   #[test]
-  #[cfg(feature = "routing")]
   fn should_crc16_with_brackets() {
     let key = "foo{123456789}bar";
     // 31C3
@@ -192,7 +149,6 @@ mod tests {
   }
 
   #[test]
-  #[cfg(feature = "routing")]
   fn should_crc16_with_brackets_no_padding() {
     let key = "{123456789}";
     // 31C3
@@ -203,7 +159,6 @@ mod tests {
   }
 
   #[test]
-  #[cfg(feature = "routing")]
   fn should_crc16_with_invalid_brackets_lhs() {
     let key = "foo{123456789";
     // 288A
@@ -214,7 +169,6 @@ mod tests {
   }
 
   #[test]
-  #[cfg(feature = "routing")]
   fn should_crc16_with_invalid_brackets_rhs() {
     let key = "foo}123456789";
     // 5B35 = 23349, 23349 % 16384 = 6965
@@ -225,7 +179,6 @@ mod tests {
   }
 
   #[test]
-  #[cfg(feature = "routing")]
   fn should_crc16_with_random_string() {
     let key = "8xjx7vWrfPq54mKfFD3Y1CcjjofpnAcQ";
     // 127.0.0.1:30001> cluster keyslot 8xjx7vWrfPq54mKfFD3Y1CcjjofpnAcQ
@@ -237,7 +190,6 @@ mod tests {
   }
 
   #[test]
-  #[cfg(feature = "routing")]
   fn should_hash_non_ascii_string_bytes() {
     let key = "💩 👻 💀 ☠️ 👽 👾";
     // 127.0.0.1:30001> cluster keyslot "💩 👻 💀 ☠️ 👽 👾"
@@ -249,7 +201,6 @@ mod tests {
   }
 
   #[test]
-  #[cfg(feature = "routing")]
   fn should_hash_non_ascii_string_bytes_with_tag() {
     let key = "💩 👻 💀{123456789}☠️ 👽 👾";
     // 127.0.0.1:30001> cluster keyslot "💩 👻 💀{123456789}☠️ 👽 👾"
@@ -261,7 +212,6 @@ mod tests {
   }
 
   #[test]
-  #[cfg(feature = "routing")]
   fn should_hash_non_utf8_string_bytes() {
     let key = read_kitten_file();
     let expected: u16 = 1589;
@@ -271,7 +221,6 @@ mod tests {
   }
 
   #[test]
-  #[cfg(feature = "routing")]
   fn should_hash_non_utf8_string_bytes_with_tag() {
     let mut key = read_kitten_file();
     for (idx, c) in "{123456789}".as_bytes().iter().enumerate() {

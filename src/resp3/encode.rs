@@ -597,7 +597,7 @@ pub mod complete {
     gen_bytes_frame(buf, 0, frame).map(|(_, amt)| amt).map_err(|e| e.into())
   }
 
-  /// Attempt to encode a frame into `buf`, extending the buffer as needed.
+  /// Attempt to encode a frame at the end of `buf`, extending the buffer before encoding.
   ///
   /// Returns the number of bytes encoded.
   #[cfg(feature = "bytes")]
@@ -613,7 +613,6 @@ pub mod complete {
   }
 }
 
-// TODO this wont work. need better way to extend before writing.
 /// Encoding functions for streaming blobs and aggregate types.
 ///
 /// ### Using `Bytes` and Tokio
@@ -643,7 +642,7 @@ pub mod complete {
 ///
 ///   zero_extend(&mut buf, START_STREAM_ENCODE_LEN);
 ///   encode_start_aggregate_type(&mut buf, FrameKind::Array).unwrap();
-///   written = write_all(socket, &mut buf).await;
+///   written += write_all(socket, &mut buf).await;
 ///
 ///   while let Some(frame) = rx.recv().await {
 ///     zero_extend(&mut buf, frame.encode_len());
@@ -659,7 +658,7 @@ pub mod complete {
 /// }
 ///
 /// async fn generate_frames(tx: UnboundedSender<BytesFrame>) {
-///   // read from another socket or somehow generate frames, writing them to `tx`
+///   // read from another socket or somehow generate frames
 ///   sleep(Duration::from_secs(1)).await;
 ///   tx.send(BytesFrame::BlobString { data: "foo".into(), attributes: None }).unwrap();
 ///   sleep(Duration::from_secs(1)).await;
@@ -671,7 +670,7 @@ pub mod complete {
 /// #[tokio::main]
 /// async fn main() {
 ///   let (tx, rx) = unbounded_channel();
-///   let mut socket = TcpStream::connect("127.0.0.1:6379").await.expect("Failed to connect");
+///   let mut socket = TcpStream::connect("127.0.0.1:6379").await.unwrap();
 ///
 ///   tokio::spawn(generate_frames(tx));
 ///   stream_array(&mut socket, rx).await;

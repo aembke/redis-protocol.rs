@@ -38,14 +38,6 @@ mod macros;
 pub mod error;
 mod utils;
 
-#[cfg(feature = "routing")]
-pub use utils::redis_keyslot;
-
-/// A cluster routing interface.
-#[cfg(feature = "routing")]
-#[cfg_attr(docsrs, doc(cfg(feature = "routing")))]
-pub mod routing;
-
 ///  A RESP2 interface.
 pub mod resp2;
 /// A RESP3 interface.
@@ -53,6 +45,11 @@ pub mod resp3;
 /// Common types across RESP versions.
 pub mod types;
 
+/// RESP2 and RESP3 [codec](tokio_util::codec) interfaces.
+#[cfg(feature = "codec")]
+#[cfg_attr(docsrs, doc(cfg(feature = "codec")))]
+pub mod codec;
+
 #[cfg(feature = "bytes")]
 pub use utils::zero_extend;
-pub use utils::{digits_in_number, str_to_f64};
+pub use utils::{digits_in_number, redis_keyslot, str_to_f64};

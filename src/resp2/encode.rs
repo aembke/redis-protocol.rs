@@ -2,17 +2,8 @@
 //!
 //! <https://redis.io/topics/protocol#resp-protocol-description>
 
-use crate::{
-  digits_in_number,
-  error::{RedisProtocolError, RedisProtocolErrorKind},
-  resp2::{
-    types::*,
-    utils::{self as resp2_utils},
-  },
-  types::CRLF,
-  utils,
-};
-use alloc::{string::String, vec::Vec};
+use crate::{error::RedisProtocolError, resp2::types::*, types::CRLF, utils};
+use alloc::vec::Vec;
 use cookie_factory::GenError;
 use core::str;
 
@@ -155,7 +146,7 @@ pub fn encode_bytes(buf: &mut [u8], frame: &BytesFrame) -> Result<usize, RedisPr
   gen_bytes_frame(buf, 0, frame).map_err(|e| e.into())
 }
 
-/// Attempt to encode a frame into `buf`, extending the buffer before encoding.
+/// Attempt to encode a frame at the end of `buf`, extending the buffer before encoding.
 ///
 /// Returns the number of bytes encoded.
 #[cfg(feature = "bytes")]

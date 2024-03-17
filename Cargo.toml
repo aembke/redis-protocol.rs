@@ -12,21 +12,22 @@ edition = "2021"
 
 [dependencies]
 bytes = { version = "1.1", default-features = false, optional = true }
-bytes-utils = { version = "0.1.2", default-features = false, optional = true }
+bytes-utils = { version = "0.1", default-features = false, optional = true }
 cookie-factory = { version = "0.3", default-features = false }
-crc16 = { version = "0.4", optional = true }
+crc16 = { version = "0.4" }
 indexmap = { version = "2.2", optional = true }
 log = "0.4"
 nom = { version = "7.1", default-features = false }
 libm = { version = "0.2", optional = true }
 hashbrown = { version = "0.14", optional = true }
 tokio-util = { version = "0.7", features = ["codec"], optional = true }
-rand = { version = "0.8", optional = true }
+rand = "0.8"
 
 [dev-dependencies]
 rand = "0.8"
 tokio = { version = "1.12", features = ["full"] }
 pretty_env_logger = "0.5"
+futures = "0.3"
 
 [features]
 default = ["std"]
@@ -35,8 +36,7 @@ bytes = ["dep:bytes", "bytes-utils"]
 decode-logs = []
 alloc = ["nom/alloc"]
 std = ["cookie-factory/default", "nom/default"]
-routing = ["crc16", "rand"]
-codec = ["tokio-util"]
+codec = ["tokio-util", "bytes"]
 convert = []
 
 [lib]

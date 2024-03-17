@@ -432,7 +432,7 @@ fn d_parse_frame_or_attribute(input: (&[u8], usize)) -> DResult<DecodedRangeFram
   Ok((input, frame))
 }
 
-/// Parsing functions for complete RESP3 frames.
+/// Decoding functions for complete RESP3 frames.
 pub mod complete {
   use super::*;
 
@@ -473,7 +473,7 @@ pub mod complete {
   ///
   /// The returned frame(s) will hold owned views into the original buffer via [slice](bytes::Bytes::slice).
   ///
-  /// Unlike [decode_bytes_mut](decode_bytes_mut), this function will not modify the input buffer.
+  /// Unlike [decode_bytes_mut], this function will not modify the input buffer.
   #[cfg(feature = "bytes")]
   #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
   pub fn decode_bytes(buf: &Bytes) -> Result<Option<(BytesFrame, usize)>, RedisProtocolError> {
@@ -547,7 +547,7 @@ pub mod streaming {
   ///
   /// The returned frame(s) will hold owned views into the original buffer via [slice](bytes::Bytes::slice).
   ///
-  /// Unlike [decode_bytes_mut](decode_bytes_mut), this function will not modify the input buffer.
+  /// Unlike [decode_bytes_mut], this function will not modify the input buffer.
   #[cfg(feature = "bytes")]
   #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
   pub fn decode_bytes(buf: &Bytes) -> Result<Option<(DecodedFrame<BytesFrame>, usize)>, RedisProtocolError> {

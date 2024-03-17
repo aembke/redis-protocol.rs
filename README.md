@@ -106,7 +106,9 @@ enum MyBorrowedFrame<'a> {
 
 fn decode_borrowed(buf: &[u8]) -> Option<MyBorrowedFrame> {
   match decode_range(buf).ok()? {
-    Some((RangeFrame::BulkString((i, j)), _)) => Some(MyBorrowedFrame::BulkString(&buf[i..j])),
+    Some((RangeFrame::BulkString((i, j)), _)) => {
+      Some(MyBorrowedFrame::BulkString(&buf[i..j]))
+    }
     Some((RangeFrame::SimpleString((i, j)), _)) => {
       let parsed = str::from_utf8(&buf[i..j]).ok()?;
       Some(MyBorrowedFrame::SimpleString(parsed))

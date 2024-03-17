@@ -169,7 +169,7 @@ pub enum OwnedFrame {
 }
 
 impl OwnedFrame {
-  /// Move the frame contents into a new [BytesFrame](crate::resp2::types::BytesFrame).
+  /// Move the frame contents into a new [BytesFrame].
   #[cfg(feature = "bytes")]
   #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
   pub fn into_bytes_frame(self) -> BytesFrame {
@@ -335,8 +335,7 @@ impl Resp2Frame for OwnedFrame {
   }
 }
 
-/// A RESP2 frame that uses [Bytes](bytes::Bytes) and [Str](bytes_utils::Str) as the backing types for dynamically
-/// sized frame types.
+/// A RESP2 frame that uses [Bytes] and [Str] as the underlying buffer type.
 #[cfg(feature = "bytes")]
 #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -466,7 +465,7 @@ impl Resp2Frame for BytesFrame {
 
 #[cfg(feature = "bytes")]
 impl BytesFrame {
-  /// Copy the contents into a new [OwnedFrame](crate::resp2::types::OwnedFrame).
+  /// Copy the contents into a new [OwnedFrame].
   pub fn to_owned_frame(&self) -> OwnedFrame {
     match self {
       BytesFrame::SimpleString(s) => OwnedFrame::SimpleString(s.to_vec()),

@@ -93,20 +93,20 @@ pub const EMPTY_SPACE: &str = " ";
 /// Byte representation of `AUTH`.
 pub const AUTH: &str = "AUTH";
 
-/// A map struct for frames that uses either [indexmap::IndexMap], [hashbrown::HashMap], or
-/// [std::collections::HashMap] depending on the enabled feature flags.
+/// A map struct for frames that uses either `indexmap::IndexMap`, `hashbrown::HashMap`, or
+/// `std::collections::HashMap` depending on the enabled feature flags.
 #[cfg(not(feature = "index-map"))]
 pub type FrameMap<K, V> = HashMap<K, V>;
-/// A set struct for frames that uses either [indexmap::IndexSet], [hashbrown::HashSet], or
-/// [std::collections::HashSet] depending on the enabled feature flags.
+/// A map struct for frames that uses either `indexmap::IndexSet`, `hashbrown::HashSet`, or
+/// `std::collections::HashSet` depending on the enabled feature flags.
 #[cfg(not(feature = "index-map"))]
 pub type FrameSet<T> = HashSet<T>;
-/// A map struct for frames that uses either [indexmap::IndexMap], [hashbrown::HashMap], or
-/// [std::collections::HashMap] depending on the enabled feature flags.
+/// A map struct for frames that uses either `indexmap::IndexMap`, `hashbrown::HashMap`, or
+/// `std::collections::HashMap` depending on the enabled feature flags.
 #[cfg(feature = "index-map")]
 pub type FrameMap<K, V> = IndexMap<K, V>;
-/// A set struct for frames that uses either [indexmap::IndexSet], [hashbrown::HashSet], or
-/// [std::collections::HashSet] depending on the enabled feature flags.
+/// A map struct for frames that uses either `indexmap::IndexSet`, `hashbrown::HashSet`, or
+/// `std::collections::HashSet` depending on the enabled feature flags.
 #[cfg(feature = "index-map")]
 pub type FrameSet<T> = IndexSet<T>;
 
@@ -424,8 +424,6 @@ impl RangeFrame {
   /// of elements in an array, the size of any inner buffers, etc.
   ///
   /// Note: `Null` has a length of 0 and `Hello`, `Number`, `Double`, and `Boolean` have a length of 1.
-  ///
-  /// See [encode_len](Self::encode_len) to read the number of bytes necessary to encode the frame.
   pub fn len(&self) -> usize {
     match self {
       RangeFrame::Array { data, .. } | RangeFrame::Push { data, .. } => data.len(),
@@ -1104,7 +1102,7 @@ impl From<f64> for OwnedFrame {
   }
 }
 
-/// An enum describing a RESP3 frame.
+/// A RESP3 frame that uses [Bytes] and [Str] as the underlying buffer type.
 ///
 /// <https://github.com/antirez/RESP3/blob/master/spec.md>
 #[cfg(feature = "bytes")]
@@ -1293,6 +1291,7 @@ impl Hash for BytesFrame {
   }
 }
 
+#[cfg(feature = "bytes")]
 impl Eq for BytesFrame {}
 
 #[cfg(feature = "bytes")]
