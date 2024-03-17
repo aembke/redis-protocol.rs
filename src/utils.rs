@@ -1,21 +1,15 @@
-use crate::{
-  error::{RedisProtocolError, RedisProtocolErrorKind},
-  types::*,
-};
+use crate::error::{RedisParseError, RedisProtocolError, RedisProtocolErrorKind};
 use alloc::vec::Vec;
 use cookie_factory::GenError;
-use core::str;
+use core::{iter::repeat, str};
 
-#[cfg(feature = "zero-copy")]
-use bytes::{Bytes, BytesMut};
+#[cfg(feature = "bytes")]
+use bytes::BytesMut;
 
-use crate::error::RedisParseError;
 #[cfg(feature = "routing")]
 use crc16::{State, XMODEM};
 
-pub(crate) const KB: usize = 1024;
-/// A pre-defined zeroed out KB of data, used to speed up extending buffers while encoding.
-pub(crate) const ZEROED_KB: &[u8; 1024] = &[0; 1024];
+pub const REDIS_CLUSTER_SLOTS: u16 = 16384;
 
 /// Returns the number of bytes necessary to encode a string representation of `d`.
 #[cfg(feature = "std")]
@@ -27,7 +21,6 @@ pub fn digits_in_number(d: usize) -> usize {
   ((d as f64).log10()).floor() as usize + 1
 }
 
-/// Returns the number of bytes necessary to encode a string representation of `d`.
 #[cfg(feature = "libm")]
 pub fn digits_in_number(d: usize) -> usize {
   if d == 0 {
@@ -53,18 +46,37 @@ pub fn isize_to_usize<'a, T>(val: isize) -> Result<usize, RedisParseError<T>> {
   }
 }
 
-// FIXME what the hell is this
-// this is faster than repeat(0).take(amt) at the cost of some memory
-#[cfg(feature = "zero-copy")]
-pub(crate) fn zero_extend(buf: &mut BytesMut, mut amt: usize) {
+#[cfg(feature = "bytes")]
+#[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
+pub fn zero_extend(buf: &mut BytesMut, amt: usize) {
   buf.reserve(amt);
-  while amt >= KB {
-    buf.extend_from_slice(ZEROED_KB);
-    amt -= KB;
+  buf.extend(repeat(0).take(amt));
+}
+
+#[cfg(feature = "bytes")]
+fn zero_extend_1(buf: &mut BytesMut, amt: usize) {
+  buf.reserve(amt);
+  buf.extend(repeat(0).take(amt));
+}
+
+#[cfg(feature = "bytes")]
+fn zero_extend_2(buf: &mut BytesMut, amt: usize) {
+  use bytes::BufMut;
+
+  buf.reserve(amt);
+  let offset = buf.len();
+  for _ in 0 .. amt {
+    buf.put_u8(0);
   }
-  if amt > 0 {
-    buf.extend_from_slice(&ZEROED_KB[0 .. amt]);
+  unsafe {
+    buf.set_len(offset);
   }
+}
+
+#[cfg(feature = "bytes")]
+fn zero_extend_3(buf: &mut BytesMut, amt: usize) {
+  buf.reserve(amt);
+  buf.extend(vec![0; amt])
 }
 
 /// Whether an error payload is a `MOVED` or `ASK` redirection.

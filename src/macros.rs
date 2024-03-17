@@ -1,20 +1,10 @@
-macro_rules! unwrap_return(
-  ($expr:expr) => {
-    match $expr {
-      Some(val) => val,
-      None => return None,
-    }
-  };
-);
-
 macro_rules! encode_checks(
-  ($x:ident, $required:expr) => {
-    crate::utils::check_offset(&$x)?;
+  ($buf:ident, $required:expr) => {
     let required = $required;
-    let remaining = $x.0.len() - $x.1;
+    let remaining = $buf.len();
 
-    if remaining < required {
-      return Err(cookie_factory::GenError::BufferTooSmall(required - remaining));
+    if required > remaining {
+      return Err(RedisProtocolError::from(cookie_factory::GenError::BufferTooSmall(required - remaining)));
     }
   }
 );

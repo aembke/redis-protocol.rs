@@ -12,7 +12,7 @@ use nom::{
 };
 use std::error::Error;
 
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 use bytes_utils::string::Utf8Error as BytesUtf8Error;
 
 #[cfg(feature = "std")]
@@ -203,7 +203,7 @@ impl From<FromUtf8Error> for RedisProtocolError {
   }
 }
 
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 impl<B> From<BytesUtf8Error<B>> for RedisProtocolError {
   fn from(e: BytesUtf8Error<B>) -> Self {
     e.utf8_error().into()
@@ -299,7 +299,7 @@ impl<I> From<nom::Err<RedisParseError<I>>> for RedisParseError<I> {
   }
 }
 
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 impl<B, I> From<BytesUtf8Error<B>> for RedisParseError<I> {
   fn from(e: BytesUtf8Error<B>) -> Self {
     e.utf8_error().into()
@@ -323,59 +323,5 @@ impl std::error::Error for RedisProtocolError {
       RedisProtocolErrorKind::IO(ref e) => Some(e),
       _ => None,
     }
-  }
-}
-
-#[cfg(test)]
-mod tests {
-  use super::*;
-  use std::num::NonZeroUsize;
-
-  #[test]
-  fn should_create_empty_error() {
-    let e = RedisProtocolError::new_empty();
-
-    assert_eq!(e.description(), "");
-    assert_eq!(e.kind(), &RedisProtocolErrorKind::Unknown);
-  }
-
-  #[test]
-  fn should_create_encode_error() {
-    let e = RedisProtocolError::new(RedisProtocolErrorKind::EncodeError, "foo");
-
-    assert_eq!(e.description(), "foo");
-    assert_eq!(e.kind(), &RedisProtocolErrorKind::EncodeError);
-  }
-
-  #[test]
-  fn should_create_decode_error() {
-    let e = RedisProtocolError::new(RedisProtocolErrorKind::DecodeError, "foo");
-
-    assert_eq!(e.description(), "foo");
-    assert_eq!(e.kind(), &RedisProtocolErrorKind::DecodeError);
-  }
-
-  #[test]
-  fn should_create_buf_too_small_error() {
-    let e = RedisProtocolError::new(RedisProtocolErrorKind::BufferTooSmall(10), "foo");
-
-    assert_eq!(e.description(), "foo");
-    assert_eq!(e.kind(), &RedisProtocolErrorKind::BufferTooSmall(10));
-  }
-
-  #[test]
-  fn should_cast_from_nom_incomplete() {
-    let n: NomError<&[u8]> = NomError::Incomplete(Needed::Size(NonZeroUsize::new(10).unwrap()));
-    let e = RedisProtocolError::from(n);
-
-    assert_eq!(e.kind(), &RedisProtocolErrorKind::BufferTooSmall(10));
-  }
-
-  #[test]
-  fn should_print_error_kinds() {
-    assert_eq!(RedisProtocolErrorKind::EncodeError.to_str(), "Encode Error");
-    assert_eq!(RedisProtocolErrorKind::DecodeError.to_str(), "Decode Error");
-    assert_eq!(RedisProtocolErrorKind::Unknown.to_str(), "Unknown Error");
-    assert_eq!(RedisProtocolErrorKind::BufferTooSmall(10).to_str(), "Buffer too small");
   }
 }

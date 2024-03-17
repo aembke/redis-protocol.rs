@@ -1,10 +1,10 @@
 use crate::{
   error::*,
   resp3::{types::*, utils as resp3_utils},
-  types::{DResult, CRLF},
+  types::{DResult, _Range, CRLF},
   utils,
 };
-use core::{str, str::FromStr};
+use core::{fmt::Debug, str, str::FromStr};
 use nom::{
   bytes::streaming::{take as nom_take, take_until as nom_take_until},
   combinator::{map as nom_map, map_res as nom_map_res, opt as nom_opt},
@@ -15,16 +15,10 @@ use nom::{
   Err as NomErr,
 };
 
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 use bytes::{Bytes, BytesMut};
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 use bytes_utils::Str;
-
-use crate::types::_Range;
-#[cfg(feature = "hashbrown")]
-use hashbrown::{HashMap, HashSet};
-#[cfg(feature = "std")]
-use std::collections::{HashMap, HashSet};
 
 fn map_complete_frame(frame: RangeFrame) -> DecodedRangeFrame {
   DecodedRangeFrame::Complete(frame)
@@ -36,7 +30,11 @@ fn expect_complete_index_frame<T>(frame: DecodedRangeFrame) -> Result<RangeFrame
     .map_err(|e| RedisParseError::new_custom("expect_complete_frame", format!("{:?}", e)))
 }
 
-fn parse_as<V: FromStr, T>(s: &[u8]) -> Result<V, RedisParseError<T>> {
+fn parse_as<V, T>(s: &[u8]) -> Result<V, RedisParseError<T>>
+where
+  V: FromStr,
+  V::Err: Debug,
+{
   str::from_utf8(s)?
     .parse::<V>()
     .map_err(|e| RedisParseError::new_custom("parse_as", format!("{:?}", e)))
@@ -86,7 +84,7 @@ fn to_map<T>(mut data: Vec<RangeFrame>) -> Result<FrameMap<RangeFrame, RangeFram
     return Err(RedisParseError::new_custom("to_map", "Invalid hashmap frame length."));
   }
 
-  let mut out = resp3_utils::new_map(Some(data.len() / 2));
+  let mut out = resp3_utils::new_map(data.len() / 2);
   while data.len() >= 2 {
     let value = data.pop().unwrap();
     let key = data.pop().unwrap();
@@ -247,7 +245,7 @@ fn d_parse_bignumber(input: (&[u8], usize)) -> DResult<RangeFrame> {
 
 fn d_parse_array_frames(input: (&[u8], usize), len: usize) -> DResult<Vec<RangeFrame>> {
   nom_count(
-    nom_map_res(d_parse_frame_or_attribute, expect_complete_index_frame),
+    nom_map_res(d_parse_frame_or_attribute, expect_complete_index_frame::<&[u8]>),
     len,
   )(input)
 }
@@ -255,10 +253,10 @@ fn d_parse_array_frames(input: (&[u8], usize), len: usize) -> DResult<Vec<RangeF
 fn d_parse_kv_pairs(input: (&[u8], usize), len: usize) -> DResult<FrameMap<RangeFrame, RangeFrame>> {
   nom_map_res(
     nom_count(
-      nom_map_res(d_parse_frame_or_attribute, expect_complete_index_frame),
+      nom_map_res(d_parse_frame_or_attribute, expect_complete_index_frame::<&[u8]>),
       len * 2,
     ),
-    to_map,
+    to_map::<&[u8]>,
   )(input)
 }
 
@@ -476,8 +474,8 @@ pub mod complete {
   /// The returned frame(s) will hold owned views into the original buffer via [slice](bytes::Bytes::slice).
   ///
   /// Unlike [decode_bytes_mut](decode_bytes_mut), this function will not modify the input buffer.
-  #[cfg(feature = "zero-copy")]
-  #[cfg_attr(docsrs, doc(cfg(feature = "zero-copy")))]
+  #[cfg(feature = "bytes")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
   pub fn decode_bytes(buf: &Bytes) -> Result<Option<(BytesFrame, usize)>, RedisProtocolError> {
     let (frame, amt) = match decode_range(&buf)? {
       Some(result) => result,
@@ -493,8 +491,8 @@ pub mod complete {
   /// The returned frame(s) will hold owned views into the original buffer.
   ///
   /// This function is designed to work best with a [codec](tokio_util::codec) interface.
-  #[cfg(feature = "zero-copy")]
-  #[cfg_attr(docsrs, doc(cfg(feature = "zero-copy")))]
+  #[cfg(feature = "bytes")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
   pub fn decode_bytes_mut(buf: &mut BytesMut) -> Result<Option<(BytesFrame, usize, Bytes)>, RedisProtocolError> {
     let (frame, amt) = match decode_range(&buf)? {
       Some(result) => result,
@@ -550,8 +548,8 @@ pub mod streaming {
   /// The returned frame(s) will hold owned views into the original buffer via [slice](bytes::Bytes::slice).
   ///
   /// Unlike [decode_bytes_mut](decode_bytes_mut), this function will not modify the input buffer.
-  #[cfg(feature = "zero-copy")]
-  #[cfg_attr(docsrs, doc(cfg(feature = "zero-copy")))]
+  #[cfg(feature = "bytes")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
   pub fn decode_bytes(buf: &Bytes) -> Result<Option<(DecodedFrame<BytesFrame>, usize)>, RedisProtocolError> {
     Ok(match decode_range(&buf)? {
       Some((DecodedRangeFrame::Complete(frame), amt)) => Some((
@@ -572,8 +570,8 @@ pub mod streaming {
   /// The returned frame(s) will hold owned views into the original buffer.
   ///
   /// This function is designed to work best with a [codec](tokio_util::codec) interface.
-  #[cfg(feature = "zero-copy")]
-  #[cfg_attr(docsrs, doc(cfg(feature = "zero-copy")))]
+  #[cfg(feature = "bytes")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
   pub fn decode_bytes_mut(
     buf: &mut BytesMut,
   ) -> Result<Option<(DecodedFrame<BytesFrame>, usize, Bytes)>, RedisProtocolError> {

@@ -1,6 +1,8 @@
 use crate::{
   error::{RedisProtocolError, RedisProtocolErrorKind},
   resp3::utils as resp3_utils,
+  types::{_Range, PATTERN_PUBSUB_PREFIX, PUBSUB_PREFIX, PUBSUB_PUSH_PREFIX, SHARD_PUBSUB_PREFIX},
+  utils,
 };
 use alloc::{
   collections::VecDeque,
@@ -16,12 +18,11 @@ use core::{
   str,
 };
 
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 use bytes::{Bytes, BytesMut};
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 use bytes_utils::Str;
 
-use crate::types::{_Range, PATTERN_PUBSUB_PREFIX, PUBSUB_PREFIX, PUBSUB_PUSH_PREFIX, SHARD_PUBSUB_PREFIX};
 #[cfg(feature = "hashbrown")]
 use hashbrown::{HashMap, HashSet};
 #[cfg(feature = "index-map")]
@@ -110,8 +111,8 @@ pub type FrameMap<K, V> = IndexMap<K, V>;
 pub type FrameSet<T> = IndexSet<T>;
 
 /// Additional information returned alongside a [BytesFrame].
-#[cfg(feature = "zero-copy")]
-#[cfg_attr(docsrs, doc(cfg(feature = "zero-copy")))]
+#[cfg(feature = "bytes")]
+#[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
 pub type BytesAttributes = FrameMap<BytesFrame, BytesFrame>;
 /// Additional information returned alongside an [OwnedFrame].
 pub type OwnedAttributes = FrameMap<OwnedFrame, OwnedFrame>;
@@ -303,8 +304,9 @@ impl FrameKind {
   }
 }
 
-///
-#[derive(Clone, Debug, Eq, PartialEq)]
+/// A reference-free frame type representing ranges into an associated buffer, typically used to implement zero-copy
+/// parsing.
+#[derive(Clone, Debug, PartialEq)]
 pub enum RangeFrame {
   /// A blob of bytes.
   BlobString {
@@ -385,6 +387,8 @@ pub enum RangeFrame {
   ChunkedString(_Range),
 }
 
+impl Eq for RangeFrame {}
+
 impl RangeFrame {
   /// Read the associated `FrameKind`.
   pub fn kind(&self) -> FrameKind {
@@ -405,7 +409,7 @@ impl RangeFrame {
       RangeFrame::Hello { .. } => FrameKind::Hello,
       RangeFrame::BigNumber { .. } => FrameKind::BigNumber,
       RangeFrame::ChunkedString(inner) => {
-        if inner.is_empty() {
+        if inner.1 == 0 && inner.0 == 0 {
           FrameKind::EndStream
         } else {
           FrameKind::ChunkedString
@@ -443,6 +447,10 @@ impl RangeFrame {
   ///
   pub fn add_attributes(&mut self, attributes: RangeAttributes) -> Result<(), RedisProtocolError> {
     unimplemented!()
+  }
+
+  pub fn new_end_stream() -> Self {
+    RangeFrame::ChunkedString((0, 0))
   }
 }
 
@@ -487,8 +495,8 @@ impl StreamedRangeFrame {
 
   /// Add range attributes to the frame.
   pub fn add_attributes(&mut self, attributes: RangeAttributes) {
-    if let Some(attributes) = self.attributes.as_mut() {
-      attributes.extend(attributes);
+    if let Some(_attributes) = self.attributes.as_mut() {
+      _attributes.extend(attributes);
     } else {
       self.attributes = Some(attributes);
     }
@@ -595,12 +603,17 @@ pub trait Resp3Frame: Debug + Hash + Eq + Sized {
 
   /// Whether the frame is a message from a `ssubscribe` call.
   fn is_shard_pubsub_message(&self) -> bool;
+
+  /// Whether the frame is a `MOVED` or `ASK` redirection.
+  fn is_redirection(&self) -> bool {
+    self.as_str().map(utils::is_redirection).unwrap_or(false)
+  }
 }
 
 /// An enum describing a RESP3 frame that uses owned byte containers.
 ///
 /// <https://github.com/antirez/RESP3/blob/master/spec.md>
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum OwnedFrame {
   /// A blob of bytes.
   BlobString {
@@ -689,6 +702,8 @@ pub enum OwnedFrame {
   /// One chunk of a streaming blob.
   ChunkedString(Vec<u8>),
 }
+
+impl Eq for OwnedFrame {}
 
 impl Hash for OwnedFrame {
   fn hash<H: Hasher>(&self, state: &mut H) {
@@ -1018,8 +1033,8 @@ impl Resp3Frame for OwnedFrame {
 
 impl OwnedFrame {
   /// Move the frame contents into a new [BytesFrame].
-  #[cfg(feature = "zero-copy")]
-  #[cfg_attr(docsrs, doc(cfg(feature = "zero-copy")))]
+  #[cfg(feature = "bytes")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
   pub fn into_bytes_frame(self) -> BytesFrame {
     resp3_utils::owned_to_bytes_frame(self)
   }
@@ -1092,9 +1107,9 @@ impl From<f64> for OwnedFrame {
 /// An enum describing a RESP3 frame.
 ///
 /// <https://github.com/antirez/RESP3/blob/master/spec.md>
-#[cfg(feature = "zero-copy")]
-#[cfg_attr(docsrs, doc(cfg(feature = "zero-copy")))]
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[cfg(feature = "bytes")]
+#[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
+#[derive(Clone, Debug, PartialEq)]
 pub enum BytesFrame {
   /// A blob of bytes.
   BlobString {
@@ -1184,7 +1199,7 @@ pub enum BytesFrame {
   ChunkedString(Bytes),
 }
 
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 impl<B: Into<Bytes>> TryFrom<(FrameKind, B)> for BytesFrame {
   type Error = RedisProtocolError;
 
@@ -1222,7 +1237,7 @@ impl<B: Into<Bytes>> TryFrom<(FrameKind, B)> for BytesFrame {
   }
 }
 
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 impl From<i64> for BytesFrame {
   fn from(value: i64) -> Self {
     BytesFrame::Number {
@@ -1232,7 +1247,7 @@ impl From<i64> for BytesFrame {
   }
 }
 
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 impl From<bool> for BytesFrame {
   fn from(value: bool) -> Self {
     BytesFrame::Boolean {
@@ -1242,7 +1257,7 @@ impl From<bool> for BytesFrame {
   }
 }
 
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 impl From<f64> for BytesFrame {
   fn from(value: f64) -> Self {
     BytesFrame::Double {
@@ -1252,7 +1267,7 @@ impl From<f64> for BytesFrame {
   }
 }
 
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 impl Hash for BytesFrame {
   fn hash<H: Hasher>(&self, state: &mut H) {
     use self::BytesFrame::*;
@@ -1278,7 +1293,9 @@ impl Hash for BytesFrame {
   }
 }
 
-#[cfg(feature = "zero-copy")]
+impl Eq for BytesFrame {}
+
+#[cfg(feature = "bytes")]
 impl Resp3Frame for BytesFrame {
   type Attributes = BytesAttributes;
 
@@ -1585,7 +1602,7 @@ impl Resp3Frame for BytesFrame {
   }
 }
 
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 impl BytesFrame {
   /// Copy the frame contents into a new [OwnedFrame].
   fn to_owned_frame(&self) -> OwnedFrame {
@@ -1738,6 +1755,7 @@ impl<T: Resp3Frame> StreamedFrame<T> {
 }
 
 #[cfg(test)]
+#[cfg(feature = "bytes")]
 mod tests {
   use super::*;
   use crate::resp3::utils::new_map;

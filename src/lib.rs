@@ -22,11 +22,11 @@ extern crate log;
 #[macro_use]
 extern crate cookie_factory;
 
-#[cfg(feature = "zero-copy")]
-#[cfg_attr(docsrs, doc(cfg(feature = "zero-copy")))]
+#[cfg(feature = "bytes")]
+#[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
 pub extern crate bytes;
-#[cfg(feature = "zero-copy")]
-#[cfg_attr(docsrs, doc(cfg(feature = "zero-copy")))]
+#[cfg(feature = "bytes")]
+#[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
 pub extern crate bytes_utils;
 #[cfg(feature = "codec")]
 #[cfg_attr(docsrs, doc(cfg(feature = "codec")))]
@@ -53,4 +53,6 @@ pub mod resp3;
 /// Common types across RESP versions.
 pub mod types;
 
+#[cfg(feature = "bytes")]
+pub use utils::zero_extend;
 pub use utils::{digits_in_number, str_to_f64};

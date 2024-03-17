@@ -11,15 +11,14 @@ use crate::{
   types::CRLF,
   utils,
 };
-use alloc::{string::String, vec::Vec};
 use cookie_factory::GenError;
 
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 use bytes::{Bytes, BytesMut};
 
 enum BorrowedAttrs<'a> {
   Owned(&'a OwnedAttributes),
-  #[cfg(feature = "zero-copy")]
+  #[cfg(feature = "bytes")]
   Bytes(&'a BytesAttributes),
 }
 
@@ -29,7 +28,7 @@ impl<'a> From<&'a OwnedAttributes> for BorrowedAttrs<'a> {
   }
 }
 
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 impl<'a> From<&'a BytesAttributes> for BorrowedAttrs<'a> {
   fn from(value: &'a BytesAttributes) -> Self {
     BorrowedAttrs::Bytes(value)
@@ -41,15 +40,15 @@ macro_rules! encode_attributes (
     if let Some(attributes) = $attributes {
       let attributes: BorrowedAttrs = attributes.into();
       $x = match attributes {
-        BorrowedAttrs::Owned(attrs) => gen_owned_attribute($x, attrs),
-        #[cfg(feature = "zero-copy")]
-        BorrowedAttrs::Bytes(attrs) => gen_bytes_attribute($x, attrs),
+        BorrowedAttrs::Owned(attrs) => gen_owned_attribute($x, attrs)?,
+        #[cfg(feature = "bytes")]
+        BorrowedAttrs::Bytes(attrs) => gen_bytes_attribute($x, attrs)?,
       };
     }
   }
 );
 
-fn gen_simplestring<'a, A: Into<BorrowedAttrs<'a>>>(
+fn gen_simplestring<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   mut x: (&'a mut [u8], usize),
   data: &[u8],
   attributes: Option<A>,
@@ -62,7 +61,7 @@ fn gen_simplestring<'a, A: Into<BorrowedAttrs<'a>>>(
   )
 }
 
-fn gen_simpleerror<'a, A: Into<BorrowedAttrs<'a>>>(
+fn gen_simpleerror<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   mut x: (&'a mut [u8], usize),
   data: &str,
   attributes: Option<A>,
@@ -75,11 +74,11 @@ fn gen_simpleerror<'a, A: Into<BorrowedAttrs<'a>>>(
   )
 }
 
-fn gen_number<'a, A: Into<BorrowedAttrs<'a>>>(
+fn gen_number<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   mut x: (&'a mut [u8], usize),
   data: i64,
   attributes: Option<A>,
-) -> Result<(&mut [u8], usize), GenError> {
+) -> Result<(&'a mut [u8], usize), GenError> {
   encode_attributes!(x, attributes);
 
   do_gen!(
@@ -92,11 +91,11 @@ fn gen_null(x: (&mut [u8], usize)) -> Result<(&mut [u8], usize), GenError> {
   do_gen!(x, gen_slice!(NULL.as_bytes()))
 }
 
-fn gen_double<'a, A: Into<BorrowedAttrs<'a>>>(
+fn gen_double<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   mut x: (&'a mut [u8], usize),
   data: f64,
   attributes: Option<A>,
-) -> Result<(&mut [u8], usize), GenError> {
+) -> Result<(&'a mut [u8], usize), GenError> {
   encode_attributes!(x, attributes);
 
   let as_string = resp3_utils::f64_to_redis_string(data);
@@ -106,18 +105,18 @@ fn gen_double<'a, A: Into<BorrowedAttrs<'a>>>(
   )
 }
 
-fn gen_boolean<'a, A: Into<BorrowedAttrs<'a>>>(
+fn gen_boolean<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   mut x: (&'a mut [u8], usize),
   data: bool,
   attributes: Option<A>,
-) -> Result<(&mut [u8], usize), GenError> {
+) -> Result<(&'a mut [u8], usize), GenError> {
   encode_attributes!(x, attributes);
 
-  let data = if *data { BOOL_TRUE_BYTES } else { BOOL_FALSE_BYTES };
+  let data = if data { BOOL_TRUE_BYTES } else { BOOL_FALSE_BYTES };
   do_gen!(x, gen_slice!(data.as_bytes()))
 }
 
-fn gen_bignumber<'a, A: Into<BorrowedAttrs<'a>>>(
+fn gen_bignumber<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   mut x: (&'a mut [u8], usize),
   data: &[u8],
   attributes: Option<A>,
@@ -130,7 +129,7 @@ fn gen_bignumber<'a, A: Into<BorrowedAttrs<'a>>>(
   )
 }
 
-fn gen_blobstring<'a, A: Into<BorrowedAttrs<'a>>>(
+fn gen_blobstring<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   mut x: (&'a mut [u8], usize),
   data: &[u8],
   attributes: Option<A>,
@@ -147,7 +146,7 @@ fn gen_blobstring<'a, A: Into<BorrowedAttrs<'a>>>(
   )
 }
 
-fn gen_bloberror<'a, A: Into<BorrowedAttrs<'a>>>(
+fn gen_bloberror<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   mut x: (&'a mut [u8], usize),
   data: &[u8],
   attributes: Option<A>,
@@ -164,7 +163,7 @@ fn gen_bloberror<'a, A: Into<BorrowedAttrs<'a>>>(
   )
 }
 
-fn gen_verbatimstring<'a, A: Into<BorrowedAttrs<'a>>>(
+fn gen_verbatimstring<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   mut x: (&'a mut [u8], usize),
   data: &[u8],
   format: &VerbatimStringFormat,
@@ -185,7 +184,7 @@ fn gen_verbatimstring<'a, A: Into<BorrowedAttrs<'a>>>(
   )
 }
 
-fn gen_owned_array<'a, A: Into<BorrowedAttrs<'a>>>(
+fn gen_owned_array<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   mut x: (&'a mut [u8], usize),
   data: &[OwnedFrame],
   attributes: Option<A>,
@@ -206,8 +205,8 @@ fn gen_owned_array<'a, A: Into<BorrowedAttrs<'a>>>(
   Ok(x)
 }
 
-#[cfg(feature = "zero-copy")]
-fn gen_bytes_array<'a, A: Into<BorrowedAttrs>>(
+#[cfg(feature = "bytes")]
+fn gen_bytes_array<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   mut x: (&'a mut [u8], usize),
   data: &[BytesFrame],
   attributes: Option<A>,
@@ -228,7 +227,7 @@ fn gen_bytes_array<'a, A: Into<BorrowedAttrs>>(
   Ok(x)
 }
 
-fn gen_owned_map<'a, A: Into<BorrowedAttrs<'a>>>(
+fn gen_owned_map<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   mut x: (&'a mut [u8], usize),
   data: &FrameMap<OwnedFrame, OwnedFrame>,
   attributes: Option<A>,
@@ -250,8 +249,8 @@ fn gen_owned_map<'a, A: Into<BorrowedAttrs<'a>>>(
   Ok(x)
 }
 
-#[cfg(feature = "zero-copy")]
-fn gen_bytes_map<'a, A: Into<BorrowedAttrs>>(
+#[cfg(feature = "bytes")]
+fn gen_bytes_map<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   mut x: (&'a mut [u8], usize),
   data: &FrameMap<BytesFrame, BytesFrame>,
   attributes: Option<A>,
@@ -273,7 +272,7 @@ fn gen_bytes_map<'a, A: Into<BorrowedAttrs>>(
   Ok(x)
 }
 
-fn gen_owned_set<'a, A: Into<BorrowedAttrs<'a>>>(
+fn gen_owned_set<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   mut x: (&'a mut [u8], usize),
   data: &FrameSet<OwnedFrame>,
   attributes: Option<A>,
@@ -294,8 +293,8 @@ fn gen_owned_set<'a, A: Into<BorrowedAttrs<'a>>>(
   Ok(x)
 }
 
-#[cfg(feature = "zero-copy")]
-fn gen_bytes_set<'a, A: Into<BorrowedAttrs>>(
+#[cfg(feature = "bytes")]
+fn gen_bytes_set<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   mut x: (&'a mut [u8], usize),
   data: &FrameSet<BytesFrame>,
   attributes: Option<A>,
@@ -335,7 +334,7 @@ fn gen_owned_attribute<'a>(
   Ok(x)
 }
 
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 fn gen_bytes_attribute<'a>(
   x: (&'a mut [u8], usize),
   data: &BytesAttributes,
@@ -355,7 +354,7 @@ fn gen_bytes_attribute<'a>(
   Ok(x)
 }
 
-fn gen_owned_push<'a, A: Into<BorrowedAttrs<'a>>>(
+fn gen_owned_push<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   mut x: (&'a mut [u8], usize),
   data: &[OwnedFrame],
   attributes: Option<A>,
@@ -376,8 +375,8 @@ fn gen_owned_push<'a, A: Into<BorrowedAttrs<'a>>>(
   Ok(x)
 }
 
-#[cfg(feature = "zero-copy")]
-fn gen_bytes_push<'a, A: Into<BorrowedAttrs>>(
+#[cfg(feature = "bytes")]
+fn gen_bytes_push<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   mut x: (&'a mut [u8], usize),
   data: &[BytesFrame],
   attributes: Option<A>,
@@ -442,13 +441,11 @@ fn gen_owned_frame<'a>(
   offset: usize,
   frame: &OwnedFrame,
 ) -> Result<(&'a mut [u8], usize), GenError> {
+  trace!("Encode {:?}, buf len: {}", frame.kind(), buf.len());
   let x = (buf, offset);
-  let total_size = resp3_utils::owned_encode_len(frame)?;
-  trace!("Encode {:?}, size: {}", frame.kind(), total_size);
-  encode_checks!(x, total_size);
 
   match frame {
-    OwnedFrame::Array { data, attributes } => gen_owned_array(x, data, attributes.as_ref()),
+    OwnedFrame::Array { data, attributes } => gen_owned_array(x, &data, attributes.as_ref()),
     OwnedFrame::BlobString { data, attributes } => gen_blobstring(x, data, attributes.as_ref()),
     OwnedFrame::SimpleString { data, attributes } => gen_simplestring(x, data, attributes.as_ref()),
     OwnedFrame::SimpleError { data, attributes } => gen_simpleerror(x, data, attributes.as_ref()),
@@ -480,16 +477,14 @@ fn gen_owned_frame<'a>(
   }
 }
 
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 fn gen_bytes_frame<'a>(
   buf: &'a mut [u8],
   offset: usize,
   frame: &BytesFrame,
 ) -> Result<(&'a mut [u8], usize), GenError> {
+  trace!("Encode {:?}, buf len: {}", frame.kind(), buf.len());
   let x = (buf, offset);
-  let total_size = resp3_utils::bytes_encode_len(frame)?;
-  trace!("Encode {:?}, size: {}", frame.kind(), total_size);
-  encode_checks!(x, total_size);
 
   match frame {
     BytesFrame::Array { data, attributes } => gen_bytes_array(x, data, attributes.as_ref()),
@@ -557,8 +552,6 @@ fn gen_bytes_frame<'a>(
 /// ### Using bytes types with Tokio:
 ///
 /// ```rust
-/// # extern crate bytes;
-/// # extern crate tokio;
 /// # use redis_protocol::resp3::encode::complete::*;
 /// # use redis_protocol::resp3::types::{BytesFrame, FrameKind};
 /// # use bytes::BytesMut;
@@ -588,6 +581,7 @@ pub mod complete {
   ///
   /// The caller is responsible for extending `buf` if a `BufferTooSmall` error is returned.
   pub fn encode(buf: &mut [u8], frame: &OwnedFrame) -> Result<usize, RedisProtocolError> {
+    encode_checks!(buf, frame.encode_len());
     gen_owned_frame(buf, 0, frame).map(|(_, amt)| amt).map_err(|e| e.into())
   }
 
@@ -596,30 +590,30 @@ pub mod complete {
   /// The caller is responsible for extending `buf` if a `BufferTooSmall` error is returned.
   ///
   /// Returns the number of bytes encoded.
-  #[cfg(feature = "zero-copy")]
-  #[cfg_attr(docsrs, doc(cfg(feature = "zero-copy")))]
+  #[cfg(feature = "bytes")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
   pub fn encode_bytes(buf: &mut [u8], frame: &BytesFrame) -> Result<usize, RedisProtocolError> {
+    encode_checks!(buf, frame.encode_len());
     gen_bytes_frame(buf, 0, frame).map(|(_, amt)| amt).map_err(|e| e.into())
   }
 
   /// Attempt to encode a frame into `buf`, extending the buffer as needed.
   ///
   /// Returns the number of bytes encoded.
-  #[cfg(feature = "zero-copy")]
-  #[cfg_attr(docsrs, doc(cfg(feature = "zero-copy")))]
+  #[cfg(feature = "bytes")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
   pub fn extend_encode(buf: &mut BytesMut, frame: &BytesFrame) -> Result<usize, RedisProtocolError> {
+    let amt = frame.encode_len();
     let offset = buf.len();
+    utils::zero_extend(buf, amt);
 
-    loop {
-      match gen_bytes_frame(buf, offset, frame) {
-        Ok((_, amt)) => return Ok(amt),
-        Err(GenError::BufferTooSmall(amt)) => utils::zero_extend(buf, amt),
-        Err(e) => return Err(e.into()),
-      }
-    }
+    gen_bytes_frame(buf, offset, frame)
+      .map(|(_, amt)| amt)
+      .map_err(|e| e.into())
   }
 }
 
+// TODO this wont work. need better way to extend before writing.
 /// Encoding functions for streaming blobs and aggregate types.
 ///
 /// ### Using `Bytes` and Tokio
@@ -627,7 +621,7 @@ pub mod complete {
 /// Stream an array of frames via a Tokio unbounded channel.
 ///
 /// ```rust
-/// # use redis_protocol::{resp3::{encode::streaming::*, types::{BytesFrame, FrameKind}}, error::RedisProtocolError};
+/// # use redis_protocol::{zero_extend, resp3::{encode::streaming::*, types::{BytesFrame, FrameKind, Resp3Frame}}, error::RedisProtocolError};
 /// # use bytes::BytesMut;
 /// # use std::{future::Future, time::Duration};
 /// # use tokio::{net::TcpStream, time::sleep, io::{AsyncWrite, AsyncWriteExt}};
@@ -645,25 +639,20 @@ pub mod complete {
 /// /// Start a new array stream, sending frames received from `rx` out to `socket` and ending the stream when `rx` closes.
 /// async fn stream_array(socket: &mut TcpStream, mut rx: UnboundedReceiver<BytesFrame>) {
 ///   let mut buf = BytesMut::new();
+///   let mut written = 0;
 ///
-///   let _amt = extend_while_encoding(&mut buf, |buf| {
-///     encode_start_aggregate_type(buf, &FrameKind::Array)
-///   })
-///   .expect("Failed to start stream");
-///   let mut written = write_all(socket, &mut buf).await;
+///   zero_extend(&mut buf, START_STREAM_ENCODE_LEN);
+///   encode_start_aggregate_type(&mut buf, FrameKind::Array).unwrap();
+///   written = write_all(socket, &mut buf).await;
 ///
 ///   while let Some(frame) = rx.recv().await {
-///     let _amt = extend_while_encoding(&mut buf, |buf| {
-///       encode_bytes_aggregate_type_inner_value(buf, &frame)
-///     })
-///     .expect("Failed to encode frame");
+///     zero_extend(&mut buf, frame.encode_len());
+///     encode_bytes_aggregate_type_inner_value(&mut buf, &frame).unwrap();
 ///     written += write_all(socket, &mut buf).await;
 ///   }
 ///
-///   let _amt = extend_while_encoding(&mut buf, |buf| {
-///     encode_end_aggregate_type(buf)
-///   })
-///   .expect("Failed to end stream");
+///   zero_extend(&mut buf, END_STREAM_AGGREGATE_TYPE_ENCODE_LEN);
+///   encode_end_aggregate_type(&mut buf).unwrap();
 ///   written += write_all(socket, &mut buf).await;
 ///
 ///   println!("Streamed {} bytes to the socket.", written);
@@ -691,9 +680,14 @@ pub mod complete {
 pub mod streaming {
   use super::*;
 
-  fn gen_start_streaming_string(x: (&mut [u8], usize)) -> Result<(&mut [u8], usize), GenError> {
-    encode_checks!(x, 4);
+  /// Number of bytes needed to encode the prefix when starting a stream.
+  pub const START_STREAM_ENCODE_LEN: usize = 4;
+  /// Number of bytes needed to encode the terminating bytes after a blob string.
+  pub const END_STREAM_STRING_ENCODE_LEN: usize = 4;
+  /// Number of bytes needed to encode the terminating bytes after an aggregate type.
+  pub const END_STREAM_AGGREGATE_TYPE_ENCODE_LEN: usize = 3;
 
+  fn gen_start_streaming_string(x: (&mut [u8], usize)) -> Result<(&mut [u8], usize), GenError> {
     do_gen!(
       x,
       gen_be_u8!(BLOB_STRING_BYTE) >> gen_be_u8!(STREAMED_LENGTH_BYTE) >> gen_slice!(CRLF.as_bytes())
@@ -704,8 +698,6 @@ pub mod streaming {
     x: (&'a mut [u8], usize),
     data: &[u8],
   ) -> Result<(&'a mut [u8], usize), GenError> {
-    encode_checks!(x, resp3_utils::blobstring_encode_len(data));
-
     do_gen!(
       x,
       gen_be_u8!(CHUNKED_STRING_BYTE)
@@ -717,20 +709,13 @@ pub mod streaming {
   }
 
   fn gen_end_streaming_string(x: (&mut [u8], usize)) -> Result<(&mut [u8], usize), GenError> {
-    encode_checks!(x, 4);
-
     do_gen!(x, gen_slice!(END_STREAM_STRING_BYTES.as_bytes()))
   }
 
-  fn gen_start_streaming_aggregate_type<'a>(
-    x: (&'a mut [u8], usize),
-    kind: &FrameKind,
-  ) -> Result<(&'a mut [u8], usize), GenError> {
-    if !kind.is_aggregate_type() {
-      return Err(GenError::CustomError(3));
-    }
-    encode_checks!(x, 4);
-
+  fn gen_start_streaming_aggregate_type(
+    x: (&mut [u8], usize),
+    kind: FrameKind,
+  ) -> Result<(&mut [u8], usize), GenError> {
     do_gen!(
       x,
       gen_be_u8!(kind.to_byte()) >> gen_be_u8!(STREAMED_LENGTH_BYTE) >> gen_slice!(CRLF.as_bytes())
@@ -738,8 +723,6 @@ pub mod streaming {
   }
 
   fn gen_end_streaming_aggregate_type(x: (&mut [u8], usize)) -> Result<(&mut [u8], usize), GenError> {
-    encode_checks!(x, 3);
-
     do_gen!(x, gen_slice!(END_STREAM_AGGREGATE_BYTES.as_bytes()))
   }
 
@@ -759,7 +742,7 @@ pub mod streaming {
     gen_owned_frame(x.0, x.1, value)
   }
 
-  #[cfg(feature = "zero-copy")]
+  #[cfg(feature = "bytes")]
   fn gen_bytes_streaming_inner_value_frame<'a>(
     x: (&'a mut [u8], usize),
     data: &BytesFrame,
@@ -767,7 +750,7 @@ pub mod streaming {
     gen_bytes_frame(x.0, x.1, data)
   }
 
-  #[cfg(feature = "zero-copy")]
+  #[cfg(feature = "bytes")]
   fn gen_bytes_streaming_inner_kv_pair_frames<'a>(
     x: (&'a mut [u8], usize),
     key: &BytesFrame,
@@ -779,6 +762,8 @@ pub mod streaming {
 
   /// Encode the starting bytes in a streaming blob string.
   pub fn encode_start_string(buf: &mut [u8]) -> Result<usize, RedisProtocolError> {
+    encode_checks!(buf, START_STREAM_ENCODE_LEN);
+
     gen_start_streaming_string((buf, 0))
       .map(|(_, l)| l)
       .map_err(|e| e.into())
@@ -789,6 +774,8 @@ pub mod streaming {
   /// If `data` is empty this will do the same thing as [encode_end_string] to signal that the streamed string is
   /// finished.
   pub fn encode_string_chunk(buf: &mut [u8], data: &[u8]) -> Result<usize, RedisProtocolError> {
+    encode_checks!(buf, resp3_utils::blobstring_encode_len(data));
+
     gen_streaming_string_chunk((buf, 0), data)
       .map(|(_, l)| l)
       .map_err(|e| e.into())
@@ -796,11 +783,18 @@ pub mod streaming {
 
   /// Encode the terminating bytes at the end of a streaming blob string.
   pub fn encode_end_string(buf: &mut [u8]) -> Result<usize, RedisProtocolError> {
+    encode_checks!(buf, END_STREAM_STRING_ENCODE_LEN);
+
     gen_end_streaming_string((buf, 0)).map(|(_, l)| l).map_err(|e| e.into())
   }
 
   /// Encode the starting bytes for a streaming aggregate type (array, set, or map).
-  pub fn encode_start_aggregate_type(buf: &mut [u8], kind: &FrameKind) -> Result<usize, RedisProtocolError> {
+  pub fn encode_start_aggregate_type(buf: &mut [u8], kind: FrameKind) -> Result<usize, RedisProtocolError> {
+    if !kind.is_aggregate_type() {
+      return Err(GenError::CustomError(3).into());
+    }
+    encode_checks!(buf, START_STREAM_ENCODE_LEN);
+
     gen_start_streaming_aggregate_type((buf, 0), kind)
       .map(|(_, l)| l)
       .map_err(|e| e.into())
@@ -813,6 +807,8 @@ pub mod streaming {
     buf: &mut [u8],
     data: &OwnedFrame,
   ) -> Result<usize, RedisProtocolError> {
+    encode_checks!(buf, data.encode_len());
+
     gen_owned_streaming_inner_value_frame((buf, 0), data)
       .map(|(_, l)| l)
       .map_err(|e| e.into())
@@ -824,6 +820,8 @@ pub mod streaming {
     key: &OwnedFrame,
     value: &OwnedFrame,
   ) -> Result<usize, RedisProtocolError> {
+    encode_checks!(buf, key.encode_len() + value.encode_len());
+
     gen_owned_streaming_inner_kv_pair_frames((buf, 0), key, value)
       .map(|(_, l)| l)
       .map_err(|e| e.into())
@@ -832,25 +830,29 @@ pub mod streaming {
   /// Encode the inner frame inside a streamed array or set.
   ///
   /// Use [encode_bytes_aggregate_type_inner_kv_pair] to encode a key-value pair inside a streaming map.
-  #[cfg(feature = "zero-copy")]
-  #[cfg_attr(docsrs, doc(cfg(feature = "zero-copy")))]
+  #[cfg(feature = "bytes")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
   pub fn encode_bytes_aggregate_type_inner_value(
     buf: &mut [u8],
     data: &BytesFrame,
   ) -> Result<usize, RedisProtocolError> {
+    encode_checks!(buf, data.encode_len());
+
     gen_bytes_streaming_inner_value_frame((buf, 0), data)
       .map(|(_, l)| l)
       .map_err(|e| e.into())
   }
 
   /// Encode the inner frames that make up a key-value pair in a streamed map.
-  #[cfg(feature = "zero-copy")]
-  #[cfg_attr(docsrs, doc(cfg(feature = "zero-copy")))]
+  #[cfg(feature = "bytes")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
   pub fn encode_bytes_aggregate_type_inner_kv_pair<'a>(
     buf: &'a mut [u8],
     key: &BytesFrame,
     value: &BytesFrame,
   ) -> Result<usize, RedisProtocolError> {
+    encode_checks!(buf, key.encode_len() + value.encode_len());
+
     gen_bytes_streaming_inner_kv_pair_frames((buf, 0), key, value)
       .map(|(_, l)| l)
       .map_err(|e| e.into())
@@ -858,27 +860,10 @@ pub mod streaming {
 
   /// Encode the terminating bytes at the end of a streaming aggregate type (array, set, or map).
   pub fn encode_end_aggregate_type(buf: &mut [u8]) -> Result<usize, RedisProtocolError> {
+    encode_checks!(buf, END_STREAM_AGGREGATE_TYPE_ENCODE_LEN);
+
     gen_end_streaming_aggregate_type((buf, 0))
       .map(|(_, l)| l)
       .map_err(|e| e.into())
-  }
-
-  /// A wrapper function for automatically extending the input buffer while encoding frames with a different encoding
-  /// function.
-  #[cfg(feature = "zero-copy")]
-  #[cfg_attr(docsrs, doc(cfg(feature = "zero-copy")))]
-  pub fn extend_while_encoding<F>(buf: &mut BytesMut, func: F) -> Result<usize, RedisProtocolError>
-  where
-    F: Fn(&mut BytesMut) -> Result<usize, RedisProtocolError>,
-  {
-    loop {
-      match func(buf) {
-        Ok(amt) => return Ok(amt),
-        Err(err) => match err.kind() {
-          RedisProtocolErrorKind::BufferTooSmall(amt) => utils::zero_extend(buf, *amt),
-          _ => return Err(err),
-        },
-      }
-    }
   }
 }

@@ -1,24 +1,19 @@
-use crate::{
-  error::{RedisProtocolError, RedisProtocolErrorKind},
-  resp3::types::*,
-  utils::digits_in_number,
-};
-use alloc::{borrow::Cow, format, string::ToString, vec::Vec};
+use crate::{error::RedisProtocolError, resp3::types::*, utils::digits_in_number};
+use alloc::{borrow::Cow, string::ToString, vec::Vec};
 use core::{
   hash::{Hash, Hasher},
   str,
 };
 
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 use bytes::{Bytes, BytesMut};
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 use bytes_utils::Str;
 
 #[cfg(feature = "hashbrown")]
 use hashbrown::{HashMap, HashSet};
 #[cfg(feature = "index-map")]
 use indexmap::{IndexMap, IndexSet};
-use nom::Slice;
 #[cfg(feature = "std")]
 use std::collections::{HashMap, HashSet};
 
@@ -30,69 +25,23 @@ pub fn hash_tuple<H: Hasher>(state: &mut H, range: &(usize, usize)) {
 }
 
 #[cfg(not(feature = "index-map"))]
-pub fn new_set<K: Hash + Eq>(capacity: Option<usize>) -> HashSet<K> {
-  if let Some(capacity) = capacity {
-    HashSet::with_capacity(capacity)
-  } else {
-    HashSet::new()
-  }
+pub fn new_set<K: Hash + Eq>(capacity: usize) -> HashSet<K> {
+  HashSet::with_capacity(capacity)
 }
 
 #[cfg(feature = "index-map")]
-pub fn new_set<K: Hash + Eq>(capacity: Option<usize>) -> IndexSet<K> {
-  if let Some(capacity) = capacity {
-    IndexSet::with_capacity(capacity)
-  } else {
-    IndexSet::new()
-  }
+pub fn new_set<K: Hash + Eq>(capacity: usize) -> IndexSet<K> {
+  IndexSet::with_capacity(capacity)
 }
 
 #[cfg(not(feature = "index-map"))]
-pub fn new_map<K: Hash + Eq, V>(capacity: Option<usize>) -> HashMap<K, V> {
-  if let Some(capacity) = capacity {
-    HashMap::with_capacity(capacity)
-  } else {
-    HashMap::new()
-  }
+pub fn new_map<K: Hash + Eq, V>(capacity: usize) -> HashMap<K, V> {
+  HashMap::with_capacity(capacity)
 }
 
 #[cfg(feature = "index-map")]
-pub fn new_map<K: Hash + Eq, V>(capacity: Option<usize>) -> IndexMap<K, V> {
-  if let Some(capacity) = capacity {
-    IndexMap::with_capacity(capacity)
-  } else {
-    IndexMap::new()
-  }
-}
-
-#[cfg(feature = "index-map")]
-pub fn hashmap_to_frame_map<K: Hash + Eq, V>(data: HashMap<K, V>) -> FrameMap<K, V> {
-  let mut out = IndexMap::with_capacity(data.len());
-  for (key, value) in data.into_iter() {
-    out.insert(key, value);
-  }
-
-  out
-}
-
-#[cfg(not(feature = "index-map"))]
-pub fn hashmap_to_frame_map<K: Hash + Eq, V>(data: HashMap<K, V>) -> FrameMap<K, V> {
-  data
-}
-
-#[cfg(feature = "index-map")]
-pub fn hashset_to_frame_set<T: Hash + Eq>(data: HashSet<T>) -> FrameSet<T> {
-  let mut out = IndexSet::with_capacity(data.len());
-  for key in data.into_iter() {
-    out.insert(key);
-  }
-
-  out
-}
-
-#[cfg(not(feature = "index-map"))]
-pub fn hashset_to_frame_set<T: Hash + Eq>(data: HashSet<T>) -> FrameSet<T> {
-  data
+pub fn new_map<K: Hash + Eq, V>(capacity: usize) -> IndexMap<K, V> {
+  IndexMap::with_capacity(capacity)
 }
 
 /// Read the number of bytes needed to encode the length prefix on any aggregate type frame.
@@ -160,7 +109,7 @@ pub fn auth_encode_len(username: Option<&str>, password: Option<&str>) -> usize 
 // the byte array container type. These types often incur some overhead to convert between, and rather than make any
 // of those trade-offs I decided to just copy a few private functions.
 
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 pub fn bytes_array_or_push_encode_len(frames: &[BytesFrame]) -> usize {
   frames
     .iter()
@@ -179,7 +128,7 @@ pub fn owned_map_encode_len(map: &FrameMap<OwnedFrame, OwnedFrame>) -> usize {
   })
 }
 
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 pub fn bytes_map_encode_len(map: &FrameMap<BytesFrame, BytesFrame>) -> usize {
   map.iter().fold(length_prefix_encode_len(map.len()), |m, (k, v)| {
     m + bytes_encode_len(k) + bytes_encode_len(v)
@@ -192,14 +141,14 @@ pub fn owned_set_encode_len(set: &FrameSet<OwnedFrame>) -> usize {
     .fold(length_prefix_encode_len(set.len()), |m, f| m + owned_encode_len(f))
 }
 
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 pub fn bytes_set_encode_len(set: &FrameSet<BytesFrame>) -> usize {
   set
     .iter()
     .fold(length_prefix_encode_len(set.len()), |m, f| m + bytes_encode_len(f))
 }
 
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 pub fn bytes_hello_encode_len(username: &Option<Str>, password: &Option<Str>) -> usize {
   HELLO.as_bytes().len()
     + 3
@@ -218,7 +167,7 @@ pub fn owned_hello_encode_len(username: &Option<String>, password: &Option<Strin
     )
 }
 
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 pub fn bytes_attribute_encode_len(attributes: &Option<BytesAttributes>) -> usize {
   attributes.as_ref().map(|a| bytes_map_encode_len(a)).unwrap_or(0)
 }
@@ -228,7 +177,7 @@ pub fn owned_attribute_encode_len(attributes: &Option<OwnedAttributes>) -> usize
 }
 
 /// Returns the number of bytes necessary to represent the frame and any associated attributes.
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 pub fn bytes_encode_len(data: &BytesFrame) -> usize {
   use BytesFrame::*;
 
@@ -302,7 +251,7 @@ pub fn owned_encode_len(data: &OwnedFrame) -> usize {
   }
 }
 
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 /// Convert a `BytesFrame` to an `OwnedFrame` by copying the frame contents.
 pub fn bytes_to_owned_frame(frame: &BytesFrame) -> OwnedFrame {
   match frame {
@@ -380,7 +329,7 @@ pub fn bytes_to_owned_frame(frame: &BytesFrame) -> OwnedFrame {
   }
 }
 
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 /// Convert bytes attributes to owned attributes.
 pub fn bytes_to_owned_attrs(attributes: &BytesAttributes) -> OwnedAttributes {
   attributes
@@ -389,7 +338,7 @@ pub fn bytes_to_owned_attrs(attributes: &BytesAttributes) -> OwnedAttributes {
     .collect()
 }
 
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 /// Convert a `BytesFrame` to an `OwnedFrame` by moving the frame contents.
 pub fn owned_to_bytes_frame(frame: OwnedFrame) -> BytesFrame {
   match frame {
@@ -468,7 +417,7 @@ pub fn owned_to_bytes_frame(frame: OwnedFrame) -> BytesFrame {
 }
 
 /// Convert bytes attributes to owned attributes.
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 pub fn owned_to_bytes_attrs(attributes: OwnedAttributes) -> BytesAttributes {
   attributes
     .into_iter()
@@ -489,13 +438,12 @@ pub fn f64_to_redis_string(data: f64) -> Cow<'static, str> {
   }
 }
 
-/// TODO docs
 fn build_owned_attributes(
   buf: &[u8],
   attributes: Option<&RangeAttributes>,
 ) -> Result<Option<OwnedAttributes>, RedisProtocolError> {
   if let Some(attributes) = attributes {
-    let mut out = new_map(Some(attributes.len()));
+    let mut out = new_map(attributes.len());
     for (key, value) in attributes.into_iter() {
       let key = build_owned_frame(buf, key)?;
       let value = build_owned_frame(buf, value)?;
@@ -508,14 +456,13 @@ fn build_owned_attributes(
   }
 }
 
-/// TODO docs
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 fn build_bytes_attributes(
   buf: &Bytes,
   attributes: Option<&RangeAttributes>,
 ) -> Result<Option<BytesAttributes>, RedisProtocolError> {
   if let Some(attributes) = attributes {
-    let mut out = new_map(Some(attributes.len()));
+    let mut out = new_map(attributes.len());
     for (key, value) in attributes.into_iter() {
       let key = build_bytes_frame(buf, key)?;
       let value = build_bytes_frame(buf, value)?;
@@ -592,15 +539,24 @@ pub fn build_owned_frame(buf: &[u8], frame: &RangeFrame) -> Result<OwnedFrame, R
       },
     },
     RangeFrame::Array { data, attributes } => OwnedFrame::Array {
-      data:       data.iter().map(|f| build_owned_frame(buf, f)).collect()?,
+      data:       data
+        .iter()
+        .map(|f| build_owned_frame(buf, f))
+        .collect::<Result<Vec<OwnedFrame>, RedisProtocolError>>()?,
       attributes: build_owned_attributes(buf, attributes.as_ref())?,
     },
     RangeFrame::Push { data, attributes } => OwnedFrame::Push {
-      data:       data.iter().map(|f| build_owned_frame(buf, f)).collect()?,
+      data:       data
+        .iter()
+        .map(|f| build_owned_frame(buf, f))
+        .collect::<Result<Vec<OwnedFrame>, RedisProtocolError>>()?,
       attributes: build_owned_attributes(buf, attributes.as_ref())?,
     },
     RangeFrame::Set { data, attributes } => OwnedFrame::Set {
-      data:       data.iter().map(|f| build_owned_frame(buf, f)).collect()?,
+      data:       data
+        .iter()
+        .map(|f| build_owned_frame(buf, f))
+        .collect::<Result<FrameSet<OwnedFrame>, RedisProtocolError>>()?,
       attributes: build_owned_attributes(buf, attributes.as_ref())?,
     },
     RangeFrame::Map { data, attributes } => OwnedFrame::Map {
@@ -611,14 +567,14 @@ pub fn build_owned_frame(buf: &[u8], frame: &RangeFrame) -> Result<OwnedFrame, R
           let value = build_owned_frame(buf, v)?;
           Ok((key, value))
         })
-        .collect()?,
+        .collect::<Result<FrameMap<OwnedFrame, OwnedFrame>, RedisProtocolError>>()?,
       attributes: build_owned_attributes(buf, attributes.as_ref())?,
     },
   })
 }
 
 /// Use the `Bytes` interface to create owned views into the provided buffer for each of the provided range frames.
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 pub fn build_bytes_frame(buf: &Bytes, frame: &RangeFrame) -> Result<BytesFrame, RedisProtocolError> {
   Ok(match frame {
     RangeFrame::SimpleString { data, attributes } => BytesFrame::SimpleString {
@@ -712,7 +668,7 @@ pub fn build_bytes_frame(buf: &Bytes, frame: &RangeFrame) -> Result<BytesFrame, 
 ///
 /// The returned `Bytes` represents the `Bytes` buffer that was sliced off `buf`. The returned frames hold
 /// owned `Bytes` views to slices within this buffer.
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 pub fn freeze_parse(
   buf: &mut BytesMut,
   frame: &RangeFrame,
@@ -738,7 +694,7 @@ pub fn build_owned_streaming_frame(
 }
 
 /// Convert a streaming range frame into a streaming bytes frame.
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 pub fn build_bytes_streaming_frame(
   buf: &Bytes,
   frame: &StreamedRangeFrame,
@@ -753,7 +709,7 @@ pub fn build_bytes_streaming_frame(
 }
 
 #[cfg(test)]
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 mod tests {
   use crate::resp3::{
     types::*,

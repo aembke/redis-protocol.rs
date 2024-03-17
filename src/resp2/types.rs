@@ -18,11 +18,11 @@ use core::{
   str,
 };
 
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 use crate::resp3::types::BytesFrame as Resp3BytesFrame;
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 use bytes::{Bytes, BytesMut};
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 use bytes_utils::Str;
 
 /// Byte prefix before a simple string type.
@@ -144,6 +144,11 @@ pub trait Resp2Frame: Debug + Hash + Eq {
 
   /// Whether the frame is a message from a `ssubscribe` call.
   fn is_shard_pubsub_message(&self) -> bool;
+
+  /// Whether the frame is a `MOVED` or `ASK` redirection.
+  fn is_redirection(&self) -> bool {
+    self.as_str().map(utils::is_redirection).unwrap_or(false)
+  }
 }
 
 /// A RESP2 frame.
@@ -165,8 +170,8 @@ pub enum OwnedFrame {
 
 impl OwnedFrame {
   /// Move the frame contents into a new [BytesFrame](crate::resp2::types::BytesFrame).
-  #[cfg(feature = "zero-copy")]
-  #[cfg_attr(docsrs, doc(cfg(feature = "zero-copy")))]
+  #[cfg(feature = "bytes")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
   pub fn into_bytes_frame(self) -> BytesFrame {
     match self {
       OwnedFrame::SimpleString(s) => BytesFrame::SimpleString(s.into()),
@@ -332,8 +337,8 @@ impl Resp2Frame for OwnedFrame {
 
 /// A RESP2 frame that uses [Bytes](bytes::Bytes) and [Str](bytes_utils::Str) as the backing types for dynamically
 /// sized frame types.
-#[cfg(feature = "zero-copy")]
-#[cfg_attr(docsrs, doc(cfg(feature = "zero-copy")))]
+#[cfg(feature = "bytes")]
+#[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BytesFrame {
   /// A RESP2 simple string.
@@ -350,7 +355,7 @@ pub enum BytesFrame {
   Null,
 }
 
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 impl Hash for BytesFrame {
   fn hash<H: Hasher>(&self, state: &mut H) {
     self.kind().hash_prefix().hash(state);
@@ -365,7 +370,7 @@ impl Hash for BytesFrame {
   }
 }
 
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 impl Resp2Frame for BytesFrame {
   fn encode_len(&self) -> usize {
     match self {
@@ -459,7 +464,7 @@ impl Resp2Frame for BytesFrame {
   }
 }
 
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 impl BytesFrame {
   /// Copy the contents into a new [OwnedFrame](crate::resp2::types::OwnedFrame).
   pub fn to_owned_frame(&self) -> OwnedFrame {
@@ -518,11 +523,11 @@ impl BytesFrame {
   }
 }
 
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 impl<B: Into<Bytes>> TryFrom<(FrameKind, B)> for BytesFrame {
   type Error = RedisProtocolError;
 
-  fn try_from((kind, buf): (FrameKind, B)) -> Result<Self, Self::Error> {
+  fn try_from((kind, buf): (FrameKind, B)) -> Result<Self, RedisProtocolError> {
     Ok(match kind {
       FrameKind::SimpleString => BytesFrame::SimpleString(buf.into()),
       FrameKind::Error => BytesFrame::Error(Str::from_inner(buf.into())?),
@@ -539,7 +544,7 @@ impl<B: Into<Bytes>> TryFrom<(FrameKind, B)> for BytesFrame {
 }
 
 #[cfg(test)]
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 mod tests {
   use super::*;
 

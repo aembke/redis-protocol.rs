@@ -18,9 +18,9 @@ use nom::{
   Err as NomErr,
 };
 
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 use crate::resp2::utils::{build_bytes_frame, freeze_parse};
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 use bytes::{Bytes, BytesMut};
 
 pub(crate) const NULL_LEN: isize = -1;
@@ -191,8 +191,8 @@ pub fn decode(buf: &[u8]) -> Result<Option<(OwnedFrame, usize)>, RedisProtocolEr
 /// The returned frame(s) will hold owned views into the original buffer via [slice](bytes::Bytes::slice).
 ///
 /// Unlike [decode_bytes_mut](decode_bytes_mut), this function will not modify the input buffer.
-#[cfg(feature = "zero-copy")]
-#[cfg_attr(docsrs, doc(cfg(feature = "zero-copy")))]
+#[cfg(feature = "bytes")]
+#[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
 pub fn decode_bytes(buf: &Bytes) -> Result<Option<(BytesFrame, usize)>, RedisProtocolError> {
   let (frame, amt) = match decode_range(&*buf)? {
     Some(result) => result,
@@ -208,8 +208,8 @@ pub fn decode_bytes(buf: &Bytes) -> Result<Option<(BytesFrame, usize)>, RedisPro
 /// The returned frame(s) will hold owned views into the original buffer.
 ///
 /// This function is designed to work best with a [codec](tokio_util::codec) interface.
-#[cfg(feature = "zero-copy")]
-#[cfg_attr(docsrs, doc(cfg(feature = "zero-copy")))]
+#[cfg(feature = "bytes")]
+#[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
 pub fn decode_bytes_mut(buf: &mut BytesMut) -> Result<Option<(BytesFrame, usize, Bytes)>, RedisProtocolError> {
   let (frame, amt) = match decode_range(&*buf)? {
     Some(result) => result,
@@ -221,10 +221,9 @@ pub fn decode_bytes_mut(buf: &mut BytesMut) -> Result<Option<(BytesFrame, usize,
 }
 
 #[cfg(test)]
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 mod tests {
   use super::*;
-  use crate::resp2::decode::tests::*;
 
   pub const PADDING: &'static str = "FOOBARBAZ";
 

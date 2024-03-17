@@ -16,12 +16,10 @@ use alloc::{string::String, vec::Vec};
 use cookie_factory::GenError;
 use core::str;
 
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 use bytes::{Bytes, BytesMut};
 
 fn gen_simplestring<'a>(x: (&'a mut [u8], usize), data: &[u8]) -> Result<(&'a mut [u8], usize), GenError> {
-  encode_checks!(x, resp2_utils::simplestring_encode_len(data));
-
   do_gen!(
     x,
     gen_be_u8!(FrameKind::SimpleString.to_byte()) >> gen_slice!(data) >> gen_slice!(CRLF.as_bytes())
@@ -29,17 +27,13 @@ fn gen_simplestring<'a>(x: (&'a mut [u8], usize), data: &[u8]) -> Result<(&'a mu
 }
 
 fn gen_error<'a>(x: (&'a mut [u8], usize), data: &str) -> Result<(&'a mut [u8], usize), GenError> {
-  encode_checks!(x, resp2_utils::error_encode_len(data));
-
   do_gen!(
     x,
     gen_be_u8!(FrameKind::Error.to_byte()) >> gen_slice!(data.as_bytes()) >> gen_slice!(CRLF.as_bytes())
   )
 }
 
-fn gen_integer<'a>(x: (&'a mut [u8], usize), data: i64) -> Result<(&'a mut [u8], usize), GenError> {
-  encode_checks!(x, resp2_utils::integer_encode_len(data));
-
+fn gen_integer(x: (&mut [u8], usize), data: i64) -> Result<(&mut [u8], usize), GenError> {
   do_gen!(
     x,
     gen_be_u8!(FrameKind::Integer.to_byte())
@@ -49,8 +43,6 @@ fn gen_integer<'a>(x: (&'a mut [u8], usize), data: i64) -> Result<(&'a mut [u8],
 }
 
 fn gen_bulkstring<'a>(x: (&'a mut [u8], usize), data: &[u8]) -> Result<(&'a mut [u8], usize), GenError> {
-  encode_checks!(x, resp2_utils::bulkstring_encode_len(data));
-
   do_gen!(
     x,
     gen_be_u8!(FrameKind::BulkString.to_byte())
@@ -62,8 +54,6 @@ fn gen_bulkstring<'a>(x: (&'a mut [u8], usize), data: &[u8]) -> Result<(&'a mut 
 }
 
 fn gen_null(x: (&mut [u8], usize)) -> Result<(&mut [u8], usize), GenError> {
-  encode_checks!(x, NULL.as_bytes().len());
-
   do_gen!(x, gen_slice!(NULL.as_bytes()))
 }
 
@@ -74,11 +64,6 @@ fn gen_null(x: (&mut [u8], usize)) -> Result<(&mut [u8], usize), GenError> {
 // intermediate frame's `Array` variant. For now, I'm just going to duplicate this function to avoid these tradeoffs.
 
 fn gen_owned_array<'a>(x: (&'a mut [u8], usize), data: &Vec<OwnedFrame>) -> Result<(&'a mut [u8], usize), GenError> {
-  let total_len = data
-    .iter()
-    .fold(1 + digits_in_number(data.len()) + 2, |m, f| m + f.encode_len());
-  encode_checks!(x, total_len);
-
   let mut x = do_gen!(
     x,
     gen_be_u8!(FrameKind::Array.to_byte())
@@ -101,13 +86,8 @@ fn gen_owned_array<'a>(x: (&'a mut [u8], usize), data: &Vec<OwnedFrame>) -> Resu
   Ok(x)
 }
 
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 fn gen_bytes_array<'a>(x: (&'a mut [u8], usize), data: &Vec<BytesFrame>) -> Result<(&'a mut [u8], usize), GenError> {
-  let total_len = data
-    .iter()
-    .fold(1 + digits_in_number(data.len()) + 2, |m, f| m + f.encode_len());
-  encode_checks!(x, total_len);
-
   let mut x = do_gen!(
     x,
     gen_be_u8!(FrameKind::Array.to_byte())
@@ -141,7 +121,7 @@ fn gen_owned_frame(buf: &mut [u8], offset: usize, frame: &OwnedFrame) -> Result<
   }
 }
 
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 fn gen_bytes_frame(buf: &mut [u8], offset: usize, frame: &BytesFrame) -> Result<usize, GenError> {
   match frame {
     BytesFrame::BulkString(b) => gen_bulkstring((buf, offset), b).map(|(_, l)| l),
@@ -159,6 +139,7 @@ fn gen_bytes_frame(buf: &mut [u8], offset: usize, frame: &BytesFrame) -> Result<
 ///
 /// Returns the number of bytes encoded.
 pub fn encode(buf: &mut [u8], frame: &OwnedFrame) -> Result<usize, RedisProtocolError> {
+  encode_checks!(buf, frame.encode_len());
   gen_owned_frame(buf, 0, frame).map_err(|e| e.into())
 }
 
@@ -167,33 +148,28 @@ pub fn encode(buf: &mut [u8], frame: &OwnedFrame) -> Result<usize, RedisProtocol
 /// The caller is responsible for extending `buf` if a `BufferTooSmall` error is returned.
 ///
 /// Returns the number of bytes encoded.
-#[cfg(feature = "zero-copy")]
-#[cfg_attr(docsrs, doc(cfg(feature = "zero-copy")))]
+#[cfg(feature = "bytes")]
+#[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
 pub fn encode_bytes(buf: &mut [u8], frame: &BytesFrame) -> Result<usize, RedisProtocolError> {
+  encode_checks!(buf, frame.encode_len());
   gen_bytes_frame(buf, 0, frame).map_err(|e| e.into())
 }
 
-/// Attempt to encode a frame into `buf`, extending the buffer as needed.
+/// Attempt to encode a frame into `buf`, extending the buffer before encoding.
 ///
 /// Returns the number of bytes encoded.
-#[cfg(feature = "zero-copy")]
-#[cfg_attr(docsrs, doc(cfg(feature = "zero-copy")))]
+#[cfg(feature = "bytes")]
+#[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
 pub fn extend_encode(buf: &mut BytesMut, frame: &BytesFrame) -> Result<usize, RedisProtocolError> {
+  let amt = frame.encode_len();
   let offset = buf.len();
+  utils::zero_extend(buf, amt);
 
-  loop {
-    match gen_bytes_frame(buf, offset, frame) {
-      Ok(size) => return Ok(size),
-      Err(e) => match e {
-        GenError::BufferTooSmall(amt) => utils::zero_extend(buf, amt),
-        _ => return Err(e.into()),
-      },
-    }
-  }
+  gen_bytes_frame(buf, offset, frame).map_err(|e| e.into())
 }
 
 #[cfg(test)]
-#[cfg(feature = "zero-copy")]
+#[cfg(feature = "bytes")]
 mod tests {
   use super::*;
   use crate::utils::*;
@@ -227,7 +203,7 @@ mod tests {
   }
 
   fn encode_raw_and_verify_empty(input: &BytesFrame, expected: &str) {
-    let mut buf = Vec::from(&ZEROED_KB[0 .. expected.as_bytes().len()]);
+    let mut buf = vec![0; expected.as_bytes().len()];
 
     let len = match encode(&mut buf, input) {
       Ok(l) => l,
