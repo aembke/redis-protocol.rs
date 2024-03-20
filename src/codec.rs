@@ -71,7 +71,7 @@ pub fn resp2_encode_command(cmd: &str) -> Resp2Frame {
 ///   assert_eq!(response, BytesFrame::Null);
 /// }
 /// ```
-#[derive(Default)]
+#[derive(Clone, Debug, Default)]
 pub struct Resp2;
 
 impl Encoder<Resp2Frame> for Resp2 {
@@ -133,7 +133,7 @@ impl Decoder for Resp2 {
 ///   println!("GET foo: {:?}", response);
 /// }
 /// ```
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct Resp3 {
   streaming: Option<StreamedFrame<Resp3Frame>>,
 }

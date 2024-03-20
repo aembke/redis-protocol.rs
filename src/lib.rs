@@ -45,10 +45,15 @@ pub mod resp3;
 /// Common types across RESP versions.
 pub mod types;
 
-/// RESP2 and RESP3 [codec](tokio_util::codec) interfaces.
+/// Zero-copy RESP2 and RESP3 [codec](https://docs.rs/tokio-util/latest/tokio_util/codec/index.html) interfaces.
 #[cfg(feature = "codec")]
 #[cfg_attr(docsrs, doc(cfg(feature = "codec")))]
 pub mod codec;
+
+/// Traits for converting between frame types.
+#[cfg(feature = "convert")]
+#[cfg_attr(docsrs, doc(cfg(feature = "convert")))]
+pub mod convert;
 
 #[cfg(feature = "bytes")]
 pub use utils::zero_extend;

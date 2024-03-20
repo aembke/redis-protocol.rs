@@ -101,6 +101,13 @@ impl RedisProtocolError {
     }
   }
 
+  pub(crate) fn new_decode<S: Into<Cow<'static, str>>>(desc: S) -> Self {
+    RedisProtocolError {
+      kind:    RedisProtocolErrorKind::DecodeError,
+      details: desc.into(),
+    }
+  }
+
   pub fn details(&self) -> &str {
     self.details.borrow()
   }

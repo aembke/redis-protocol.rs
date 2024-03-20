@@ -18,6 +18,8 @@ use core::{
   str,
 };
 
+#[cfg(feature = "convert")]
+use crate::convert::FromResp2;
 #[cfg(feature = "bytes")]
 use crate::resp3::types::BytesFrame as Resp3BytesFrame;
 #[cfg(feature = "bytes")]
@@ -148,6 +150,22 @@ pub trait Resp2Frame: Debug + Hash + Eq {
   /// Whether the frame is a `MOVED` or `ASK` redirection.
   fn is_redirection(&self) -> bool {
     self.as_str().map(utils::is_redirection).unwrap_or(false)
+  }
+
+  /// Convert the frame to a double.
+  fn as_f64(&self) -> Option<f64> {
+    self.as_str().and_then(|s| s.parse::<f64>().ok())
+  }
+
+  /// Convert the frame to another type.
+  #[cfg(feature = "convert")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "convert")))]
+  fn convert<T>(self) -> Result<T, RedisProtocolError>
+  where
+    Self: Sized,
+    T: FromResp2<Self>,
+  {
+    T::from_frame(self)
   }
 }
 

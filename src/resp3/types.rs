@@ -606,6 +606,11 @@ pub trait Resp3Frame: Debug + Hash + Eq + Sized {
   fn is_redirection(&self) -> bool {
     self.as_str().map(utils::is_redirection).unwrap_or(false)
   }
+
+  /// Convert the frame to a double.
+  fn as_f64(&self) -> Option<f64> {
+    self.as_str().and_then(|s| s.parse::<f64>().ok())
+  }
 }
 
 /// An enum describing a RESP3 frame that uses owned byte containers.
@@ -1773,7 +1778,7 @@ mod tests {
 
   #[test]
   fn should_convert_basic_streaming_buffer_to_frame_with_attributes() {
-    let mut attributes = new_map(None);
+    let mut attributes = new_map(0);
     attributes.insert((FrameKind::SimpleString, "a").try_into().unwrap(), 1.into());
     attributes.insert((FrameKind::SimpleString, "b").try_into().unwrap(), 2.into());
     attributes.insert((FrameKind::SimpleString, "c").try_into().unwrap(), 3.into());

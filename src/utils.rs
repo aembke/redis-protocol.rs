@@ -17,6 +17,7 @@ pub fn digits_in_number(d: usize) -> usize {
   ((d as f64).log10()).floor() as usize + 1
 }
 
+/// Returns the number of bytes necessary to encode a string representation of `d`.
 #[cfg(feature = "libm")]
 pub fn digits_in_number(d: usize) -> usize {
   if d == 0 {

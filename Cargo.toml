@@ -10,6 +10,15 @@ repository = "https://github.com/aembke/redis-protocol.rs"
 version = "5.0.0"
 edition = "2021"
 
+[package.metadata.docs.rs]
+features = [
+    "bytes",
+    "std",
+    "codec",
+    "convert"
+]
+rustdoc-args = ["--cfg", "docsrs"]
+
 [dependencies]
 bytes = { version = "1.1", default-features = false, optional = true }
 bytes-utils = { version = "0.1", default-features = false, optional = true }

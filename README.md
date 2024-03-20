@@ -14,7 +14,7 @@ A Rust implementation of the [Redis protocol](https://redis.io/topics/protocol).
 * Owned and zero-copy [Bytes](https://docs.rs/bytes/latest/bytes/struct.Bytes.html)-based parsing interfaces.
 * Supports RESP2 and RESP3 frames, including streaming frames.
 * Publish-subscribe message utilities.
-* Cluster routing.
+* A cluster [hash slot](https://redis.io/docs/reference/cluster-spec/#key-distribution-model) interface.
 * RESP2 and RESP3 [codec](https://docs.rs/tokio-util/latest/tokio_util/codec/index.html) interfaces.
 * Utility functions for converting from RESP2 to RESP3.
 * Traits for converting frames into other types.
@@ -22,7 +22,11 @@ A Rust implementation of the [Redis protocol](https://redis.io/topics/protocol).
 ## Examples
 
 ```rust
-use redis_protocol::resp2::{decode::decode, encode::encode, types::OwnedFrame as Frame};
+use redis_protocol::resp2::{
+  decode::decode,
+  encode::encode,
+  types::OwnedFrame as Frame
+};
 
 fn main() {
   let frame = Frame::BulkString("foobar".into());
@@ -47,22 +51,21 @@ fn main() {
 | `std`         | x       | Enable stdlib features and most dependency default features.                                                                                 |
 | `bytes`       |         | Enable the zero-copy parsing interface via [Bytes](https://crates.io/crates/bytes) types.                                                    |
 | `decode-logs` |         | Enable extra debugging TRACE logs during the frame decoding process.                                                                         |
-| `alloc`       |         | Enable `nom/alloc` for use in `no_std` builds.                                                                                               |
-| `libm`        |         | Enable `libm` utils for use in `no_std` builds.                                                                                              |
-| `hashbrown`   |         | Enable `hashbrown` types for use in `no_std` builds.                                                                                         |
-| `routing`     |         | Enable a cluster routing interface.                                                                                                          |
 | `codec`       |         | Enable a RESP2 and RESP3 [Tokio codec](https://docs.rs/tokio-util/latest/tokio_util/codec/index.html) interface.                             |
 | `convert`     |         | Enable the `FromResp2` and `FromResp3` trait interfaces.                                                                                     |
 | `index-map`   |         | Use [IndexMap](https://crates.io/crates/indexmap) types instead of `HashMap`. This is useful for testing and may also be useful for callers. |
+| `alloc`       |         | Enable `nom/alloc` for use in `no_std` builds.                                                                                               |
+| `libm`        |         | Enable `libm` utils for use in `no_std` builds.                                                                                              |
+| `hashbrown`   |         | Enable `hashbrown` types for use in `no_std` builds.                                                                                         |
 
 ## no_std
 
 `no_std` builds are supported by disabling the `std` feature. However, a few optional dependencies must be activated as
 a substitute.
 
-````TOML
+```TOML
 redis-protocol = { version = "X.X.X", default-features = false, features = ["libm", "hashbrown", "alloc"] }
-````
+```
 
 ## Decoding
 
@@ -79,16 +82,60 @@ different use cases:
 
 ### RESP2 `OwnedFrame` Decoding Example
 
+Simple array decoding example adapted from the tests
+
 ```rust
+use redis_protocol::resp2::{
+  decode::decode,
+  types::{OwnedFrame, Resp2Frame}
+};
 
+fn should_decode_array() {
+  // ["Foo", nil, "Bar"]
+  let buf: [u8] = b"*3\r\n$3\r\nFoo\r\n$-1\r\n$3\r\nBar\r\n";
 
+  let (frame, amt) = decode(&buf).unwrap().unwrap();
+  assert_eq!(buf, OwnedFrame::Array(vec![
+    OwnedFrame::BulkString("Foo".into()),
+    OwnedFrame::Null,
+    OwnedFrame::BulkStrimg("Bar".into())
+  ]));
+  assert_eq!(amt, buf.len());
+}
 ```
 
 ### RESP2 `BytesFrame` Decoding Example
 
+Array decoding example adapted from the tests
+
 ```rust
+use redis_protocol::resp2::{
+  decode::decode_bytes_mut,
+  types::{BytesFrame, Resp2Frame}
+};
 
+fn should_decode_array_no_nulls() {
+  let expected = (
+    BytesFrame::Array(vec![
+      BytesFrame::SimpleString("Foo".into()),
+      BytesFrame::SimpleString("Bar".into()),
+    ]),
+    16,
+  );
+  let mut bytes: BytesMut = "*2\r\n+Foo\r\n+Bar\r\n".into();
+  let total_len = bytes.len();
 
+  let (frame, amt, buf) = match decode_bytes_mut(&mut bytes) {
+    Ok(Some(result)) => result,
+    Ok(None) => panic!("Expected complete frame"),
+    Err(e) => panic!("{:?}", e)
+  };
+
+  assert_eq!(frame, expected.0, "decoded frame matched");
+  assert_eq!(amt, expected.1, "decoded frame len matched");
+  assert_eq!(buf.len(), expected.1, "output buffer len matched");
+  assert_eq!(buf.len() + bytes.len(), total_len, "total len matched");
+}
 ```
 
 ### RESP2 `RangeFrame` Decoding Example
@@ -96,7 +143,10 @@ different use cases:
 Implement a custom borrowed frame type that can only represent BulkString and SimpleString
 
 ```rust
-use redis_protocol::resp2::{decode::decode_range, types::RangeFrame};
+use redis_protocol::resp2::{
+  decode::decode_range,
+  types::RangeFrame
+};
 use std::str;
 
 enum MyBorrowedFrame<'a> {
@@ -117,10 +167,3 @@ fn decode_borrowed(buf: &[u8]) -> Option<MyBorrowedFrame> {
   }
 }
 ```
-
-## Codec
-
-## Routing
-
-## FromResp2 & FromResp3
-

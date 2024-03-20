@@ -9,6 +9,13 @@ macro_rules! encode_checks(
   }
 );
 
+macro_rules! debug_type(
+  ($($arg:tt)*) => {
+    #[cfg(feature="decode-logs")]
+    log::trace!($($arg)*);
+  }
+);
+
 macro_rules! e (
   ($err:expr) => {
     return Err(RedisParseError::from($err).into_nom_error())
