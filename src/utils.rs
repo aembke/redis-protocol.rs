@@ -119,6 +119,15 @@ pub fn str_to_f64(s: &str) -> Result<f64, RedisProtocolError> {
   }
 }
 
+/// Convert bytes to a boolean.
+pub(crate) fn bytes_to_bool(b: &[u8]) -> Option<bool> {
+  match b {
+    b"true" | b"TRUE" | b"t" | b"T" | b"1" => Some(true),
+    b"false" | b"FALSE" | b"f" | b"F" | b"0" => Some(false),
+    _ => None,
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;

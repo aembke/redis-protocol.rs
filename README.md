@@ -49,14 +49,13 @@ fn main() {
 | Name          | Default | Description                                                                                                                                  |
 |---------------|---------|----------------------------------------------------------------------------------------------------------------------------------------------|
 | `std`         | x       | Enable stdlib features and most dependency default features.                                                                                 |
+| `resp2`       | x       | Enable the RESP2 interface.                                                                                                                  |
+| `resp3`       | x       | Enable the RESP3 interface.                                                                                                                  |
 | `bytes`       |         | Enable the zero-copy parsing interface via [Bytes](https://crates.io/crates/bytes) types.                                                    |
 | `decode-logs` |         | Enable extra debugging TRACE logs during the frame decoding process.                                                                         |
 | `codec`       |         | Enable a RESP2 and RESP3 [Tokio codec](https://docs.rs/tokio-util/latest/tokio_util/codec/index.html) interface.                             |
 | `convert`     |         | Enable the `FromResp2` and `FromResp3` trait interfaces.                                                                                     |
 | `index-map`   |         | Use [IndexMap](https://crates.io/crates/indexmap) types instead of `HashMap`. This is useful for testing and may also be useful for callers. |
-| `alloc`       |         | Enable `nom/alloc` for use in `no_std` builds.                                                                                               |
-| `libm`        |         | Enable `libm` utils for use in `no_std` builds.                                                                                              |
-| `hashbrown`   |         | Enable `hashbrown` types for use in `no_std` builds.                                                                                         |
 
 ## no_std
 

@@ -126,6 +126,9 @@ pub trait Resp2Frame: Debug + Hash + Eq {
   /// Attempt to read the frame value as a string slice.
   fn as_str(&self) -> Option<&str>;
 
+  /// Convert the value to a boolean.
+  fn as_bool(&self) -> Option<bool>;
+
   /// Attempt to read the frame value as a byte slice.
   fn as_bytes(&self) -> Option<&[u8]>;
 
@@ -295,6 +298,16 @@ impl Resp2Frame for OwnedFrame {
     }
   }
 
+  fn as_bool(&self) -> Option<bool> {
+    match self {
+      OwnedFrame::BulkString(b) | OwnedFrame::SimpleString(b) => utils::bytes_to_bool(b),
+      OwnedFrame::Integer(0) => Some(false),
+      OwnedFrame::Integer(1) => Some(true),
+      OwnedFrame::Null => Some(false),
+      _ => None,
+    }
+  }
+
   fn as_bytes(&self) -> Option<&[u8]> {
     Some(match self {
       OwnedFrame::BulkString(b) => b,
@@ -419,6 +432,16 @@ impl Resp2Frame for BytesFrame {
       BytesFrame::BulkString(b) => str::from_utf8(b).ok(),
       BytesFrame::SimpleString(s) => str::from_utf8(s).ok(),
       BytesFrame::Error(s) => Some(s),
+      _ => None,
+    }
+  }
+
+  fn as_bool(&self) -> Option<bool> {
+    match self {
+      BytesFrame::BulkString(b) | BytesFrame::SimpleString(b) => utils::bytes_to_bool(b),
+      BytesFrame::Integer(0) => Some(false),
+      BytesFrame::Integer(1) => Some(true),
+      BytesFrame::Null => Some(false),
       _ => None,
     }
   }

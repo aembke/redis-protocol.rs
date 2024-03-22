@@ -612,6 +612,9 @@ pub trait Resp3Frame: Debug + Hash + Eq + Sized {
   /// Read the frame as a string slice if it can be parsed as a UTF-8 string without allocating.
   fn as_str(&self) -> Option<&str>;
 
+  /// Attempt to convert the frame to a bool.
+  fn as_bool(&self) -> Option<bool>;
+
   /// Read the frame as a `String` if it can be parsed as a UTF-8 string.
   fn to_string(&self) -> Option<String>;
 
@@ -989,6 +992,22 @@ impl Resp3Frame for OwnedFrame {
       | OwnedFrame::BigNumber { data, .. } => str::from_utf8(data).ok(),
       OwnedFrame::VerbatimString { data, .. } => str::from_utf8(data).ok(),
       OwnedFrame::ChunkedString(data) => str::from_utf8(data).ok(),
+      _ => None,
+    }
+  }
+
+  fn as_bool(&self) -> Option<bool> {
+    match self {
+      OwnedFrame::SimpleString { data, .. }
+      | OwnedFrame::BlobString { data, .. }
+      | OwnedFrame::VerbatimString { data, .. } => utils::bytes_to_bool(&data),
+      OwnedFrame::ChunkedString(data) => utils::bytes_to_bool(&data),
+      OwnedFrame::Boolean { data, .. } => Some(*data),
+      OwnedFrame::Number { data, .. } => match data {
+        0 => Some(false),
+        1 => Some(true),
+        _ => None,
+      },
       _ => None,
     }
   }
@@ -1560,6 +1579,22 @@ impl Resp3Frame for BytesFrame {
       | BytesFrame::BigNumber { data, .. } => str::from_utf8(data).ok(),
       BytesFrame::VerbatimString { data, .. } => str::from_utf8(data).ok(),
       BytesFrame::ChunkedString(data) => str::from_utf8(data).ok(),
+      _ => None,
+    }
+  }
+
+  fn as_bool(&self) -> Option<bool> {
+    match self {
+      BytesFrame::SimpleString { data, .. }
+      | BytesFrame::BlobString { data, .. }
+      | BytesFrame::VerbatimString { data, .. } => utils::bytes_to_bool(&data),
+      BytesFrame::ChunkedString(data) => utils::bytes_to_bool(&data),
+      BytesFrame::Boolean { data, .. } => Some(*data),
+      BytesFrame::Number { data, .. } => match data {
+        0 => Some(false),
+        1 => Some(true),
+        _ => None,
+      },
       _ => None,
     }
   }

@@ -166,6 +166,59 @@ impl_unsigned_number!(u64);
 impl_unsigned_number!(u128);
 impl_unsigned_number!(usize);
 
+impl FromResp2<OwnedFrame> for f64 {
+  fn from_frame(frame: OwnedFrame) -> Result<Self, RedisProtocolError> {
+    frame
+      .as_f64()
+      .ok_or_else(|| RedisProtocolError::new_parse("Cannot convert to f64"))
+  }
+}
+#[cfg(feature = "bytes")]
+#[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
+impl FromResp2<BytesFrame> for f64 {
+  fn from_frame(frame: BytesFrame) -> Result<Self, RedisProtocolError> {
+    frame
+      .as_f64()
+      .ok_or_else(|| RedisProtocolError::new_parse("Cannot convert to f64"))
+  }
+}
+
+impl FromResp2<OwnedFrame> for f32 {
+  fn from_frame(frame: OwnedFrame) -> Result<Self, RedisProtocolError> {
+    frame
+      .as_f64()
+      .map(|f| f as f32)
+      .ok_or_else(|| RedisProtocolError::new_parse("Cannot convert to f64"))
+  }
+}
+#[cfg(feature = "bytes")]
+#[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
+impl FromResp2<BytesFrame> for f32 {
+  fn from_frame(frame: BytesFrame) -> Result<Self, RedisProtocolError> {
+    frame
+      .as_f64()
+      .map(|f| f as f32)
+      .ok_or_else(|| RedisProtocolError::new_parse("Cannot convert to f64"))
+  }
+}
+
+impl FromResp2<OwnedFrame> for bool {
+  fn from_frame(frame: OwnedFrame) -> Result<Self, RedisProtocolError> {
+    frame
+      .as_bool()
+      .ok_or_else(|| RedisProtocolError::new_parse("Cannot convert to bool"))
+  }
+}
+#[cfg(feature = "bytes")]
+#[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
+impl FromResp2<BytesFrame> for bool {
+  fn from_frame(frame: BytesFrame) -> Result<Self, RedisProtocolError> {
+    frame
+      .as_bool()
+      .ok_or_else(|| RedisProtocolError::new_parse("Cannot convert to bool"))
+  }
+}
+
 impl FromResp2<OwnedFrame> for () {
   fn from_frame(_: OwnedFrame) -> Result<Self, RedisProtocolError> {
     Ok(())
@@ -194,6 +247,8 @@ impl FromResp2<BytesFrame> for BytesFrame {
 
 impl FromResp2<OwnedFrame> for String {
   fn from_frame(frame: OwnedFrame) -> Result<Self, RedisProtocolError> {
+    debug_type!("FromResp2(String): {:?}", frame);
+
     Ok(match frame {
       OwnedFrame::BulkString(b) | OwnedFrame::SimpleString(b) => String::from_utf8(b)?,
       OwnedFrame::Error(s) => s,
@@ -206,6 +261,8 @@ impl FromResp2<OwnedFrame> for String {
 #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
 impl FromResp2<BytesFrame> for String {
   fn from_frame(frame: BytesFrame) -> Result<Self, RedisProtocolError> {
+    debug_type!("FromResp2(String): {:?}", frame);
+
     Ok(match frame {
       BytesFrame::BulkString(b) | BytesFrame::SimpleString(b) => String::from_utf8(b.to_vec())?,
       BytesFrame::Error(s) => s.to_string(),
@@ -215,12 +272,42 @@ impl FromResp2<BytesFrame> for String {
   }
 }
 
+#[cfg(feature = "bytes")]
+#[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
+impl FromResp2<BytesFrame> for Str {
+  fn from_frame(frame: BytesFrame) -> Result<Self, RedisProtocolError> {
+    debug_type!("FromResp2(Str): {:?}", frame);
+
+    Ok(match frame {
+      BytesFrame::BulkString(b) | BytesFrame::SimpleString(b) => Str::from_inner(b)?,
+      BytesFrame::Error(s) => s,
+      BytesFrame::Integer(i) => i.to_string().into(),
+      _ => return Err(RedisProtocolError::new_parse("Cannot convert to string.")),
+    })
+  }
+}
+
+#[cfg(feature = "bytes")]
+#[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
+impl FromResp2<BytesFrame> for Bytes {
+  fn from_frame(frame: BytesFrame) -> Result<Self, RedisProtocolError> {
+    debug_type!("FromResp2(Bytes): {:?}", frame);
+
+    Ok(match frame {
+      BytesFrame::BulkString(b) | BytesFrame::SimpleString(b) => b,
+      BytesFrame::Error(s) => s.into_inner(),
+      BytesFrame::Integer(i) => i.to_string().into(),
+      _ => return Err(RedisProtocolError::new_parse("Cannot convert to bytes.")),
+    })
+  }
+}
+
 impl<T> FromResp2<OwnedFrame> for Option<T>
 where
   T: FromResp2<OwnedFrame>,
 {
   fn from_frame(frame: OwnedFrame) -> Result<Option<T>, RedisProtocolError> {
-    debug_type!("FromResp(Option<{}>): {:?}", std::any::type_name::<T>(), frame);
+    debug_type!("FromResp2(Option<{}>): {:?}", std::any::type_name::<T>(), frame);
 
     match frame {
       OwnedFrame::Array(inner) => {
@@ -242,7 +329,7 @@ where
   T: FromResp2<BytesFrame>,
 {
   fn from_frame(frame: BytesFrame) -> Result<Option<T>, RedisProtocolError> {
-    debug_type!("FromResp(Option<{}>): {:?}", std::any::type_name::<T>(), frame);
+    debug_type!("FromResp2(Option<{}>): {:?}", std::any::type_name::<T>(), frame);
 
     match frame {
       BytesFrame::Array(inner) => {
@@ -254,6 +341,102 @@ where
       },
       BytesFrame::Null => Ok(None),
       _ => T::from_frame(frame).map(Some),
+    }
+  }
+}
+
+impl<T> FromResp2<OwnedFrame> for Vec<T>
+where
+  T: FromResp2<OwnedFrame>,
+{
+  fn from_frame(frame: OwnedFrame) -> Result<Vec<T>, RedisProtocolError> {
+    debug_type!("FromResp2(Vec<{}>): {:?}", std::any::type_name::<T>(), frame);
+
+    match frame {
+      OwnedFrame::BulkString(buf) => {
+        // hacky way to check if T is bytes without consuming `string`
+        if T::from_owned_bytes(Vec::new()).is_some() {
+          T::from_owned_bytes(buf).ok_or(RedisProtocolError::new_parse("Could not convert to bytes."))
+        } else {
+          Ok(vec![T::from_frame(OwnedFrame::BulkString(buf))?])
+        }
+      },
+      OwnedFrame::SimpleString(buf) => {
+        if T::from_owned_bytes(Vec::new()).is_some() {
+          T::from_owned_bytes(buf).ok_or(RedisProtocolError::new_parse("Could not convert to bytes."))
+        } else {
+          Ok(vec![T::from_frame(OwnedFrame::SimpleString(buf))?])
+        }
+      },
+      OwnedFrame::Error(buf) => {
+        if T::from_owned_bytes(Vec::new()).is_some() {
+          T::from_owned_bytes(buf.into_bytes()).ok_or(RedisProtocolError::new_parse("Could not convert to bytes."))
+        } else {
+          Ok(vec![T::from_frame(OwnedFrame::Error(buf))?])
+        }
+      },
+      OwnedFrame::Array(values) => {
+        if !values.is_empty() {
+          if let OwnedFrame::Array(_) = &values[0] {
+            values.into_iter().map(|x| T::from_frame(x)).collect()
+          } else {
+            T::from_frames(values)
+          }
+        } else {
+          Ok(Vec::new())
+        }
+      },
+      OwnedFrame::Integer(i) => Ok(vec![T::from_frame(OwnedFrame::Integer(i))?]),
+      OwnedFrame::Null => Ok(Vec::new()),
+    }
+  }
+}
+
+#[cfg(feature = "bytes")]
+#[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
+impl<T> FromResp2<BytesFrame> for Vec<T>
+where
+  T: FromResp2<BytesFrame>,
+{
+  fn from_frame(frame: BytesFrame) -> Result<Vec<T>, RedisProtocolError> {
+    debug_type!("FromResp2(Vec<{}>): {:?}", std::any::type_name::<T>(), frame);
+
+    match frame {
+      BytesFrame::BulkString(buf) => {
+        if T::from_owned_bytes(Vec::new()).is_some() {
+          T::from_owned_bytes(buf.to_vec()).ok_or(RedisProtocolError::new_parse("Could not convert to bytes."))
+        } else {
+          Ok(vec![T::from_frame(BytesFrame::BulkString(buf))?])
+        }
+      },
+      BytesFrame::SimpleString(buf) => {
+        if T::from_owned_bytes(Vec::new()).is_some() {
+          T::from_owned_bytes(buf.to_vec()).ok_or(RedisProtocolError::new_parse("Could not convert to bytes."))
+        } else {
+          Ok(vec![T::from_frame(BytesFrame::SimpleString(buf))?])
+        }
+      },
+      BytesFrame::Error(buf) => {
+        if T::from_owned_bytes(Vec::new()).is_some() {
+          T::from_owned_bytes(buf.into_inner().to_vec())
+            .ok_or(RedisProtocolError::new_parse("Could not convert to bytes."))
+        } else {
+          Ok(vec![T::from_frame(BytesFrame::Error(buf))?])
+        }
+      },
+      BytesFrame::Array(values) => {
+        if !values.is_empty() {
+          if let BytesFrame::Array(_) = &values[0] {
+            values.into_iter().map(|x| T::from_frame(x)).collect()
+          } else {
+            T::from_frames(values)
+          }
+        } else {
+          Ok(Vec::new())
+        }
+      },
+      BytesFrame::Integer(i) => Ok(vec![T::from_frame(BytesFrame::Integer(i))?]),
+      BytesFrame::Null => Ok(Vec::new()),
     }
   }
 }
