@@ -26,7 +26,7 @@ pub fn error_encode_len(s: &str) -> usize {
 
 pub fn integer_encode_len(i: i64) -> usize {
   let prefix = if i < 0 { 1 } else { 0 };
-  let as_usize = if i < 0 { (i * -1) as usize } else { i as usize };
+  let as_usize = if i < 0 { -i as usize } else { i as usize };
 
   1 + digits_in_number(as_usize) + 2 + prefix
 }

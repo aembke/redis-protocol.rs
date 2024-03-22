@@ -295,13 +295,6 @@ impl FrameKind {
       Hello => panic!("HELLO does not have a byte prefix."),
     }
   }
-
-  /// Whether the frame type is a `HELLO` frame.
-  ///
-  /// `HELLO` is encoded differently than other frames so this is used to prevent panics in [to_byte](Self::to_byte).
-  pub(crate) fn is_hello(&self) -> bool {
-    matches!(self, FrameKind::Hello)
-  }
 }
 
 /// A reference-free frame type representing ranges into an associated buffer, typically used to implement zero-copy
@@ -467,7 +460,7 @@ impl RangeFrame {
     };
 
     if let Some(_attributes) = _attributes.as_mut() {
-      _attributes.extend(attributes.into_iter());
+      _attributes.extend(attributes);
     } else {
       *_attributes = Some(attributes);
     }
@@ -541,7 +534,10 @@ impl DecodedRangeFrame {
   /// Add attributes to the decoded frame, if possible.
   pub fn add_attributes(&mut self, attributes: RangeAttributes) -> Result<(), RedisProtocolError> {
     match self {
-      DecodedRangeFrame::Streaming(inner) => Ok(inner.add_attributes(attributes)),
+      DecodedRangeFrame::Streaming(inner) => {
+        inner.add_attributes(attributes);
+        Ok(())
+      },
       DecodedRangeFrame::Complete(inner) => inner.add_attributes(attributes),
     }
   }
@@ -838,7 +834,7 @@ impl Resp3Frame for OwnedFrame {
     };
 
     if let Some(_attributes) = _attributes.as_mut() {
-      _attributes.extend(attributes.into_iter());
+      _attributes.extend(attributes);
     } else {
       *_attributes = Some(attributes);
     }
@@ -1000,8 +996,8 @@ impl Resp3Frame for OwnedFrame {
     match self {
       OwnedFrame::SimpleString { data, .. }
       | OwnedFrame::BlobString { data, .. }
-      | OwnedFrame::VerbatimString { data, .. } => utils::bytes_to_bool(&data),
-      OwnedFrame::ChunkedString(data) => utils::bytes_to_bool(&data),
+      | OwnedFrame::VerbatimString { data, .. } => utils::bytes_to_bool(data),
+      OwnedFrame::ChunkedString(data) => utils::bytes_to_bool(data),
       OwnedFrame::Boolean { data, .. } => Some(*data),
       OwnedFrame::Number { data, .. } => match data {
         0 => Some(false),
@@ -1030,7 +1026,7 @@ impl Resp3Frame for OwnedFrame {
   fn as_bytes(&self) -> Option<&[u8]> {
     match self {
       OwnedFrame::SimpleError { data, .. } => Some(data.as_bytes()),
-      OwnedFrame::SimpleString { data, .. } => Some(&data),
+      OwnedFrame::SimpleString { data, .. } => Some(data),
       OwnedFrame::BlobError { data, .. }
       | OwnedFrame::BlobString { data, .. }
       | OwnedFrame::BigNumber { data, .. } => Some(data),
@@ -1488,7 +1484,7 @@ impl Resp3Frame for BytesFrame {
     };
 
     if let Some(_attributes) = _attributes.as_mut() {
-      _attributes.extend(attributes.into_iter());
+      _attributes.extend(attributes);
     } else {
       *_attributes = Some(attributes);
     }
@@ -1587,8 +1583,8 @@ impl Resp3Frame for BytesFrame {
     match self {
       BytesFrame::SimpleString { data, .. }
       | BytesFrame::BlobString { data, .. }
-      | BytesFrame::VerbatimString { data, .. } => utils::bytes_to_bool(&data),
-      BytesFrame::ChunkedString(data) => utils::bytes_to_bool(&data),
+      | BytesFrame::VerbatimString { data, .. } => utils::bytes_to_bool(data),
+      BytesFrame::ChunkedString(data) => utils::bytes_to_bool(data),
       BytesFrame::Boolean { data, .. } => Some(*data),
       BytesFrame::Number { data, .. } => match data {
         0 => Some(false),
@@ -1617,7 +1613,7 @@ impl Resp3Frame for BytesFrame {
   fn as_bytes(&self) -> Option<&[u8]> {
     match self {
       BytesFrame::SimpleError { data, .. } => Some(data.as_bytes()),
-      BytesFrame::SimpleString { data, .. } => Some(&data),
+      BytesFrame::SimpleString { data, .. } => Some(data),
       BytesFrame::BlobError { data, .. }
       | BytesFrame::BlobString { data, .. }
       | BytesFrame::BigNumber { data, .. } => Some(data),
@@ -1672,7 +1668,7 @@ impl Resp3Frame for BytesFrame {
 #[cfg(feature = "bytes")]
 impl BytesFrame {
   /// Copy the frame contents into a new [OwnedFrame].
-  fn to_owned_frame(&self) -> OwnedFrame {
+  pub fn to_owned_frame(&self) -> OwnedFrame {
     resp3_utils::bytes_to_owned_frame(self)
   }
 }
@@ -1731,7 +1727,7 @@ impl<T: Resp3Frame> DecodedFrame<T> {
 /// ```rust
 /// use redis_protocol::resp3::decode::streaming;
 ///
-/// fn main() {
+/// fn example() {
 ///   // decode the streamed array `[1,2]` one element at a time
 ///   let parts: Vec<Vec<u8>> = vec![
 ///     "*?\r\n".into(),
@@ -1805,7 +1801,7 @@ impl<T: Resp3Frame> StreamedFrame<T> {
       // the last frame is an empty chunked string when the stream is finished
       self.buffer.pop_back();
     }
-    let buffer = mem::replace(&mut self.buffer, VecDeque::new());
+    let buffer = mem::take(&mut self.buffer);
     let attributes = self.attribute_frame.take_attributes();
     T::from_buffer(self.kind, buffer, attributes)
   }

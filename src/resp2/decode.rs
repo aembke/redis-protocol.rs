@@ -52,7 +52,7 @@ fn d_read_to_crlf_take(input: (&[u8], usize)) -> DResult<&[u8]> {
 fn d_read_prefix_len(input: (&[u8], usize)) -> DResult<isize> {
   let (input, data) = d_read_to_crlf_take(input)?;
   decode_log!("Reading prefix len. Data: {:?}", str::from_utf8(data));
-  Ok((input, etry!(to_isize(&data))))
+  Ok((input, etry!(to_isize(data))))
 }
 
 fn d_frame_type(input: (&[u8], usize)) -> DResult<FrameKind> {
@@ -84,7 +84,7 @@ fn d_parse_simplestring(input: (&[u8], usize)) -> DResult<RangeFrame> {
 
 fn d_parse_integer(input: (&[u8], usize)) -> DResult<RangeFrame> {
   let ((input, next_offset), data) = d_read_to_crlf_take(input)?;
-  let parsed = etry!(to_i64(&data));
+  let parsed = etry!(to_i64(data));
   Ok(((input, next_offset), RangeFrame::Integer(parsed)))
 }
 
@@ -207,7 +207,7 @@ pub fn decode(buf: &[u8]) -> Result<Option<(OwnedFrame, usize)>, RedisProtocolEr
 #[cfg(feature = "bytes")]
 #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
 pub fn decode_bytes(buf: &Bytes) -> Result<Option<(BytesFrame, usize)>, RedisProtocolError> {
-  let (frame, amt) = match decode_range(&*buf)? {
+  let (frame, amt) = match decode_range(buf)? {
     Some(result) => result,
     None => return Ok(None),
   };

@@ -1,8 +1,4 @@
-use alloc::{
-  borrow::Cow,
-  format,
-  string::{FromUtf8Error, String},
-};
+use alloc::{borrow::Cow, format, string::FromUtf8Error};
 use cookie_factory::GenError;
 use core::{borrow::Borrow, fmt, fmt::Debug, str::Utf8Error};
 use nom::{
@@ -42,31 +38,16 @@ impl PartialEq for RedisProtocolErrorKind {
     use self::RedisProtocolErrorKind::*;
 
     match *self {
-      EncodeError => match *other {
-        EncodeError => true,
-        _ => false,
-      },
-      DecodeError => match *other {
-        DecodeError => true,
-        _ => false,
-      },
-      BufferTooSmall(amt) => match *other {
-        BufferTooSmall(_amt) => amt == _amt,
+      EncodeError => matches!(other, EncodeError),
+      DecodeError => matches!(other, DecodeError),
+      BufferTooSmall(amt) => match other {
+        BufferTooSmall(_amt) => amt == *_amt,
         _ => false,
       },
       #[cfg(feature = "std")]
-      IO(_) => match *other {
-        IO(_) => true,
-        _ => false,
-      },
-      Unknown => match *other {
-        Unknown => true,
-        _ => false,
-      },
-      Parse => match *other {
-        Parse => true,
-        _ => false,
-      },
+      IO(_) => matches!(other, IO(_)),
+      Unknown => matches!(other, Unknown),
+      Parse => matches!(other, Parse),
     }
   }
 }
@@ -124,10 +105,6 @@ impl RedisProtocolError {
       kind:    RedisProtocolErrorKind::Unknown,
       details: "".into(),
     }
-  }
-
-  pub fn to_string(&self) -> String {
-    format!("{}: {}", self.kind.to_str(), self.details)
   }
 
   pub fn kind(&self) -> &RedisProtocolErrorKind {

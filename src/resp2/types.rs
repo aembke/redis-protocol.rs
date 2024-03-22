@@ -36,7 +36,7 @@ pub const BULKSTRING_BYTE: u8 = b'$';
 pub const ARRAY_BYTE: u8 = b'*';
 
 /// The binary representation of NULL in RESP2.
-pub const NULL: &'static str = "$-1\r\n";
+pub const NULL: &str = "$-1\r\n";
 
 /// An enum representing the type of RESP frame.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -263,7 +263,7 @@ impl Hash for OwnedFrame {
 impl Resp2Frame for OwnedFrame {
   fn encode_len(&self) -> usize {
     match self {
-      OwnedFrame::BulkString(b) => bulkstring_encode_len(&b),
+      OwnedFrame::BulkString(b) => bulkstring_encode_len(b),
       OwnedFrame::Array(frames) => frames
         .iter()
         .fold(1 + digits_in_number(frames.len()) + 2, |m, f| m + f.encode_len()),
@@ -401,7 +401,7 @@ impl Hash for BytesFrame {
 impl Resp2Frame for BytesFrame {
   fn encode_len(&self) -> usize {
     match self {
-      BytesFrame::BulkString(b) => bulkstring_encode_len(&b),
+      BytesFrame::BulkString(b) => bulkstring_encode_len(b),
       BytesFrame::Array(frames) => frames
         .iter()
         .fold(1 + digits_in_number(frames.len()) + 2, |m, f| m + f.encode_len()),
@@ -507,12 +507,10 @@ impl BytesFrame {
   pub fn to_owned_frame(&self) -> OwnedFrame {
     match self {
       BytesFrame::SimpleString(s) => OwnedFrame::SimpleString(s.to_vec()),
-      BytesFrame::Error(e) => OwnedFrame::Error((&*e).to_string()),
+      BytesFrame::Error(e) => OwnedFrame::Error(e.to_string()),
       BytesFrame::Integer(i) => OwnedFrame::Integer(*i),
       BytesFrame::BulkString(b) => OwnedFrame::BulkString(b.to_vec()),
-      BytesFrame::Array(frames) => {
-        OwnedFrame::Array(frames.into_iter().map(|frame| frame.to_owned_frame()).collect())
-      },
+      BytesFrame::Array(frames) => OwnedFrame::Array(frames.iter().map(|f| f.to_owned_frame()).collect()),
       BytesFrame::Null => OwnedFrame::Null,
     }
   }

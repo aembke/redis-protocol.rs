@@ -3,18 +3,12 @@ use crate::{
   resp2::{
     decode::decode_bytes_mut as resp2_decode,
     encode::encode_bytes as resp2_encode,
-    types::{BytesFrame as Resp2Frame, FrameKind as Resp2FrameKind, Resp2Frame as _Resp2Frame},
+    types::BytesFrame as Resp2Frame,
   },
   resp3::{
     decode::streaming::decode_bytes_mut as resp3_decode,
     encode::complete::encode_bytes as resp3_encode,
-    types::{
-      BytesFrame as Resp3Frame,
-      FrameKind as Resp3FrameKind,
-      Resp3Frame as _Resp3Frame,
-      RespVersion,
-      StreamedFrame,
-    },
+    types::{BytesFrame as Resp3Frame, StreamedFrame},
   },
 };
 use bytes::BytesMut;
@@ -24,7 +18,7 @@ use tokio_util::codec::{Decoder, Encoder};
 pub fn resp3_encode_command(cmd: &str) -> Resp3Frame {
   Resp3Frame::Array {
     data:       cmd
-      .split(" ")
+      .split(' ')
       .map(|s| Resp3Frame::BlobString {
         data:       s.as_bytes().to_vec().into(),
         attributes: None,
@@ -38,7 +32,7 @@ pub fn resp3_encode_command(cmd: &str) -> Resp3Frame {
 pub fn resp2_encode_command(cmd: &str) -> Resp2Frame {
   Resp2Frame::Array(
     cmd
-      .split(" ")
+      .split(' ')
       .map(|s| Resp2Frame::BulkString(s.as_bytes().to_vec().into()))
       .collect(),
   )

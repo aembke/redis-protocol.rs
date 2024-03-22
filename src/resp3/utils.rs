@@ -25,6 +25,7 @@ pub fn hash_tuple<H: Hasher>(state: &mut H, range: &(usize, usize)) {
 }
 
 #[cfg(not(feature = "index-map"))]
+#[allow(dead_code)]
 pub fn new_set<K: Hash + Eq>(capacity: usize) -> HashSet<K> {
   HashSet::with_capacity(capacity)
 }
@@ -73,7 +74,7 @@ pub fn verbatimstring_encode_len(format: &VerbatimStringFormat, data: &[u8]) -> 
 
 pub fn number_encode_len(i: i64) -> usize {
   let prefix = if i < 0 { 1 } else { 0 };
-  let as_usize = if i < 0 { (i * -1) as usize } else { i as usize };
+  let as_usize = if i < 0 { -i as usize } else { i as usize };
 
   1 + digits_in_number(as_usize) + 2 + prefix
 }
@@ -165,11 +166,11 @@ pub fn owned_hello_encode_len(username: &Option<String>, password: &Option<Strin
 
 #[cfg(feature = "bytes")]
 pub fn bytes_attribute_encode_len(attributes: &Option<BytesAttributes>) -> usize {
-  attributes.as_ref().map(|a| bytes_map_encode_len(a)).unwrap_or(0)
+  attributes.as_ref().map(bytes_map_encode_len).unwrap_or(0)
 }
 
 pub fn owned_attribute_encode_len(attributes: &Option<OwnedAttributes>) -> usize {
-  attributes.as_ref().map(|a| owned_map_encode_len(a)).unwrap_or(0)
+  attributes.as_ref().map(owned_map_encode_len).unwrap_or(0)
 }
 
 /// Returns the number of bytes necessary to represent the frame and any associated attributes.
@@ -440,7 +441,7 @@ fn build_owned_attributes(
 ) -> Result<Option<OwnedAttributes>, RedisProtocolError> {
   if let Some(attributes) = attributes {
     let mut out = new_map(attributes.len());
-    for (key, value) in attributes.into_iter() {
+    for (key, value) in attributes {
       let key = build_owned_frame(buf, key)?;
       let value = build_owned_frame(buf, value)?;
       out.insert(key, value);
@@ -459,7 +460,7 @@ fn build_bytes_attributes(
 ) -> Result<Option<BytesAttributes>, RedisProtocolError> {
   if let Some(attributes) = attributes {
     let mut out = new_map(attributes.len());
-    for (key, value) in attributes.into_iter() {
+    for (key, value) in attributes {
       let key = build_bytes_frame(buf, key)?;
       let value = build_bytes_frame(buf, value)?;
       out.insert(key, value);

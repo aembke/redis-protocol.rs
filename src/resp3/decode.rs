@@ -139,7 +139,7 @@ fn d_read_prefix_len(input: (&[u8], usize)) -> DResult<usize> {
 fn d_read_prefix_len_signed(input: (&[u8], usize)) -> DResult<isize> {
   let ((input, offset), data) = d_read_to_crlf_take(input)?;
   decode_log!("Reading prefix len. Data: {:?}", str::from_utf8(data));
-  Ok(((input, offset), etry!(to_isize(&data))))
+  Ok(((input, offset), etry!(to_isize(data))))
 }
 
 fn d_frame_type(input: (&[u8], usize)) -> DResult<FrameKind> {
@@ -179,7 +179,7 @@ fn d_parse_simpleerror(input: (&[u8], usize)) -> DResult<RangeFrame> {
 
 fn d_parse_number(input: (&[u8], usize)) -> DResult<RangeFrame> {
   let ((input, next_offset), data) = d_read_to_crlf_take(input)?;
-  let parsed = etry!(parse_as::<i64, _>(&data));
+  let parsed = etry!(parse_as::<i64, _>(data));
   Ok(((input, next_offset), RangeFrame::Number {
     data:       parsed,
     attributes: None,
@@ -188,7 +188,7 @@ fn d_parse_number(input: (&[u8], usize)) -> DResult<RangeFrame> {
 
 fn d_parse_double(input: (&[u8], usize)) -> DResult<RangeFrame> {
   let ((input, next_offset), data) = d_read_to_crlf_take(input)?;
-  let parsed = etry!(parse_as::<f64, _>(&data));
+  let parsed = etry!(parse_as::<f64, _>(data));
   Ok(((input, next_offset), RangeFrame::Double {
     data:       parsed,
     attributes: None,
@@ -197,7 +197,7 @@ fn d_parse_double(input: (&[u8], usize)) -> DResult<RangeFrame> {
 
 fn d_parse_boolean(input: (&[u8], usize)) -> DResult<RangeFrame> {
   let ((input, next_offset), data) = d_read_to_crlf_take(input)?;
-  let parsed = etry!(to_bool(&data));
+  let parsed = etry!(to_bool(data));
   Ok(((input, next_offset), RangeFrame::Boolean {
     data:       parsed,
     attributes: None,
@@ -232,7 +232,7 @@ fn d_parse_bloberror(input: (&[u8], usize)) -> DResult<RangeFrame> {
 fn d_parse_verbatimstring(input: (&[u8], usize)) -> DResult<RangeFrame> {
   let ((input, prefix_offset), len) = d_read_prefix_len(input)?;
   let (input, format_bytes) = nom_terminated(nom_take(3_usize), nom_take(1_usize))(input)?;
-  let format = etry!(to_verbatimstring_format(&format_bytes));
+  let format = etry!(to_verbatimstring_format(format_bytes));
   let (input, _) = nom_terminated(nom_take(len - 4), nom_take(2_usize))(input)?;
 
   Ok(((input, prefix_offset + len + 2), RangeFrame::VerbatimString {
@@ -470,7 +470,7 @@ pub mod complete {
   ///
   /// If the buffer contains an incomplete frame then `None` is returned.
   pub fn decode(buf: &[u8]) -> Result<Option<(OwnedFrame, usize)>, RedisProtocolError> {
-    let (frame, amt) = match decode_range(&buf)? {
+    let (frame, amt) = match decode_range(buf)? {
       Some(result) => result,
       None => return Ok(None),
     };
@@ -486,7 +486,7 @@ pub mod complete {
   #[cfg(feature = "bytes")]
   #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
   pub fn decode_bytes(buf: &Bytes) -> Result<Option<(BytesFrame, usize)>, RedisProtocolError> {
-    let (frame, amt) = match decode_range(&buf)? {
+    let (frame, amt) = match decode_range(buf)? {
       Some(result) => result,
       None => return Ok(None),
     };
@@ -503,7 +503,7 @@ pub mod complete {
   #[cfg(feature = "bytes")]
   #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
   pub fn decode_bytes_mut(buf: &mut BytesMut) -> Result<Option<(BytesFrame, usize, Bytes)>, RedisProtocolError> {
-    let (frame, amt) = match decode_range(&buf)? {
+    let (frame, amt) = match decode_range(buf)? {
       Some(result) => result,
       None => return Ok(None),
     };
@@ -539,7 +539,7 @@ pub mod streaming {
   ///
   /// If the buffer contains an incomplete frame then `None` is returned.
   pub fn decode(buf: &[u8]) -> Result<Option<(DecodedFrame<OwnedFrame>, usize)>, RedisProtocolError> {
-    Ok(match decode_range(&buf)? {
+    Ok(match decode_range(buf)? {
       Some((DecodedRangeFrame::Complete(frame), amt)) => Some((
         DecodedFrame::Complete(resp3_utils::build_owned_frame(buf, &frame)?),
         amt,
@@ -560,7 +560,7 @@ pub mod streaming {
   #[cfg(feature = "bytes")]
   #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
   pub fn decode_bytes(buf: &Bytes) -> Result<Option<(DecodedFrame<BytesFrame>, usize)>, RedisProtocolError> {
-    Ok(match decode_range(&buf)? {
+    Ok(match decode_range(buf)? {
       Some((DecodedRangeFrame::Complete(frame), amt)) => Some((
         DecodedFrame::Complete(resp3_utils::build_bytes_frame(buf, &frame)?),
         amt,
@@ -584,7 +584,7 @@ pub mod streaming {
   pub fn decode_bytes_mut(
     buf: &mut BytesMut,
   ) -> Result<Option<(DecodedFrame<BytesFrame>, usize, Bytes)>, RedisProtocolError> {
-    let (frame, amt) = match decode_range(&buf)? {
+    let (frame, amt) = match decode_range(buf)? {
       Some(result) => result,
       None => return Ok(None),
     };

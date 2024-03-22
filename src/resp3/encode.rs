@@ -445,7 +445,7 @@ fn gen_owned_frame<'a>(
   let x = (buf, offset);
 
   match frame {
-    OwnedFrame::Array { data, attributes } => gen_owned_array(x, &data, attributes.as_ref()),
+    OwnedFrame::Array { data, attributes } => gen_owned_array(x, data, attributes.as_ref()),
     OwnedFrame::BlobString { data, attributes } => gen_blobstring(x, data, attributes.as_ref()),
     OwnedFrame::SimpleString { data, attributes } => gen_simplestring(x, data, attributes.as_ref()),
     OwnedFrame::SimpleError { data, attributes } => gen_simpleerror(x, data, attributes.as_ref()),
@@ -833,8 +833,8 @@ pub mod streaming {
   /// Encode the inner frames that make up a key-value pair in a streamed map.
   ///
   /// Returns the new offset in `buf`.
-  pub fn encode_owned_aggregate_type_inner_kv_pair<'a>(
-    buf: &'a mut [u8],
+  pub fn encode_owned_aggregate_type_inner_kv_pair(
+    buf: &mut [u8],
     offset: usize,
     key: &OwnedFrame,
     value: &OwnedFrame,
@@ -870,8 +870,8 @@ pub mod streaming {
   /// Returns the new offset in `buf`.
   #[cfg(feature = "bytes")]
   #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
-  pub fn encode_bytes_aggregate_type_inner_kv_pair<'a>(
-    buf: &'a mut [u8],
+  pub fn encode_bytes_aggregate_type_inner_kv_pair(
+    buf: &mut [u8],
     offset: usize,
     key: &BytesFrame,
     value: &BytesFrame,

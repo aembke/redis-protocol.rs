@@ -1,3 +1,5 @@
+#![allow(unused_imports)]
+
 #[cfg(feature = "resp2")]
 mod resp2;
 #[cfg(feature = "resp3")]

@@ -3,7 +3,6 @@
 //! <https://redis.io/topics/protocol#resp-protocol-description>
 
 use crate::{error::RedisProtocolError, resp2::types::*, types::CRLF, utils};
-use alloc::vec::Vec;
 use cookie_factory::GenError;
 use core::str;
 
@@ -54,7 +53,7 @@ fn gen_null(x: (&mut [u8], usize)) -> Result<(&mut [u8], usize), GenError> {
 // middle that uses `&[u8]` and `&str` as the backing types, but even that would require an added `Vec` in the
 // intermediate frame's `Array` variant. For now, I'm just going to duplicate this function to avoid these tradeoffs.
 
-fn gen_owned_array<'a>(x: (&'a mut [u8], usize), data: &Vec<OwnedFrame>) -> Result<(&'a mut [u8], usize), GenError> {
+fn gen_owned_array<'a>(x: (&'a mut [u8], usize), data: &[OwnedFrame]) -> Result<(&'a mut [u8], usize), GenError> {
   let mut x = do_gen!(
     x,
     gen_be_u8!(FrameKind::Array.to_byte())
@@ -64,8 +63,8 @@ fn gen_owned_array<'a>(x: (&'a mut [u8], usize), data: &Vec<OwnedFrame>) -> Resu
 
   for frame in data.iter() {
     x = match frame {
-      OwnedFrame::SimpleString(s) => gen_simplestring(x, &s)?,
-      OwnedFrame::BulkString(b) => gen_bulkstring(x, &b)?,
+      OwnedFrame::SimpleString(s) => gen_simplestring(x, s)?,
+      OwnedFrame::BulkString(b) => gen_bulkstring(x, b)?,
       OwnedFrame::Null => gen_null(x)?,
       OwnedFrame::Error(s) => gen_error(x, s)?,
       OwnedFrame::Array(frames) => gen_owned_array(x, frames)?,
@@ -78,7 +77,7 @@ fn gen_owned_array<'a>(x: (&'a mut [u8], usize), data: &Vec<OwnedFrame>) -> Resu
 }
 
 #[cfg(feature = "bytes")]
-fn gen_bytes_array<'a>(x: (&'a mut [u8], usize), data: &Vec<BytesFrame>) -> Result<(&'a mut [u8], usize), GenError> {
+fn gen_bytes_array<'a>(x: (&'a mut [u8], usize), data: &[BytesFrame]) -> Result<(&'a mut [u8], usize), GenError> {
   let mut x = do_gen!(
     x,
     gen_be_u8!(FrameKind::Array.to_byte())
@@ -88,8 +87,8 @@ fn gen_bytes_array<'a>(x: (&'a mut [u8], usize), data: &Vec<BytesFrame>) -> Resu
 
   for frame in data.iter() {
     x = match frame {
-      BytesFrame::SimpleString(ref s) => gen_simplestring(x, &s)?,
-      BytesFrame::BulkString(ref b) => gen_bulkstring(x, &b)?,
+      BytesFrame::SimpleString(ref s) => gen_simplestring(x, s)?,
+      BytesFrame::BulkString(ref b) => gen_bulkstring(x, b)?,
       BytesFrame::Null => gen_null(x)?,
       BytesFrame::Error(ref s) => gen_error(x, s)?,
       BytesFrame::Array(ref frames) => gen_bytes_array(x, frames)?,

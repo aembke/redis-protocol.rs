@@ -26,7 +26,7 @@ pub fn digits_in_number(d: usize) -> usize {
   libm::floor(libm::log10(d as f64)) as usize + 1
 }
 
-pub fn isize_to_usize<'a, T>(val: isize) -> Result<usize, RedisParseError<T>> {
+pub fn isize_to_usize<T>(val: isize) -> Result<usize, RedisParseError<T>> {
   if val >= 0 {
     Ok(val as usize)
   } else {
@@ -44,7 +44,7 @@ pub fn zero_extend(buf: &mut BytesMut, amt: usize) {
 /// Whether an error payload is a `MOVED` or `ASK` redirection.
 pub(crate) fn is_redirection(payload: &str) -> bool {
   if payload.starts_with("MOVED") || payload.starts_with("ASK") {
-    payload.split(" ").count() == 3
+    payload.split(' ').count() == 3
   } else {
     false
   }
@@ -93,13 +93,11 @@ pub fn redis_keyslot(key: &[u8]) -> u16 {
   }
 
   let j = j.unwrap();
-  let out = if i + j == key.len() || j == 0 {
+  if i + j == key.len() || j == 0 {
     crc16_xmodem(key)
   } else {
     crc16_xmodem(&key[i + 1 .. i + j + 1])
-  };
-
-  out
+  }
 }
 
 /// Convert a string to a double, supporting "+inf" and "-inf".
