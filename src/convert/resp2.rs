@@ -3,7 +3,10 @@ use crate::{
   resp2::types::{OwnedFrame, Resp2Frame},
 };
 use alloc::{string::String, vec::Vec};
-use core::str;
+use core::{
+  hash::{BuildHasher, Hash},
+  str,
+};
 
 #[cfg(feature = "bytes")]
 use crate::resp2::types::BytesFrame;
@@ -11,6 +14,13 @@ use crate::resp2::types::BytesFrame;
 use bytes::Bytes;
 #[cfg(feature = "bytes")]
 use bytes_utils::Str;
+
+#[cfg(feature = "hashbrown")]
+use hashbrown::{HashMap, HashSet};
+#[cfg(feature = "index-map")]
+use indexmap::{IndexMap, IndexSet};
+#[cfg(feature = "std")]
+use std::collections::{HashMap, HashSet};
 
 macro_rules! to_signed_number(
   ($f:tt, $t:ty, $v:expr) => {
@@ -437,6 +447,158 @@ where
       },
       BytesFrame::Integer(i) => Ok(vec![T::from_frame(BytesFrame::Integer(i))?]),
       BytesFrame::Null => Ok(Vec::new()),
+    }
+  }
+}
+
+impl<T, const N: usize> FromResp2<OwnedFrame> for [T; N]
+where
+  T: FromResp2<OwnedFrame>,
+{
+  fn from_frame(value: OwnedFrame) -> Result<[T; N], RedisProtocolError> {
+    debug_type!("FromResp2([{}; {}]): {:?}", std::any::type_name::<T>(), N, value);
+    // use the `from_value` impl for Vec<T>
+    let value: Vec<T> = value.convert()?;
+    let len = value.len();
+
+    value.try_into().map_err(|_| {
+      RedisProtocolError::new_parse(format!("Failed to convert to array. Expected {}, found {}.", N, len))
+    })
+  }
+}
+
+#[cfg(feature = "bytes")]
+#[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
+impl<T, const N: usize> FromResp2<BytesFrame> for [T; N]
+where
+  T: FromResp2<BytesFrame>,
+{
+  fn from_frame(value: BytesFrame) -> Result<[T; N], RedisProtocolError> {
+    debug_type!("FromResp2([{}; {}]): {:?}", std::any::type_name::<T>(), N, value);
+    // use the `from_value` impl for Vec<T>
+    let value: Vec<T> = value.convert()?;
+    let len = value.len();
+
+    value.try_into().map_err(|_| {
+      RedisProtocolError::new_parse(format!("Failed to convert to array. Expected {}, found {}.", N, len))
+    })
+  }
+}
+
+impl<K, V, S> FromResp2<OwnedFrame> for HashMap<K, V, S>
+where
+  K: FromResp2<OwnedFrame> + Eq + Hash,
+  V: FromResp2<OwnedFrame>,
+  S: BuildHasher + Default,
+{
+  fn from_frame(frame: OwnedFrame) -> Result<Self, RedisProtocolError> {
+    debug_type!(
+      "FromResp2(HashMap<{}, {}>): {:?}",
+      std::any::type_name::<K>(),
+      std::any::type_name::<V>(),
+      frame
+    );
+
+    if let OwnedFrame::Array(mut values) = frame {
+      if values.is_empty() {
+        return Ok::<HashMap<K, V, S>, _>(HashMap::default());
+      }
+
+      if values.len() % 2 == 0 {
+        let mut out = HashMap::default();
+        out.reserve(values.len() / 2);
+
+        #[allow(clippy::manual_while_let_some)]
+        while !values.is_empty() {
+          let value = values.pop().unwrap();
+          let key = values.pop().unwrap();
+
+          out.insert(K::from_frame(key)?, V::from_frame(value)?);
+        }
+        Ok(out)
+      } else {
+        Err(RedisProtocolError::new_parse("Expected even number of elements"))
+      }
+    } else {
+      Err(RedisProtocolError::new_parse("Cannot convert to map"))
+    }
+  }
+}
+
+#[cfg(feature = "bytes")]
+#[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
+impl<K, V, S> FromResp2<BytesFrame> for HashMap<K, V, S>
+where
+  K: FromResp2<BytesFrame> + Eq + Hash,
+  V: FromResp2<BytesFrame>,
+  S: BuildHasher + Default,
+{
+  fn from_frame(frame: BytesFrame) -> Result<Self, RedisProtocolError> {
+    debug_type!(
+      "FromResp2(HashMap<{}, {}>): {:?}",
+      std::any::type_name::<K>(),
+      std::any::type_name::<V>(),
+      frame
+    );
+
+    if let BytesFrame::Array(mut values) = frame {
+      if values.is_empty() {
+        return Ok::<HashMap<K, V, S>, _>(HashMap::default());
+      }
+
+      if values.len() % 2 == 0 {
+        let mut out = HashMap::default();
+        out.reserve(values.len() / 2);
+
+        #[allow(clippy::manual_while_let_some)]
+        while !values.is_empty() {
+          let value = values.pop().unwrap();
+          let key = values.pop().unwrap();
+
+          out.insert(K::from_frame(key)?, V::from_frame(value)?);
+        }
+        Ok(out)
+      } else {
+        Err(RedisProtocolError::new_parse("Expected even number of elements"))
+      }
+    } else {
+      Err(RedisProtocolError::new_parse("Cannot convert to map"))
+    }
+  }
+}
+
+// TODO indexmap
+
+impl<V, S> FromResp2<OwnedFrame> for HashSet<V, S>
+where
+  V: FromResp2<OwnedFrame> + Hash + Eq,
+  S: BuildHasher + Default,
+{
+  fn from_frame(frame: OwnedFrame) -> Result<Self, RedisProtocolError> {
+    debug_type!("FromResp2(HashSet<{}>): {:?}", std::any::type_name::<V>(), frame);
+
+    if let OwnedFrame::Array(values) = frame {
+      values.into_iter().map(V::from_frame).collect()
+    } else {
+      Err(RedisProtocolError::new_parse("Cannot convert to set"))
+    }
+  }
+}
+
+#[cfg(feature = "bytes")]
+#[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
+impl<V, S> FromResp2<BytesFrame> for HashSet<V, S>
+where
+  V: FromResp2<BytesFrame> + Hash + Eq,
+  S: BuildHasher + Default,
+{
+  fn from_frame(frame: BytesFrame) -> Result<Self, RedisProtocolError> {
+    debug_type!("FromResp2(HashSet<{}>): {:?}", std::any::type_name::<V>(), frame);
+
+    if let BytesFrame::Array(values) = frame {
+      values.into_iter().map(V::from_frame).collect()
+    } else {
+      Err(RedisProtocolError::new_parse("Cannot convert to set"))
     }
   }
 }
