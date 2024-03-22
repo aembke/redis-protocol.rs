@@ -25,7 +25,7 @@ A Rust implementation of the [Redis protocol](https://redis.io/topics/protocol).
 use redis_protocol::resp2::{
   decode::decode,
   encode::encode,
-  types::OwnedFrame as Frame
+  types::{OwnedFrame as Frame, Resp2Frame}
 };
 
 fn main() {
@@ -36,7 +36,7 @@ fn main() {
   println!("Encoded {} bytes into buffer with contents {:?}", len, buf);
 
   // ["Foo", nil, "Bar"]
-  let buf: [u8] = b"*3\r\n$3\r\nFoo\r\n$-1\r\n$3\r\nBar\r\n";
+  let buf: &[u8] = b"*3\r\n$3\r\nFoo\r\n$-1\r\n$3\r\nBar\r\n";
   match decode(&buf).unwrap() {
     Some((frame, amt)) => println!("Parsed {:?} and read {} bytes", frame, amt),
     None => println!("Incomplete frame."),
@@ -92,13 +92,13 @@ use redis_protocol::resp2::{
 
 fn should_decode_array() {
   // ["Foo", nil, "Bar"]
-  let buf: [u8] = b"*3\r\n$3\r\nFoo\r\n$-1\r\n$3\r\nBar\r\n";
+  let buf: &[u8] = b"*3\r\n$3\r\nFoo\r\n$-1\r\n$3\r\nBar\r\n";
 
   let (frame, amt) = decode(&buf).unwrap().unwrap();
-  assert_eq!(buf, OwnedFrame::Array(vec![
+  assert_eq!(frame, OwnedFrame::Array(vec![
     OwnedFrame::BulkString("Foo".into()),
     OwnedFrame::Null,
-    OwnedFrame::BulkStrimg("Bar".into())
+    OwnedFrame::BulkString("Bar".into())
   ]));
   assert_eq!(amt, buf.len());
 }
@@ -113,6 +113,7 @@ use redis_protocol::resp2::{
   decode::decode_bytes_mut,
   types::{BytesFrame, Resp2Frame}
 };
+use bytes::BytesMut;
 
 fn should_decode_array_no_nulls() {
   let expected = (

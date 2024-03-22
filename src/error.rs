@@ -33,6 +33,8 @@ pub enum RedisProtocolErrorKind {
   IO(IoError),
   /// An unknown error, or an error that can occur during encoding or decoding.
   Unknown,
+  /// An error parsing a value or converting between types.
+  Parse,
 }
 
 impl PartialEq for RedisProtocolErrorKind {
@@ -49,7 +51,7 @@ impl PartialEq for RedisProtocolErrorKind {
         _ => false,
       },
       BufferTooSmall(amt) => match *other {
-        BufferTooSmall(_amt) => amt == amt,
+        BufferTooSmall(_amt) => amt == _amt,
         _ => false,
       },
       #[cfg(feature = "std")]
@@ -59,6 +61,10 @@ impl PartialEq for RedisProtocolErrorKind {
       },
       Unknown => match *other {
         Unknown => true,
+        _ => false,
+      },
+      Parse => match *other {
+        Parse => true,
         _ => false,
       },
     }
@@ -75,6 +81,7 @@ impl RedisProtocolErrorKind {
       EncodeError => "Encode Error",
       DecodeError => "Decode Error",
       Unknown => "Unknown Error",
+      Parse => "Parse Error",
       #[cfg(feature = "std")]
       IO(_) => "IO Error",
       BufferTooSmall(_) => "Buffer too small",
@@ -101,9 +108,9 @@ impl RedisProtocolError {
     }
   }
 
-  pub(crate) fn new_decode<S: Into<Cow<'static, str>>>(desc: S) -> Self {
+  pub(crate) fn new_parse<S: Into<Cow<'static, str>>>(desc: S) -> Self {
     RedisProtocolError {
-      kind:    RedisProtocolErrorKind::DecodeError,
+      kind:    RedisProtocolErrorKind::Parse,
       details: desc.into(),
     }
   }
@@ -330,5 +337,19 @@ impl std::error::Error for RedisProtocolError {
       RedisProtocolErrorKind::IO(ref e) => Some(e),
       _ => None,
     }
+  }
+}
+
+#[cfg(feature = "convert")]
+impl From<core::num::ParseIntError> for RedisProtocolError {
+  fn from(value: core::num::ParseIntError) -> Self {
+    RedisProtocolError::new_parse(format!("{:?}", value))
+  }
+}
+
+#[cfg(feature = "convert")]
+impl From<core::num::ParseFloatError> for RedisProtocolError {
+  fn from(value: core::num::ParseFloatError) -> Self {
+    RedisProtocolError::new_parse(format!("{:?}", value))
   }
 }

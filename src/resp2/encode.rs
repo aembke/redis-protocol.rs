@@ -8,7 +8,7 @@ use cookie_factory::GenError;
 use core::str;
 
 #[cfg(feature = "bytes")]
-use bytes::{Bytes, BytesMut};
+use bytes::BytesMut;
 
 fn gen_simplestring<'a>(x: (&'a mut [u8], usize), data: &[u8]) -> Result<(&'a mut [u8], usize), GenError> {
   do_gen!(
@@ -130,7 +130,7 @@ fn gen_bytes_frame(buf: &mut [u8], offset: usize, frame: &BytesFrame) -> Result<
 ///
 /// Returns the number of bytes encoded.
 pub fn encode(buf: &mut [u8], frame: &OwnedFrame) -> Result<usize, RedisProtocolError> {
-  encode_checks!(buf, frame.encode_len());
+  encode_checks!(buf, 0, frame.encode_len());
   gen_owned_frame(buf, 0, frame).map_err(|e| e.into())
 }
 
@@ -142,7 +142,7 @@ pub fn encode(buf: &mut [u8], frame: &OwnedFrame) -> Result<usize, RedisProtocol
 #[cfg(feature = "bytes")]
 #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
 pub fn encode_bytes(buf: &mut [u8], frame: &BytesFrame) -> Result<usize, RedisProtocolError> {
-  encode_checks!(buf, frame.encode_len());
+  encode_checks!(buf, 0, frame.encode_len());
   gen_bytes_frame(buf, 0, frame).map_err(|e| e.into())
 }
 
@@ -163,17 +163,12 @@ pub fn extend_encode(buf: &mut BytesMut, frame: &BytesFrame) -> Result<usize, Re
 #[cfg(feature = "bytes")]
 mod tests {
   use super::*;
-  use crate::utils::*;
 
   const PADDING: &'static str = "foobar";
 
   fn encode_and_verify_empty(input: &BytesFrame, expected: &str) {
     let mut buf = BytesMut::new();
-
-    let len = match extend_encode(&mut buf, input) {
-      Ok(l) => l,
-      Err(e) => panic!("{:?}", e),
-    };
+    let len = extend_encode(&mut buf, input).unwrap();
 
     assert_eq!(buf, expected.as_bytes(), "empty buf contents match");
     assert_eq!(len, expected.as_bytes().len(), "empty expected len is correct");
@@ -183,10 +178,7 @@ mod tests {
     let mut buf = BytesMut::new();
     buf.extend_from_slice(PADDING.as_bytes());
 
-    let len = match extend_encode(&mut buf, input) {
-      Ok(l) => l,
-      Err(e) => panic!("{:?}", e),
-    };
+    let len = extend_encode(&mut buf, input).unwrap();
     let padded = vec![PADDING, expected].join("");
 
     assert_eq!(buf, padded.as_bytes(), "padded buf contents match");
@@ -195,11 +187,7 @@ mod tests {
 
   fn encode_raw_and_verify_empty(input: &BytesFrame, expected: &str) {
     let mut buf = vec![0; expected.as_bytes().len()];
-
-    let len = match encode(&mut buf, input) {
-      Ok(l) => l,
-      Err(e) => panic!("{:?}", e),
-    };
+    let len = encode_bytes(&mut buf, input).unwrap();
 
     assert_eq!(buf, expected.as_bytes(), "empty buf contents match");
     assert_eq!(len, expected.as_bytes().len(), "empty expected len is correct");

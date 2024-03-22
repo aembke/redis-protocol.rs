@@ -99,10 +99,10 @@ pub fn auth_encode_len(username: Option<&str>, password: Option<&str>) -> usize 
     return 0;
   }
 
-  AUTH.as_bytes().len()
+  1 + AUTH.as_bytes().len()
     + 1
     + username.map(|s| s.as_bytes().len() + 1).unwrap_or(0)
-    + password.map(|s| s.as_bytes().len() + 1).unwrap_or(0)
+    + password.map(|s| s.as_bytes().len()).unwrap_or(0)
 }
 
 // As mentioned elsewhere in the comments, some of the encoding and decoding logic differs in meaningful ways based on
@@ -150,21 +150,17 @@ pub fn bytes_set_encode_len(set: &FrameSet<BytesFrame>) -> usize {
 
 #[cfg(feature = "bytes")]
 pub fn bytes_hello_encode_len(username: &Option<Str>, password: &Option<Str>) -> usize {
-  HELLO.as_bytes().len()
-    + 3
-    + auth_encode_len(
-      username.as_ref().map(|s| s.as_ref()),
-      password.as_ref().map(|s| s.as_ref()),
-    )
+  HELLO.as_bytes().len() + 2 + auth_encode_len(username.as_ref().map(|s| &**s), password.as_ref().map(|s| &**s)) + 2
 }
 
 pub fn owned_hello_encode_len(username: &Option<String>, password: &Option<String>) -> usize {
   HELLO.as_bytes().len()
-    + 3
+    + 2
     + auth_encode_len(
       username.as_ref().map(|s| s.as_str()),
       password.as_ref().map(|s| s.as_str()),
     )
+    + 2
 }
 
 #[cfg(feature = "bytes")]
@@ -638,26 +634,35 @@ pub fn build_bytes_frame(buf: &Bytes, frame: &RangeFrame) -> Result<BytesFrame, 
       },
     },
     RangeFrame::Array { data, attributes } => BytesFrame::Array {
-      data:       data.iter().map(|f| build_owned_frame(buf, f)).collect()?,
+      data:       data
+        .iter()
+        .map(|f| build_bytes_frame(buf, f))
+        .collect::<Result<Vec<_>, RedisProtocolError>>()?,
       attributes: build_bytes_attributes(buf, attributes.as_ref())?,
     },
     RangeFrame::Push { data, attributes } => BytesFrame::Push {
-      data:       data.iter().map(|f| build_owned_frame(buf, f)).collect()?,
+      data:       data
+        .iter()
+        .map(|f| build_bytes_frame(buf, f))
+        .collect::<Result<Vec<_>, RedisProtocolError>>()?,
       attributes: build_bytes_attributes(buf, attributes.as_ref())?,
     },
     RangeFrame::Set { data, attributes } => BytesFrame::Set {
-      data:       data.iter().map(|f| build_owned_frame(buf, f)).collect()?,
+      data:       data
+        .iter()
+        .map(|f| build_bytes_frame(buf, f))
+        .collect::<Result<FrameSet<_>, RedisProtocolError>>()?,
       attributes: build_bytes_attributes(buf, attributes.as_ref())?,
     },
     RangeFrame::Map { data, attributes } => BytesFrame::Map {
       data:       data
         .iter()
         .map(|(k, v)| {
-          let key = build_owned_frame(buf, k)?;
-          let value = build_owned_frame(buf, v)?;
-          Ok((key, value))
+          let key = build_bytes_frame(buf, k)?;
+          let value = build_bytes_frame(buf, v)?;
+          Ok::<(_, _), RedisProtocolError>((key, value))
         })
-        .collect()?,
+        .collect::<Result<FrameMap<_, _>, RedisProtocolError>>()?,
       attributes: build_bytes_attributes(buf, attributes.as_ref())?,
     },
   })
@@ -718,7 +723,7 @@ mod tests {
   use alloc::vec;
 
   fn create_attributes() -> (FrameMap<BytesFrame, BytesFrame>, usize) {
-    let mut out = new_map(None);
+    let mut out = new_map(0);
     let key = BytesFrame::SimpleString {
       data:       "foo".into(),
       attributes: None,
@@ -735,20 +740,20 @@ mod tests {
   #[test]
   fn should_reconstruct_blobstring() {
     let mut streamed_frame = StreamedFrame::new(FrameKind::BlobString);
-    streamed_frame.add_bytes_frame(BytesFrame::ChunkedString("foo".as_bytes().into()));
-    streamed_frame.add_bytes_frame(BytesFrame::ChunkedString("bar".as_bytes().into()));
-    streamed_frame.add_bytes_frame(BytesFrame::ChunkedString("baz".as_bytes().into()));
+    streamed_frame.add_frame(BytesFrame::ChunkedString("foo".as_bytes().into()));
+    streamed_frame.add_frame(BytesFrame::ChunkedString("bar".as_bytes().into()));
+    streamed_frame.add_frame(BytesFrame::ChunkedString("baz".as_bytes().into()));
 
     let expected = BytesFrame::BlobString {
       data:       "foobarbaz".as_bytes().into(),
       attributes: None,
     };
-    assert_eq!(streamed_frame.take_bytes_frame().unwrap(), expected);
+    assert_eq!(streamed_frame.take().unwrap(), expected);
 
     let mut streamed_frame = StreamedFrame::new(FrameKind::BlobString);
-    streamed_frame.add_bytes_frame(BytesFrame::ChunkedString("foo".as_bytes().into()));
-    streamed_frame.add_bytes_frame(BytesFrame::ChunkedString("bar".as_bytes().into()));
-    streamed_frame.add_bytes_frame(BytesFrame::ChunkedString("baz".as_bytes().into()));
+    streamed_frame.add_frame(BytesFrame::ChunkedString("foo".as_bytes().into()));
+    streamed_frame.add_frame(BytesFrame::ChunkedString("bar".as_bytes().into()));
+    streamed_frame.add_frame(BytesFrame::ChunkedString("baz".as_bytes().into()));
     let (attributes, _) = create_attributes();
     streamed_frame.add_attributes(attributes.clone()).unwrap();
 
@@ -756,7 +761,7 @@ mod tests {
       data:       "foobarbaz".as_bytes().into(),
       attributes: Some(attributes),
     };
-    assert_eq!(streamed_frame.take_bytes_frame().unwrap(), expected);
+    assert_eq!(streamed_frame.take().unwrap(), expected);
   }
 
   #[test]
@@ -792,7 +797,7 @@ mod tests {
       ],
       attributes: None,
     };
-    assert_eq!(streamed_frame.into_frame().unwrap(), expected);
+    assert_eq!(streamed_frame.take().unwrap(), expected);
 
     let (attributes, _) = create_attributes();
     let mut streamed_frame = StreamedFrame::new(FrameKind::Array);
@@ -827,7 +832,7 @@ mod tests {
       ],
       attributes: Some(attributes),
     };
-    assert_eq!(streamed_frame.into_frame().unwrap(), expected);
+    assert_eq!(streamed_frame.take().unwrap(), expected);
   }
 
   #[test]
@@ -855,14 +860,14 @@ mod tests {
     streamed_frame.add_frame(k2.clone());
     streamed_frame.add_frame(v2.clone());
 
-    let mut expected = new_map(None);
+    let mut expected = new_map(0);
     expected.insert(k1.clone(), v1.clone());
     expected.insert(k2.clone(), v2.clone());
     let expected = BytesFrame::Map {
       data:       expected,
       attributes: None,
     };
-    assert_eq!(streamed_frame.into_frame().unwrap(), expected);
+    assert_eq!(streamed_frame.take().unwrap(), expected);
 
     let (attributes, _) = create_attributes();
     k1.add_attributes(attributes.clone()).unwrap();
@@ -874,38 +879,14 @@ mod tests {
     streamed_frame.add_frame(v2.clone());
     streamed_frame.add_attributes(attributes.clone()).unwrap();
 
-    let mut expected = new_map(None);
+    let mut expected = new_map(0);
     expected.insert(k1.clone(), v1.clone());
     expected.insert(k2.clone(), v2.clone());
     let expected = BytesFrame::Map {
       data:       expected,
       attributes: Some(attributes),
     };
-    assert_eq!(streamed_frame.into_frame().unwrap(), expected);
-  }
-
-  #[test]
-  #[should_panic]
-  fn should_reconstruct_map_odd_elements() {
-    let k1 = BytesFrame::SimpleString {
-      data:       "a".into(),
-      attributes: None,
-    };
-    let v1 = BytesFrame::Number {
-      data:       42,
-      attributes: None,
-    };
-    let k2 = BytesFrame::BlobString {
-      data:       "b".as_bytes().into(),
-      attributes: None,
-    };
-
-    let mut streamed_frame = StreamedFrame::new(FrameKind::Map);
-    streamed_frame.add_frame(k1.clone());
-    streamed_frame.add_frame(v1.clone());
-    streamed_frame.add_frame(k2.clone());
-
-    let _ = streamed_frame.into_frame().unwrap();
+    assert_eq!(streamed_frame.take().unwrap(), expected);
   }
 
   #[test]
@@ -933,7 +914,7 @@ mod tests {
     streamed_frame.add_frame(v3.clone());
     streamed_frame.add_frame(v4.clone());
 
-    let mut expected = new_set(None);
+    let mut expected = new_set(0);
     expected.insert(v1.clone());
     expected.insert(v2.clone());
     expected.insert(v3.clone());
@@ -942,7 +923,7 @@ mod tests {
       data:       expected,
       attributes: None,
     };
-    assert_eq!(streamed_frame.into_frame().unwrap(), expected);
+    assert_eq!(streamed_frame.take().unwrap(), expected);
 
     let (attributes, _) = create_attributes();
     v1.add_attributes(attributes.clone()).unwrap();
@@ -954,7 +935,7 @@ mod tests {
     streamed_frame.add_frame(v4.clone());
     streamed_frame.add_attributes(attributes.clone()).unwrap();
 
-    let mut expected = new_set(None);
+    let mut expected = new_set(0);
     expected.insert(v1);
     expected.insert(v2);
     expected.insert(v3);
@@ -963,7 +944,7 @@ mod tests {
       data:       expected,
       attributes: Some(attributes),
     };
-    assert_eq!(streamed_frame.into_frame().unwrap(), expected);
+    assert_eq!(streamed_frame.take().unwrap(), expected);
   }
 
   #[test]
@@ -1019,7 +1000,7 @@ mod tests {
       ],
       attributes: None,
     };
-    assert_eq!(streamed_frame.into_frame().unwrap(), expected);
+    assert_eq!(streamed_frame.take().unwrap(), expected);
 
     let (attributes, _) = create_attributes();
     let mut streamed_frame = StreamedFrame::new(FrameKind::Array);
@@ -1074,7 +1055,7 @@ mod tests {
       ],
       attributes: Some(attributes),
     };
-    assert_eq!(streamed_frame.into_frame().unwrap(), expected);
+    assert_eq!(streamed_frame.take().unwrap(), expected);
   }
 
   #[test]
@@ -1099,7 +1080,7 @@ mod tests {
       data:       "foobarbaz".as_bytes().into(),
       attributes: None,
     };
-    let mut inner_map = new_map(None);
+    let mut inner_map = new_map(0);
     inner_map.insert(inner_k1.clone(), inner_v1.clone());
     let v2 = BytesFrame::Map {
       data:       inner_map,
@@ -1112,19 +1093,19 @@ mod tests {
     streamed_frame.add_frame(k2.clone());
     streamed_frame.add_frame(v2.clone());
 
-    let mut expected = new_map(None);
+    let mut expected = new_map(0);
     expected.insert(k1.clone(), v1.clone());
     expected.insert(k2.clone(), v2.clone());
     let expected = BytesFrame::Map {
       data:       expected,
       attributes: None,
     };
-    assert_eq!(streamed_frame.into_frame().unwrap(), expected);
+    assert_eq!(streamed_frame.take().unwrap(), expected);
 
     let (attributes, _) = create_attributes();
     v1.add_attributes(attributes.clone()).unwrap();
     inner_v1.add_attributes(attributes.clone()).unwrap();
-    let mut inner_map = new_map(None);
+    let mut inner_map = new_map(0);
     inner_map.insert(inner_k1, inner_v1);
     let v2 = BytesFrame::Map {
       data:       inner_map,
@@ -1138,14 +1119,14 @@ mod tests {
     streamed_frame.add_frame(v2.clone());
     streamed_frame.add_attributes(attributes.clone()).unwrap();
 
-    let mut expected = new_map(None);
+    let mut expected = new_map(0);
     expected.insert(k1.clone(), v1.clone());
     expected.insert(k2.clone(), v2.clone());
     let expected = BytesFrame::Map {
       data:       expected,
       attributes: Some(attributes),
     };
-    assert_eq!(streamed_frame.into_frame().unwrap(), expected);
+    assert_eq!(streamed_frame.take().unwrap(), expected);
   }
 
   #[test]
@@ -1310,7 +1291,10 @@ mod tests {
       username: None,
       password: None,
     };
-    let expected_len = 5 + 1 + 1 + 1;
+    // TODO make a test that uses resp3 codec to integration test this
+
+    // HELLO 3\r\n
+    let expected_len = 5 + 1 + 1 + 2;
     assert_eq!(bytes_encode_len(&frame), expected_len);
 
     let frame = BytesFrame::Hello {
@@ -1318,7 +1302,8 @@ mod tests {
       username: None,
       password: None,
     };
-    let expected_len = 5 + 1 + 1 + 1;
+    // HELLO 2\r\n
+    let expected_len = 5 + 1 + 1 + 2;
     assert_eq!(bytes_encode_len(&frame), expected_len);
 
     let frame = BytesFrame::Hello {
@@ -1326,7 +1311,8 @@ mod tests {
       username: Some("foo".into()),
       password: Some("bar".into()),
     };
-    let expected_len = 5 + 1 + 1 + 1 + 4 + 1 + 3 + 1 + 3 + 1;
+    // HELLO 3 AUTH foo bar\r\n
+    let expected_len = 5 + 1 + 1 + 1 + 4 + 1 + 3 + 1 + 3 + 2;
     assert_eq!(bytes_encode_len(&frame), expected_len);
   }
 

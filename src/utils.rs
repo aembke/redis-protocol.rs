@@ -1,5 +1,4 @@
 use crate::error::{RedisParseError, RedisProtocolError, RedisProtocolErrorKind};
-use cookie_factory::GenError;
 use core::str;
 use crc16::{State, XMODEM};
 
@@ -56,14 +55,14 @@ fn crc16_xmodem(key: &[u8]) -> u16 {
   State::<XMODEM>::calculate(key) % REDIS_CLUSTER_SLOTS
 }
 
-/// Map a Redis key to its cluster key slot.
+/// Map a key to the corresponding cluster key slot.
 ///
 /// ```ignore
-/// $ redis-cli -p 30001 cluster keyslot "8xjx7vWrfPq54mKfFD3Y1CcjjofpnAcQ"
+/// $ redis-cli cluster keyslot "8xjx7vWrfPq54mKfFD3Y1CcjjofpnAcQ"
 /// (integer) 5458
 /// ```
 ///
-/// ```no_run
+/// ```
 /// # use redis_protocol::redis_keyslot;
 /// assert_eq!(redis_keyslot(b"8xjx7vWrfPq54mKfFD3Y1CcjjofpnAcQ"), 5458);
 /// ```

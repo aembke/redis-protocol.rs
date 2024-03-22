@@ -39,8 +39,12 @@ pub mod error;
 mod utils;
 
 ///  A RESP2 interface.
+#[cfg(feature = "resp2")]
+#[cfg_attr(docsrs, doc(cfg(feature = "resp2")))]
 pub mod resp2;
 /// A RESP3 interface.
+#[cfg(feature = "resp3")]
+#[cfg_attr(docsrs, doc(cfg(feature = "resp3")))]
 pub mod resp3;
 /// Common types across RESP versions.
 pub mod types;

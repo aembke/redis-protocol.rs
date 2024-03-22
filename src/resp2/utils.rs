@@ -1,6 +1,6 @@
 use crate::{
-  error::{RedisProtocolError, RedisProtocolErrorKind},
-  resp2::types::{FrameKind, OwnedFrame, RangeFrame, NULL},
+  error::RedisProtocolError,
+  resp2::types::{OwnedFrame, RangeFrame},
   utils::digits_in_number,
 };
 use alloc::{string::String, vec::Vec};

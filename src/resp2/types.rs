@@ -1,18 +1,15 @@
 use crate::{
   digits_in_number,
   error::{RedisProtocolError, RedisProtocolErrorKind},
-  resp2::{
-    utils as resp2_utils,
-    utils::{bulkstring_encode_len, error_encode_len, integer_encode_len, simplestring_encode_len},
-  },
+  resp2::utils::{bulkstring_encode_len, error_encode_len, integer_encode_len, simplestring_encode_len},
   resp3::types::OwnedFrame as Resp3OwnedFrame,
   types::{_Range, PATTERN_PUBSUB_PREFIX, PUBSUB_PREFIX, PUBSUB_PUSH_PREFIX, SHARD_PUBSUB_PREFIX},
   utils,
 };
 use alloc::{string::String, vec::Vec};
 use core::{
-  convert::{From, TryFrom},
-  fmt::{self, Debug},
+  convert::TryFrom,
+  fmt::Debug,
   hash::{Hash, Hasher},
   mem,
   str,
@@ -23,7 +20,7 @@ use crate::convert::FromResp2;
 #[cfg(feature = "bytes")]
 use crate::resp3::types::BytesFrame as Resp3BytesFrame;
 #[cfg(feature = "bytes")]
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 #[cfg(feature = "bytes")]
 use bytes_utils::Str;
 
@@ -197,7 +194,7 @@ impl OwnedFrame {
       OwnedFrame::Integer(i) => BytesFrame::Integer(i),
       OwnedFrame::BulkString(b) => BytesFrame::BulkString(b.into()),
       OwnedFrame::Array(frames) => {
-        BytesFrame::Array(frames.into_iter().map(|frame| frame.to_bytes_frame()).collect())
+        BytesFrame::Array(frames.into_iter().map(|frame| frame.into_bytes_frame()).collect())
       },
       OwnedFrame::Null => BytesFrame::Null,
     }
@@ -514,7 +511,7 @@ impl BytesFrame {
         BytesFrame::Array(inner) => {
           let mut buf = Vec::with_capacity(inner.len() + 1);
           buf.push(prefix);
-          buf.extend(inner);
+          buf.extend(inner.into_iter().map(|f| f.into_resp3()));
           buf
         },
         _ => unreachable!(),
@@ -531,7 +528,7 @@ impl BytesFrame {
         BytesFrame::Integer(data) => Resp3BytesFrame::Number { data, attributes: None },
         BytesFrame::BulkString(data) => Resp3BytesFrame::BlobString { data, attributes: None },
         BytesFrame::Array(frames) => Resp3BytesFrame::Array {
-          data:       frames.into_iter().map(|f| f.upgrade()).collect(),
+          data:       frames.into_iter().map(|f| f.into_resp3()).collect(),
           attributes: None,
         },
         BytesFrame::Null => Resp3BytesFrame::Null,
@@ -564,27 +561,6 @@ impl<B: Into<Bytes>> TryFrom<(FrameKind, B)> for BytesFrame {
 #[cfg(feature = "bytes")]
 mod tests {
   use super::*;
-
-  #[test]
-  #[should_panic]
-  fn should_convert_frame_to_redirection_error_invalid_1() {
-    let f1 = BytesFrame::Error("abc def".into());
-    let _ = f1.to_redirection().unwrap();
-  }
-
-  #[test]
-  #[should_panic]
-  fn should_convert_frame_to_redirection_error_invalid_2() {
-    let f2 = BytesFrame::Error("abc def ghi".into());
-    let _ = f2.to_redirection().unwrap();
-  }
-
-  #[test]
-  #[should_panic]
-  fn should_convert_frame_to_redirection_error_invalid_3() {
-    let f3 = BytesFrame::Error("MOVED abc def".into());
-    let _ = f3.to_redirection().unwrap();
-  }
 
   #[test]
   fn should_parse_pattern_pubsub_message() {

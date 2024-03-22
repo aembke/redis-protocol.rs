@@ -37,15 +37,18 @@ rand = "0.8"
 tokio = { version = "1.12", features = ["full"] }
 pretty_env_logger = "0.5"
 futures = "0.3"
+itertools = "0.12"
 
 [features]
-default = ["std"]
+default = ["std", "resp2", "resp3"]
+resp2 = []
+resp3 = []
 index-map = ["indexmap"]
 bytes = ["dep:bytes", "bytes-utils"]
 decode-logs = []
 alloc = ["nom/alloc"]
 std = ["cookie-factory/default", "nom/default"]
-codec = ["tokio-util", "bytes"]
+codec = ["tokio-util", "bytes", "resp2", "resp3"]
 convert = []
 
 [lib]

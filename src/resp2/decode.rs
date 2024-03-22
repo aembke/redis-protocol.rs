@@ -38,13 +38,13 @@ fn to_i64(s: &[u8]) -> Result<i64, RedisParseError<&[u8]>> {
 }
 
 fn d_read_to_crlf(input: (&[u8], usize)) -> DResult<usize> {
-  decode_log!(input.0, _input, "Parsing to CRLF. Remaining: {:?}", _input);
+  decode_log_str!(input.0, _input, "Parsing to CRLF. Remaining: {:?}", _input);
   let (input_bytes, data) = nom_terminated(nom_take_until(CRLF.as_bytes()), nom_take(2_usize))(input.0)?;
   Ok(((input_bytes, input.1 + data.len() + 2), data.len()))
 }
 
 fn d_read_to_crlf_take(input: (&[u8], usize)) -> DResult<&[u8]> {
-  decode_log!(input.0, _input, "Parsing to CRLF. Remaining: {:?}", input.0);
+  decode_log_str!(input.0, _input, "Parsing to CRLF. Remaining: {:?}", _input);
   let (input_bytes, data) = nom_terminated(nom_take_until(CRLF.as_bytes()), nom_take(2_usize))(input.0)?;
   Ok(((input_bytes, input.1 + data.len() + 2), data))
 }
@@ -57,11 +57,12 @@ fn d_read_prefix_len(input: (&[u8], usize)) -> DResult<isize> {
 
 fn d_frame_type(input: (&[u8], usize)) -> DResult<FrameKind> {
   let (input_bytes, byte) = be_u8(input.0)?;
-  decode_log!(
+  decode_log_str!(
     input_bytes,
+    _input,
     "Reading frame type. Kind byte: {:?}, remaining: {:?}",
     byte,
-    input_bytes
+    _input
   );
 
   let kind = match byte {
@@ -110,7 +111,13 @@ fn d_parse_bulkstring(input: (&[u8], usize), len: usize) -> DResult<RangeFrame> 
 
 fn d_parse_bulkstring_or_null(input: (&[u8], usize)) -> DResult<RangeFrame> {
   let ((input, offset), len) = d_read_prefix_len(input)?;
-  decode_log!(input, "Parsing bulkstring, Length: {:?}, remaining: {:?}", len, input);
+  decode_log_str!(
+    input,
+    _input,
+    "Parsing bulkstring, Length: {:?}, remaining: {:?}",
+    len,
+    _input
+  );
 
   if len == NULL_LEN {
     d_parse_null((input, offset))
@@ -120,19 +127,25 @@ fn d_parse_bulkstring_or_null(input: (&[u8], usize)) -> DResult<RangeFrame> {
 }
 
 fn d_parse_array_frames(input: (&[u8], usize), len: usize) -> DResult<Vec<RangeFrame>> {
-  decode_log!(
+  decode_log_str!(
     input.0,
     _input,
     "Parsing array frames. Length: {:?}, remaining: {:?}",
     len,
-    input.0
+    _input
   );
   nom_count(d_parse_frame, len)(input)
 }
 
 fn d_parse_array(input: (&[u8], usize)) -> DResult<RangeFrame> {
   let ((input, offset), len) = d_read_prefix_len(input)?;
-  decode_log!(input, "Parsing array. Length: {:?}, remaining: {:?}", len, input);
+  decode_log_str!(
+    input,
+    _input,
+    "Parsing array. Length: {:?}, remaining: {:?}",
+    len,
+    _input
+  );
 
   if len == NULL_LEN {
     d_parse_null((input, offset))
@@ -145,7 +158,7 @@ fn d_parse_array(input: (&[u8], usize)) -> DResult<RangeFrame> {
 
 fn d_parse_frame(input: (&[u8], usize)) -> DResult<RangeFrame> {
   let ((input, offset), kind) = d_frame_type(input)?;
-  decode_log!(input, "Parsed kind: {:?}, remaining: {:?}", kind, input);
+  decode_log_str!(input, _input, "Parsed kind: {:?}, remaining: {:?}", kind, _input);
 
   match kind {
     FrameKind::SimpleString => d_parse_simplestring((input, offset)),
@@ -224,6 +237,7 @@ pub fn decode_bytes_mut(buf: &mut BytesMut) -> Result<Option<(BytesFrame, usize,
 #[cfg(feature = "bytes")]
 mod tests {
   use super::*;
+  use nom::AsBytes;
 
   pub const PADDING: &'static str = "FOOBARBAZ";
 
@@ -236,7 +250,7 @@ mod tests {
   }
 
   fn decode_and_verify_some(bytes: &Bytes, expected: &(Option<BytesFrame>, usize)) {
-    let mut bytes = BytesMut::from(bytes);
+    let mut bytes = BytesMut::from(bytes.as_bytes());
     let total_len = bytes.len();
 
     let (frame, len, buf) = match decode_bytes_mut(&mut bytes) {
@@ -252,7 +266,7 @@ mod tests {
   }
 
   fn decode_and_verify_padded_some(bytes: &Bytes, expected: &(Option<BytesFrame>, usize)) {
-    let mut bytes = BytesMut::from(bytes);
+    let mut bytes = BytesMut::from(bytes.as_bytes());
     bytes.extend_from_slice(PADDING.as_bytes());
     let total_len = bytes.len();
 
@@ -269,7 +283,7 @@ mod tests {
   }
 
   fn decode_and_verify_none(bytes: &Bytes) {
-    let mut bytes = BytesMut::from(bytes);
+    let mut bytes = BytesMut::from(bytes.as_bytes());
     let (frame, len, buf) = match decode_bytes_mut(&mut bytes) {
       Ok(Some((f, l, b))) => (Some(f), l, b),
       Ok(None) => (None, 0, Bytes::new()),

@@ -442,9 +442,37 @@ impl RangeFrame {
     }
   }
 
-  ///
+  /// Add attributes to the frame.
   pub fn add_attributes(&mut self, attributes: RangeAttributes) -> Result<(), RedisProtocolError> {
-    unimplemented!()
+    let _attributes = match self {
+      RangeFrame::Array { attributes, .. } => attributes,
+      RangeFrame::Push { attributes, .. } => attributes,
+      RangeFrame::BlobString { attributes, .. } => attributes,
+      RangeFrame::BlobError { attributes, .. } => attributes,
+      RangeFrame::BigNumber { attributes, .. } => attributes,
+      RangeFrame::Boolean { attributes, .. } => attributes,
+      RangeFrame::Number { attributes, .. } => attributes,
+      RangeFrame::Double { attributes, .. } => attributes,
+      RangeFrame::VerbatimString { attributes, .. } => attributes,
+      RangeFrame::SimpleError { attributes, .. } => attributes,
+      RangeFrame::SimpleString { attributes, .. } => attributes,
+      RangeFrame::Set { attributes, .. } => attributes,
+      RangeFrame::Map { attributes, .. } => attributes,
+      RangeFrame::Null | RangeFrame::ChunkedString(_) | RangeFrame::Hello { .. } => {
+        return Err(RedisProtocolError::new(
+          RedisProtocolErrorKind::Unknown,
+          format!("{:?} cannot have attributes.", self.kind()),
+        ))
+      },
+    };
+
+    if let Some(_attributes) = _attributes.as_mut() {
+      _attributes.extend(attributes.into_iter());
+    } else {
+      *_attributes = Some(attributes);
+    }
+
+    Ok(())
   }
 
   pub fn new_end_stream() -> Self {

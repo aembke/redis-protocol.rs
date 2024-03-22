@@ -1,7 +1,7 @@
 macro_rules! encode_checks(
-  ($buf:ident, $required:expr) => {
+  ($buf:ident, $offset:expr, $required:expr) => {
     let required = $required;
-    let remaining = $buf.len();
+    let remaining = $buf.len() - $offset;
 
     if required > remaining {
       return Err(RedisProtocolError::from(cookie_factory::GenError::BufferTooSmall(required - remaining)));
@@ -11,7 +11,7 @@ macro_rules! encode_checks(
 
 macro_rules! debug_type(
   ($($arg:tt)*) => {
-    #[cfg(feature="decode-logs")]
+    #[cfg(all(feature="decode-logs", feature = "std"))]
     log::trace!($($arg)*);
   }
 );
@@ -31,37 +31,30 @@ macro_rules! etry (
   }
 );
 
-#[cfg(feature = "decode-logs")]
 macro_rules! decode_log(
-  ($buf:ident, $($arg:tt)*) => (
-    if log_enabled!(log::Level::Trace) {
-      if let Some(s) = std::str::from_utf8(&$buf).ok() {
-        let $buf = s;
-        trace!($($arg)*)
-      }else{
-        trace!($($arg)*)
-      }
-    }
-  );
-  ($buf:expr, $name:ident, $($arg:tt)*) => (
-    if log_enabled!(log::Level::Trace) {
-      if let Some(s) = std::str::from_utf8(&$buf).ok() {
-        let $name = s;
-        trace!($($arg)*)
-      }else{
-        trace!($($arg)*)
-      }
-    }
-  );
   ($($arg:tt)*) => (
-    if log_enabled!(log::Level::Trace) {
-      trace!($($arg)*)
+    #[cfg(feature = "decode-logs")]
+    {
+      if log_enabled!(log::Level::Trace) {
+        trace!($($arg)*)
+      }
     }
   );
 );
 
-#[cfg(not(feature = "decode-logs"))]
-macro_rules! decode_log(
-  ($buf:ident, $($arg:tt)*) => ();
-  ($($arg:tt)*) => ();
+macro_rules! decode_log_str(
+  ($buf:expr, $name:ident, $($arg:tt)*) => (
+    #[cfg(feature = "decode-logs")]
+    {
+      if log_enabled!(log::Level::Trace) {
+        if let Some(s) = core::str::from_utf8(&$buf).ok() {
+          let $name = s;
+          trace!($($arg)*)
+        }else{
+          let $name = $buf;
+          trace!($($arg)*)
+        }
+      }
+    }
+  )
 );
