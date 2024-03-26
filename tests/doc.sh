@@ -1,3 +1,3 @@
 #!/bin/bash
 
-cargo +nightly rustdoc --all-features "$@" -- --cfg docsrs
+cargo +nightly rustdoc --features "std bytes codec convert" "$@" -- --cfg docsrs
