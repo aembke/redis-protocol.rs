@@ -1219,7 +1219,7 @@ mod owned_tests {
       data:       f64::NAN,
       attributes: None,
     };
-    let mut buf = BytesMut::new();
+    let mut buf = vec![0; 32];
     let _ = complete::encode(&mut buf, &input).unwrap();
   }
 
