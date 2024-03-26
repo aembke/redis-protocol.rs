@@ -167,6 +167,18 @@ pub trait Resp2Frame: Debug + Hash + Eq {
   {
     T::from_frame(self)
   }
+
+  /// Whether frame is a bulk array with a single element.
+  #[cfg(feature = "convert")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "convert")))]
+  fn is_single_element_vec(&self) -> bool;
+
+  /// Pop an element from the inner array or return the original frame.
+  ///
+  /// This function is intended to be used with [Self::is_single_element_vec] and may panic.
+  #[cfg(feature = "convert")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "convert")))]
+  fn pop_or_take(self) -> Self;
 }
 
 /// A RESP2 frame.
@@ -361,6 +373,26 @@ impl Resp2Frame for OwnedFrame {
       _ => false,
     }
   }
+
+  #[cfg(feature = "convert")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "convert")))]
+  fn is_single_element_vec(&self) -> bool {
+    if let OwnedFrame::Array(values) = self {
+      values.len() == 1
+    } else {
+      false
+    }
+  }
+
+  #[cfg(feature = "convert")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "convert")))]
+  fn pop_or_take(self) -> Self {
+    if let OwnedFrame::Array(mut values) = self {
+      values.pop().unwrap().pop_or_take()
+    } else {
+      self
+    }
+  }
 }
 
 /// A RESP2 frame that uses [Bytes] and [Str] as the underlying buffer type.
@@ -497,6 +529,26 @@ impl Resp2Frame for BytesFrame {
           && data[0].as_str().map(|s| s == SHARD_PUBSUB_PREFIX).unwrap_or(false)
       },
       _ => false,
+    }
+  }
+
+  #[cfg(feature = "convert")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "convert")))]
+  fn is_single_element_vec(&self) -> bool {
+    if let BytesFrame::Array(values) = self {
+      values.len() == 1
+    } else {
+      false
+    }
+  }
+
+  #[cfg(feature = "convert")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "convert")))]
+  fn pop_or_take(self) -> Self {
+    if let BytesFrame::Array(mut values) = self {
+      values.pop().unwrap().pop_or_take()
+    } else {
+      self
     }
   }
 }

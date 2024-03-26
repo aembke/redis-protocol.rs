@@ -18,6 +18,8 @@ use core::{
   str,
 };
 
+#[cfg(feature = "convert")]
+use crate::convert::FromResp3;
 #[cfg(feature = "bytes")]
 use bytes::{Bytes, BytesMut};
 #[cfg(feature = "bytes")]
@@ -638,6 +640,29 @@ pub trait Resp3Frame: Debug + Hash + Eq + Sized {
   fn as_f64(&self) -> Option<f64> {
     self.as_str().and_then(|s| s.parse::<f64>().ok())
   }
+
+  /// Convert the frame to another type.
+  #[cfg(feature = "convert")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "convert")))]
+  fn convert<T>(self) -> Result<T, RedisProtocolError>
+  where
+    Self: Sized,
+    T: FromResp3<Self>,
+  {
+    T::from_frame(self)
+  }
+
+  /// Whether frame is a bulk array with a single element.
+  #[cfg(feature = "convert")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "convert")))]
+  fn is_single_element_vec(&self) -> bool;
+
+  /// Pop an element from the inner array or return the original frame.
+  ///
+  /// This function is intended to be used with [Self::is_single_element_vec] and may panic.
+  #[cfg(feature = "convert")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "convert")))]
+  fn pop_or_take(self) -> Self;
 }
 
 /// An enum describing a RESP3 frame that uses owned byte containers.
@@ -1073,6 +1098,24 @@ impl Resp3Frame for OwnedFrame {
           && data[1].as_str().map(|s| s == SHARD_PUBSUB_PREFIX).unwrap_or(false)
       },
       _ => false,
+    }
+  }
+
+  #[cfg(feature = "convert")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "convert")))]
+  fn is_single_element_vec(&self) -> bool {
+    match self {
+      OwnedFrame::Array { data, .. } | OwnedFrame::Push { data, .. } => data.len() == 1,
+      _ => false,
+    }
+  }
+
+  #[cfg(feature = "convert")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "convert")))]
+  fn pop_or_take(self) -> Self {
+    match self {
+      OwnedFrame::Array { mut data, .. } | OwnedFrame::Push { mut data, .. } => data.pop().unwrap(),
+      _ => self,
     }
   }
 }
@@ -1661,6 +1704,24 @@ impl Resp3Frame for BytesFrame {
           && data[1].as_str().map(|s| s == SHARD_PUBSUB_PREFIX).unwrap_or(false)
       },
       _ => false,
+    }
+  }
+
+  #[cfg(feature = "convert")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "convert")))]
+  fn is_single_element_vec(&self) -> bool {
+    match self {
+      BytesFrame::Array { data, .. } | BytesFrame::Push { data, .. } => data.len() == 1,
+      _ => false,
+    }
+  }
+
+  #[cfg(feature = "convert")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "convert")))]
+  fn pop_or_take(self) -> Self {
+    match self {
+      BytesFrame::Array { mut data, .. } | BytesFrame::Push { mut data, .. } => data.pop().unwrap(),
+      _ => self,
     }
   }
 }

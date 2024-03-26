@@ -158,12 +158,197 @@ pub fn extend_encode(buf: &mut BytesMut, frame: &BytesFrame) -> Result<usize, Re
   gen_bytes_frame(buf, offset, frame).map_err(|e| e.into())
 }
 
+// Regression tests duplicated for each frame type.
+
 #[cfg(test)]
-#[cfg(feature = "bytes")]
-mod tests {
+mod owned_tests {
   use super::*;
 
-  const PADDING: &'static str = "foobar";
+  fn encode_and_verify_empty(input: &OwnedFrame, expected: &str) {
+    let mut buf = vec![0; expected.len()];
+    let len = encode(&mut buf, input).unwrap();
+
+    assert_eq!(buf, expected.as_bytes(), "empty buf contents match");
+    assert_eq!(len, expected.as_bytes().len(), "empty expected len is correct");
+  }
+
+  fn encode_buf_and_verify_empty(input: &OwnedFrame, expected: &str) {
+    let mut buf = vec![0; expected.as_bytes().len()];
+    let len = encode(&mut buf, input).unwrap();
+
+    assert_eq!(buf, expected.as_bytes(), "empty buf contents match");
+    assert_eq!(len, expected.as_bytes().len(), "empty expected len is correct");
+  }
+
+  #[test]
+  fn should_encode_llen_req_example() {
+    let expected = "*2\r\n$4\r\nLLEN\r\n$6\r\nmylist\r\n";
+    let input = OwnedFrame::Array(vec![
+      OwnedFrame::BulkString("LLEN".into()),
+      OwnedFrame::BulkString("mylist".into()),
+    ]);
+
+    encode_and_verify_empty(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_incr_req_example() {
+    let expected = "*2\r\n$4\r\nINCR\r\n$5\r\nmykey\r\n";
+    let input = OwnedFrame::Array(vec![
+      OwnedFrame::BulkString("INCR".into()),
+      OwnedFrame::BulkString("mykey".into()),
+    ]);
+
+    encode_and_verify_empty(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_bitcount_req_example() {
+    let expected = "*2\r\n$8\r\nBITCOUNT\r\n$5\r\nmykey\r\n";
+    let input = OwnedFrame::Array(vec![
+      OwnedFrame::BulkString("BITCOUNT".into()),
+      OwnedFrame::BulkString("mykey".into()),
+    ]);
+
+    encode_and_verify_empty(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_array_bulk_string_test() {
+    let expected = "*3\r\n$5\r\nWATCH\r\n$6\r\nWIBBLE\r\n$9\r\nfooBARbaz\r\n";
+    let input = OwnedFrame::Array(vec![
+      OwnedFrame::BulkString("WATCH".into()),
+      OwnedFrame::BulkString("WIBBLE".into()),
+      OwnedFrame::BulkString("fooBARbaz".into()),
+    ]);
+
+    encode_and_verify_empty(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_array_null_test() {
+    let expected = "*3\r\n$4\r\nHSET\r\n$3\r\nfoo\r\n$-1\r\n";
+    let input = OwnedFrame::Array(vec![
+      OwnedFrame::BulkString("HSET".into()),
+      OwnedFrame::BulkString("foo".into()),
+      OwnedFrame::Null,
+    ]);
+
+    encode_and_verify_empty(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_buf_llen_req_example() {
+    let expected = "*2\r\n$4\r\nLLEN\r\n$6\r\nmylist\r\n";
+    let input = OwnedFrame::Array(vec![
+      OwnedFrame::BulkString("LLEN".into()),
+      OwnedFrame::BulkString("mylist".into()),
+    ]);
+
+    encode_buf_and_verify_empty(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_buf_incr_req_example() {
+    let expected = "*2\r\n$4\r\nINCR\r\n$5\r\nmykey\r\n";
+    let input = OwnedFrame::Array(vec![
+      OwnedFrame::BulkString("INCR".into()),
+      OwnedFrame::BulkString("mykey".into()),
+    ]);
+
+    encode_buf_and_verify_empty(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_buf_bitcount_req_example() {
+    let expected = "*2\r\n$8\r\nBITCOUNT\r\n$5\r\nmykey\r\n";
+    let input = OwnedFrame::Array(vec![
+      OwnedFrame::BulkString("BITCOUNT".into()),
+      OwnedFrame::BulkString("mykey".into()),
+    ]);
+
+    encode_buf_and_verify_empty(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_buf_array_bulk_string_test() {
+    let expected = "*3\r\n$5\r\nWATCH\r\n$6\r\nWIBBLE\r\n$9\r\nfooBARbaz\r\n";
+    let input = OwnedFrame::Array(vec![
+      OwnedFrame::BulkString("WATCH".into()),
+      OwnedFrame::BulkString("WIBBLE".into()),
+      OwnedFrame::BulkString("fooBARbaz".into()),
+    ]);
+
+    encode_buf_and_verify_empty(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_buf_array_null_test() {
+    let expected = "*3\r\n$4\r\nHSET\r\n$3\r\nfoo\r\n$-1\r\n";
+    let input = OwnedFrame::Array(vec![
+      OwnedFrame::BulkString("HSET".into()),
+      OwnedFrame::BulkString("foo".into()),
+      OwnedFrame::Null,
+    ]);
+
+    encode_buf_and_verify_empty(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_moved_error() {
+    let expected = "-MOVED 3999 127.0.0.1:6381\r\n";
+    let input = OwnedFrame::Error("MOVED 3999 127.0.0.1:6381".into());
+
+    encode_and_verify_empty(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_ask_error() {
+    let expected = "-ASK 3999 127.0.0.1:6381\r\n";
+    let input = OwnedFrame::Error("ASK 3999 127.0.0.1:6381".into());
+
+    encode_and_verify_empty(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_error() {
+    let expected = "-WRONGTYPE Operation against a key holding the wrong kind of value\r\n";
+    let input = OwnedFrame::Error("WRONGTYPE Operation against a key holding the wrong kind of value".into());
+
+    encode_and_verify_empty(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_simplestring() {
+    let expected = "+OK\r\n";
+    let input = OwnedFrame::SimpleString("OK".into());
+
+    encode_and_verify_empty(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_integer() {
+    let i1_expected = ":1000\r\n";
+    let i1_input = OwnedFrame::Integer(1000);
+
+    encode_and_verify_empty(&i1_input, i1_expected);
+  }
+
+  #[test]
+  fn should_encode_negative_integer() {
+    let i2_expected = ":-1000\r\n";
+    let i2_input = OwnedFrame::Integer(-1000);
+
+    encode_and_verify_empty(&i2_input, i2_expected);
+  }
+}
+
+#[cfg(test)]
+#[cfg(feature = "bytes")]
+mod bytes_tests {
+  use super::*;
+
+  const PADDING: &str = "foobar";
 
   fn encode_and_verify_empty(input: &BytesFrame, expected: &str) {
     let mut buf = BytesMut::new();
@@ -184,8 +369,8 @@ mod tests {
     assert_eq!(len, padded.as_bytes().len(), "padded expected len is correct");
   }
 
-  fn encode_raw_and_verify_empty(input: &BytesFrame, expected: &str) {
-    let mut buf = vec![0; expected.as_bytes().len()];
+  fn encode_buf_and_verify_empty(input: &BytesFrame, expected: &str) {
+    let mut buf = vec![0; expected.len()];
     let len = encode_bytes(&mut buf, input).unwrap();
 
     assert_eq!(buf, expected.as_bytes(), "empty buf contents match");
@@ -255,40 +440,40 @@ mod tests {
   }
 
   #[test]
-  fn should_encode_raw_llen_req_example() {
+  fn should_encode_buf_llen_req_example() {
     let expected = "*2\r\n$4\r\nLLEN\r\n$6\r\nmylist\r\n";
     let input = BytesFrame::Array(vec![
       BytesFrame::BulkString("LLEN".into()),
       BytesFrame::BulkString("mylist".into()),
     ]);
 
-    encode_raw_and_verify_empty(&input, expected);
+    encode_buf_and_verify_empty(&input, expected);
   }
 
   #[test]
-  fn should_encode_raw_incr_req_example() {
+  fn should_encode_buf_incr_req_example() {
     let expected = "*2\r\n$4\r\nINCR\r\n$5\r\nmykey\r\n";
     let input = BytesFrame::Array(vec![
       BytesFrame::BulkString("INCR".into()),
       BytesFrame::BulkString("mykey".into()),
     ]);
 
-    encode_raw_and_verify_empty(&input, expected);
+    encode_buf_and_verify_empty(&input, expected);
   }
 
   #[test]
-  fn should_encode_raw_bitcount_req_example() {
+  fn should_encode_buf_bitcount_req_example() {
     let expected = "*2\r\n$8\r\nBITCOUNT\r\n$5\r\nmykey\r\n";
     let input = BytesFrame::Array(vec![
       BytesFrame::BulkString("BITCOUNT".into()),
       BytesFrame::BulkString("mykey".into()),
     ]);
 
-    encode_raw_and_verify_empty(&input, expected);
+    encode_buf_and_verify_empty(&input, expected);
   }
 
   #[test]
-  fn should_encode_raw_array_bulk_string_test() {
+  fn should_encode_buf_array_bulk_string_test() {
     let expected = "*3\r\n$5\r\nWATCH\r\n$6\r\nWIBBLE\r\n$9\r\nfooBARbaz\r\n";
     let input = BytesFrame::Array(vec![
       BytesFrame::BulkString("WATCH".into()),
@@ -296,11 +481,11 @@ mod tests {
       BytesFrame::BulkString("fooBARbaz".into()),
     ]);
 
-    encode_raw_and_verify_empty(&input, expected);
+    encode_buf_and_verify_empty(&input, expected);
   }
 
   #[test]
-  fn should_encode_raw_array_null_test() {
+  fn should_encode_buf_array_null_test() {
     let expected = "*3\r\n$4\r\nHSET\r\n$3\r\nfoo\r\n$-1\r\n";
     let input = BytesFrame::Array(vec![
       BytesFrame::BulkString("HSET".into()),
@@ -308,7 +493,7 @@ mod tests {
       BytesFrame::Null,
     ]);
 
-    encode_raw_and_verify_empty(&input, expected);
+    encode_buf_and_verify_empty(&input, expected);
   }
 
   #[test]

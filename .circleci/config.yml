@@ -1,13 +1,21 @@
 version: 2
 jobs:
-  tests-default:
+  tests-bytes:
     docker:
       - image: cimg/rust:1.77.0
     steps:
       - checkout
       - run:
-          name: Run tests with default features
-          command: cargo clean && eval `ssh-agent` && ssh-add ~/.ssh/id_rsa && cargo test --release --features "resp2 resp3 bytes codec convert"
+          name: Run tests with bytes features
+          command: cargo test --release --features "resp2 resp3 bytes codec convert"
+  tests-no-bytes:
+    docker:
+      - image: cimg/rust:1.77.0
+    steps:
+      - checkout
+      - run:
+          name: Run tests without bytes or bytes_utils
+          command: cargo test --release --features "resp2 resp3 convert"
   tests-indexmap:
     docker:
       - image: cimg/rust:1.77.0
@@ -15,7 +23,7 @@ jobs:
       - checkout
       - run:
           name: Run tests with indexmap features
-          command: cargo clean && eval `ssh-agent` && ssh-add ~/.ssh/id_rsa && cargo test --release --features "index-map resp2 resp3 codec convert"
+          command: cargo test --release --features "index-map resp2 resp3 convert"
   clippy-lint:
     docker:
       - image: cimg/rust:1.77.0
@@ -39,14 +47,15 @@ jobs:
           command: rustup target add thumbv7m-none-eabi
       - run:
           name: Verifies successful build for no_std target
-          command: cargo clean && eval `ssh-agent` && ssh-add ~/.ssh/id_rsa && cargo build -Z avoid-dev-deps --release --no-default-features --features resp2,resp3,libm,hashbrown,alloc --target=thumbv7m-none-eabi
+          command: cargo clean && cargo build -Z avoid-dev-deps --release --no-default-features --features resp2,resp3,convert,libm,hashbrown,alloc --target=thumbv7m-none-eabi
 
 
 workflows:
   version: 2
   build:
     jobs:
-      - tests-default
+      - tests-bytes
+      - tests-no-bytes
       - tests-indexmap
       - build-no-std
       - clippy-lint

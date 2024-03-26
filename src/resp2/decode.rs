@@ -233,9 +233,189 @@ pub fn decode_bytes_mut(buf: &mut BytesMut) -> Result<Option<(BytesFrame, usize,
   Ok(Some((frame, amt, buf)))
 }
 
+// Regression tests duplicated for each frame type.
+
+#[cfg(test)]
+mod owned_tests {
+  use super::*;
+
+  pub const PADDING: &'static str = "FOOBARBAZ";
+
+  pub fn pretty_print_panic(e: RedisProtocolError) {
+    panic!("{:?}", e);
+  }
+
+  pub fn panic_no_decode() {
+    panic!("Failed to decode bytes. None returned");
+  }
+
+  fn decode_and_verify_some(bytes: &[u8], expected: &(Option<OwnedFrame>, usize)) {
+    let mut bytes = bytes.to_vec();
+
+    let (frame, len) = match decode(&mut bytes) {
+      Ok(Some((f, l))) => (Some(f), l),
+      Ok(None) => return panic_no_decode(),
+      Err(e) => return pretty_print_panic(e),
+    };
+
+    assert_eq!(frame, expected.0, "decoded frame matched");
+    assert_eq!(len, expected.1, "decoded frame len matched");
+  }
+
+  fn decode_and_verify_padded_some(bytes: &[u8], expected: &(Option<OwnedFrame>, usize)) {
+    let mut bytes = bytes.to_vec();
+    bytes.extend_from_slice(PADDING.as_bytes());
+
+    let (frame, len) = match decode(&mut bytes) {
+      Ok(Some((f, l))) => (Some(f), l),
+      Ok(None) => return panic_no_decode(),
+      Err(e) => return pretty_print_panic(e),
+    };
+
+    assert_eq!(frame, expected.0, "decoded frame matched");
+    assert_eq!(len, expected.1, "decoded frame len matched");
+  }
+
+  fn decode_and_verify_none(bytes: &[u8]) {
+    let mut bytes = bytes.to_vec();
+    let (frame, len) = match decode(&mut bytes) {
+      Ok(Some((f, l))) => (Some(f), l),
+      Ok(None) => (None, 0),
+      Err(e) => return pretty_print_panic(e),
+    };
+
+    assert!(frame.is_none());
+    assert_eq!(len, 0);
+  }
+
+  #[test]
+  fn should_decode_llen_res_example() {
+    let expected = (Some(OwnedFrame::Integer(48293)), 8);
+    let bytes: Vec<u8> = ":48293\r\n".into();
+
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
+  }
+
+  #[test]
+  fn should_decode_simple_string() {
+    let expected = (Some(OwnedFrame::SimpleString("string".into())), 9);
+    let bytes: Vec<u8> = "+string\r\n".into();
+
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
+  }
+
+  #[test]
+  #[should_panic]
+  fn should_decode_simple_string_incomplete() {
+    let expected = (Some(OwnedFrame::SimpleString("string".into())), 9);
+    let bytes: Vec<u8> = "+stri".into();
+
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
+  }
+
+  #[test]
+  fn should_decode_bulk_string() {
+    let expected = (Some(OwnedFrame::BulkString("foo".into())), 9);
+    let bytes: Vec<u8> = "$3\r\nfoo\r\n".into();
+
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
+  }
+
+  #[test]
+  #[should_panic]
+  fn should_decode_bulk_string_incomplete() {
+    let expected = (Some(OwnedFrame::BulkString("foo".into())), 9);
+    let bytes: Vec<u8> = "$3\r\nfo".into();
+
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
+  }
+
+  #[test]
+  fn should_decode_array_no_nulls() {
+    let expected = (
+      Some(OwnedFrame::Array(vec![
+        OwnedFrame::SimpleString("Foo".into()),
+        OwnedFrame::SimpleString("Bar".into()),
+      ])),
+      16,
+    );
+    let bytes: Vec<u8> = "*2\r\n+Foo\r\n+Bar\r\n".into();
+
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
+  }
+
+  #[test]
+  fn should_decode_array_nulls() {
+    let bytes: Vec<u8> = "*3\r\n$3\r\nFoo\r\n$-1\r\n$3\r\nBar\r\n".into();
+
+    let expected = (
+      Some(OwnedFrame::Array(vec![
+        OwnedFrame::BulkString("Foo".into()),
+        OwnedFrame::Null,
+        OwnedFrame::BulkString("Bar".into()),
+      ])),
+      bytes.len(),
+    );
+
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
+  }
+
+  #[test]
+  fn should_decode_normal_error() {
+    let bytes: Vec<u8> = "-WRONGTYPE Operation against a key holding the wrong kind of value\r\n".into();
+    let expected = (
+      Some(OwnedFrame::Error(
+        "WRONGTYPE Operation against a key holding the wrong kind of value".into(),
+      )),
+      bytes.len(),
+    );
+
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
+  }
+
+  #[test]
+  fn should_decode_moved_error() {
+    let bytes: Vec<u8> = "-MOVED 3999 127.0.0.1:6381\r\n".into();
+    let expected = (Some(OwnedFrame::Error("MOVED 3999 127.0.0.1:6381".into())), bytes.len());
+
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
+  }
+
+  #[test]
+  fn should_decode_ask_error() {
+    let bytes: Vec<u8> = "-ASK 3999 127.0.0.1:6381\r\n".into();
+    let expected = (Some(OwnedFrame::Error("ASK 3999 127.0.0.1:6381".into())), bytes.len());
+
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
+  }
+
+  #[test]
+  fn should_decode_incomplete() {
+    let bytes: Vec<u8> = "*3\r\n$3\r\nFoo\r\n$-1\r\n$3\r\nBar".into();
+    decode_and_verify_none(&bytes);
+  }
+
+  #[test]
+  #[should_panic]
+  fn should_error_on_junk() {
+    let bytes: Vec<u8> = "foobarbazwibblewobble".into();
+    decode(&bytes).map_err(|e| pretty_print_panic(e)).unwrap();
+  }
+}
+
 #[cfg(test)]
 #[cfg(feature = "bytes")]
-mod tests {
+mod bytes_tests {
   use super::*;
   use nom::AsBytes;
 
@@ -416,6 +596,6 @@ mod tests {
   #[should_panic]
   fn should_error_on_junk() {
     let mut bytes: BytesMut = "foobarbazwibblewobble".into();
-    let _ = decode_bytes_mut(&mut bytes).map_err(|e| pretty_print_panic(e));
+    decode_bytes_mut(&mut bytes).map_err(|e| pretty_print_panic(e)).unwrap();
   }
 }

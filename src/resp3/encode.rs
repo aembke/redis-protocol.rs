@@ -895,9 +895,688 @@ pub mod streaming {
   }
 }
 
+// Regression tests duplicated for each frame type.
+
+#[cfg(test)]
+mod owned_tests {
+  use super::*;
+  use itertools::Itertools;
+  use std::{convert::TryInto, str};
+
+  fn create_attributes() -> (FrameMap<OwnedFrame, OwnedFrame>, Vec<u8>) {
+    let mut out = resp3_utils::new_map(0);
+    let key = OwnedFrame::SimpleString {
+      data:       "foo".into(),
+      attributes: None,
+    };
+    let value = OwnedFrame::Number {
+      data:       42,
+      attributes: None,
+    };
+    out.insert(key, value);
+    let encoded = "|1\r\n+foo\r\n:42\r\n".to_owned().into_bytes();
+
+    (out, encoded)
+  }
+
+  fn blobstring_array(data: Vec<&'static str>) -> OwnedFrame {
+    let inner: Vec<OwnedFrame> = data
+      .into_iter()
+      .map(|s| (FrameKind::BlobString, s).try_into().unwrap())
+      .collect();
+
+    OwnedFrame::Array {
+      data:       inner,
+      attributes: None,
+    }
+  }
+
+  fn push_frame_to_array(frame: &mut OwnedFrame, inner: OwnedFrame) {
+    if let OwnedFrame::Array { ref mut data, .. } = frame {
+      data.push(inner);
+    }
+  }
+
+  fn unordered_assert_eq(data: &[u8], expected_start: &[u8], expected_middle: &[&str]) {
+    let mut exptected_permutations = vec![];
+    for middle_permutation in expected_middle.iter().permutations(expected_middle.len()) {
+      let mut expected = expected_start.to_vec();
+      for middle in middle_permutation {
+        expected.extend_from_slice(middle.as_bytes())
+      }
+      exptected_permutations.push(expected);
+    }
+
+    assert!(
+      exptected_permutations.contains(&data.to_vec()),
+      "No middle permutations matched: data {:?} needs to match with one of the following {:#?}",
+      data,
+      exptected_permutations
+    );
+  }
+
+  fn encode_and_verify_empty(input: &OwnedFrame, expected: &str) {
+    let mut buf = vec![0; expected.len()];
+    let len = complete::encode(&mut buf, input).unwrap();
+
+    assert_eq!(
+      buf,
+      expected.as_bytes(),
+      "empty buf contents match {:?} == {:?}",
+      str::from_utf8(&buf),
+      expected
+    );
+    assert_eq!(len, expected.as_bytes().len(), "empty expected len is correct");
+  }
+
+  fn encode_and_verify_empty_unordered(input: &OwnedFrame, expected_start: &str, expected_middle: &[&str]) {
+    let mut buf = vec![0; input.encode_len()];
+    let len = complete::encode(&mut buf, input).unwrap();
+
+    unordered_assert_eq(&buf, expected_start.as_bytes(), expected_middle);
+    let expected_middle_len: usize = expected_middle.iter().map(|x| x.as_bytes().len()).sum();
+    assert_eq!(
+      len,
+      expected_start.as_bytes().len() + expected_middle_len,
+      "empty expected len is correct"
+    );
+  }
+
+  fn encode_and_verify_empty_with_attributes(input: &OwnedFrame, expected: &str) {
+    let (attributes, encoded_attributes) = create_attributes();
+    let mut frame = input.clone();
+    let _ = frame.add_attributes(attributes).unwrap();
+    let mut buf = vec![0; expected.len() + encoded_attributes.len()];
+    let len = complete::encode(&mut buf, &frame).unwrap();
+
+    let mut expected_bytes = Vec::new();
+    expected_bytes.extend_from_slice(&encoded_attributes);
+    expected_bytes.extend_from_slice(expected.as_bytes());
+
+    assert_eq!(buf, expected_bytes, "non empty buf contents match with attrs");
+    assert_eq!(
+      len,
+      expected.as_bytes().len() + encoded_attributes.len(),
+      "non empty expected len is correct with attrs"
+    );
+  }
+
+  fn encode_and_verify_empty_with_attributes_unordered(
+    input: &OwnedFrame,
+    expected_start: &str,
+    expected_middle: &[&str],
+  ) {
+    let (attributes, encoded_attributes) = create_attributes();
+    let mut frame = input.clone();
+    let _ = frame.add_attributes(attributes).unwrap();
+    let mut buf = vec![0; input.encode_len() + encoded_attributes.len()];
+    let len = complete::encode(&mut buf, &frame).unwrap();
+
+    let mut expected_start_bytes = Vec::new();
+    expected_start_bytes.extend_from_slice(&encoded_attributes);
+    expected_start_bytes.extend_from_slice(expected_start.as_bytes());
+    unordered_assert_eq(&buf, &expected_start_bytes, expected_middle);
+
+    let expected_middle_len: usize = expected_middle.iter().map(|x| x.as_bytes().len()).sum();
+    assert_eq!(
+      len,
+      expected_start.as_bytes().len() + expected_middle_len + encoded_attributes.len(),
+      "non empty expected len is correct with attrs"
+    );
+  }
+
+  // ------------- tests adapted from RESP2 --------------------------
+
+  #[test]
+  fn should_encode_llen_req_example() {
+    let expected = "*2\r\n$4\r\nLLEN\r\n$6\r\nmylist\r\n";
+    let input = blobstring_array(vec!["LLEN", "mylist"]);
+
+    encode_and_verify_empty(&input, expected);
+    encode_and_verify_empty_with_attributes(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_incr_req_example() {
+    let expected = "*2\r\n$4\r\nINCR\r\n$5\r\nmykey\r\n";
+    let input = blobstring_array(vec!["INCR", "mykey"]);
+
+    encode_and_verify_empty(&input, expected);
+    encode_and_verify_empty_with_attributes(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_bitcount_req_example() {
+    let expected = "*2\r\n$8\r\nBITCOUNT\r\n$5\r\nmykey\r\n";
+    let input = blobstring_array(vec!["BITCOUNT", "mykey"]);
+
+    encode_and_verify_empty(&input, expected);
+    encode_and_verify_empty_with_attributes(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_array_bulk_string_test() {
+    let expected = "*3\r\n$5\r\nWATCH\r\n$6\r\nWIBBLE\r\n$9\r\nfooBARbaz\r\n";
+    let input = blobstring_array(vec!["WATCH", "WIBBLE", "fooBARbaz"]);
+
+    encode_and_verify_empty(&input, expected);
+    encode_and_verify_empty_with_attributes(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_array_null_test() {
+    let expected = "*3\r\n$4\r\nHSET\r\n$3\r\nfoo\r\n_\r\n";
+    let mut input = blobstring_array(vec!["HSET", "foo"]);
+    push_frame_to_array(&mut input, OwnedFrame::Null);
+
+    encode_and_verify_empty(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_raw_llen_req_example() {
+    let expected = "*2\r\n$4\r\nLLEN\r\n$6\r\nmylist\r\n";
+    let input = blobstring_array(vec!["LLEN", "mylist"]);
+
+    encode_and_verify_empty(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_raw_incr_req_example() {
+    let expected = "*2\r\n$4\r\nINCR\r\n$5\r\nmykey\r\n";
+    let input = blobstring_array(vec!["INCR", "mykey"]);
+
+    encode_and_verify_empty(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_raw_bitcount_req_example() {
+    let expected = "*2\r\n$8\r\nBITCOUNT\r\n$5\r\nmykey\r\n";
+    let input = blobstring_array(vec!["BITCOUNT", "mykey"]);
+
+    encode_and_verify_empty(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_raw_array_bulk_string_test() {
+    let expected = "*3\r\n$5\r\nWATCH\r\n$6\r\nWIBBLE\r\n$9\r\nfooBARbaz\r\n";
+    let input = blobstring_array(vec!["WATCH", "WIBBLE", "fooBARbaz"]);
+
+    encode_and_verify_empty(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_raw_array_null_test() {
+    let expected = "*3\r\n$4\r\nHSET\r\n$3\r\nfoo\r\n_\r\n";
+    let mut input = blobstring_array(vec!["HSET", "foo"]);
+    push_frame_to_array(&mut input, OwnedFrame::Null);
+
+    encode_and_verify_empty(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_moved_error() {
+    let expected = "-MOVED 3999 127.0.0.1:6381\r\n";
+    let input = (FrameKind::SimpleError, "MOVED 3999 127.0.0.1:6381")
+      .try_into()
+      .unwrap();
+
+    encode_and_verify_empty(&input, expected);
+    encode_and_verify_empty_with_attributes(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_ask_error() {
+    let expected = "-ASK 3999 127.0.0.1:6381\r\n";
+    let input = (FrameKind::SimpleError, "ASK 3999 127.0.0.1:6381").try_into().unwrap();
+
+    encode_and_verify_empty(&input, expected);
+    encode_and_verify_empty_with_attributes(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_error() {
+    let expected = "-WRONGTYPE Operation against a key holding the wrong kind of value\r\n";
+    let input = (
+      FrameKind::SimpleError,
+      "WRONGTYPE Operation against a key holding the wrong kind of value",
+    )
+      .try_into()
+      .unwrap();
+
+    encode_and_verify_empty(&input, expected);
+    encode_and_verify_empty_with_attributes(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_simplestring() {
+    let expected = "+OK\r\n";
+    let input = (FrameKind::SimpleString, "OK").try_into().unwrap();
+
+    encode_and_verify_empty(&input, expected);
+    encode_and_verify_empty_with_attributes(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_number() {
+    let expected = ":1000\r\n";
+    let input: OwnedFrame = 1000.into();
+
+    encode_and_verify_empty(&input, expected);
+    encode_and_verify_empty_with_attributes(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_negative_number() {
+    let expected = ":-1000\r\n";
+    let input: OwnedFrame = (-1000 as i64).into();
+
+    encode_and_verify_empty(&input, expected);
+    encode_and_verify_empty_with_attributes(&input, expected);
+  }
+
+  // ------------- end tests adapted from RESP2 --------------------------
+
+  #[test]
+  fn should_encode_bool_true() {
+    let expected = BOOL_TRUE_BYTES;
+    let input: OwnedFrame = true.into();
+
+    encode_and_verify_empty(&input, expected);
+    encode_and_verify_empty_with_attributes(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_bool_false() {
+    let expected = BOOL_FALSE_BYTES;
+    let input: OwnedFrame = false.into();
+
+    encode_and_verify_empty(&input, expected);
+    encode_and_verify_empty_with_attributes(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_double_positive() {
+    let expected = ",12.34567\r\n";
+    let input: OwnedFrame = 12.34567.try_into().unwrap();
+
+    encode_and_verify_empty(&input, expected);
+    encode_and_verify_empty_with_attributes(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_double_negative() {
+    let expected = ",-12.34567\r\n";
+    let input: OwnedFrame = (-12.34567).try_into().unwrap();
+
+    encode_and_verify_empty(&input, expected);
+    encode_and_verify_empty_with_attributes(&input, expected);
+  }
+
+  #[test]
+  #[should_panic]
+  fn should_not_encode_double_nan() {
+    let input = OwnedFrame::Double {
+      data:       f64::NAN,
+      attributes: None,
+    };
+    let mut buf = BytesMut::new();
+    let _ = complete::encode(&mut buf, &input).unwrap();
+  }
+
+  #[test]
+  fn should_encode_double_inf() {
+    let expected = ",inf\r\n";
+    let input: OwnedFrame = f64::INFINITY.try_into().unwrap();
+
+    encode_and_verify_empty(&input, expected);
+    encode_and_verify_empty_with_attributes(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_double_neg_inf() {
+    let expected = ",-inf\r\n";
+    let input: OwnedFrame = f64::NEG_INFINITY.try_into().unwrap();
+
+    encode_and_verify_empty(&input, expected);
+    encode_and_verify_empty_with_attributes(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_bignumber() {
+    let expected = "(3492890328409238509324850943850943825024385\r\n";
+    let input: OwnedFrame = (
+      FrameKind::BigNumber,
+      "3492890328409238509324850943850943825024385".as_bytes().to_vec(),
+    )
+      .try_into()
+      .unwrap();
+
+    encode_and_verify_empty(&input, expected);
+    encode_and_verify_empty_with_attributes(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_null() {
+    let expected = "_\r\n";
+    let input = OwnedFrame::Null;
+
+    encode_and_verify_empty(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_blobstring() {
+    let expected = "$9\r\nfoobarbaz\r\n";
+    let input: OwnedFrame = (FrameKind::BlobString, "foobarbaz").try_into().unwrap();
+
+    encode_and_verify_empty(&input, expected);
+    encode_and_verify_empty_with_attributes(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_bloberror() {
+    let expected = "!21\r\nSYNTAX invalid syntax\r\n";
+    let input: OwnedFrame = (FrameKind::BlobError, "SYNTAX invalid syntax").try_into().unwrap();
+
+    encode_and_verify_empty(&input, expected);
+    encode_and_verify_empty_with_attributes(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_verbatimstring_txt() {
+    let expected = "=15\r\ntxt:Some string\r\n";
+    let input = OwnedFrame::VerbatimString {
+      format:     VerbatimStringFormat::Text,
+      data:       "Some string".as_bytes().into(),
+      attributes: None,
+    };
+
+    encode_and_verify_empty(&input, expected);
+    encode_and_verify_empty_with_attributes(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_verbatimstring_mkd() {
+    let expected = "=15\r\nmkd:Some string\r\n";
+    let input = OwnedFrame::VerbatimString {
+      format:     VerbatimStringFormat::Markdown,
+      data:       "Some string".as_bytes().into(),
+      attributes: None,
+    };
+
+    encode_and_verify_empty(&input, expected);
+    encode_and_verify_empty_with_attributes(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_push_pubsub() {
+    let expected = ">4\r\n+pubsub\r\n+message\r\n+somechannel\r\n+this is the message\r\n";
+    let input = OwnedFrame::Push {
+      data:       vec![
+        (FrameKind::SimpleString, "pubsub").try_into().unwrap(),
+        (FrameKind::SimpleString, "message").try_into().unwrap(),
+        (FrameKind::SimpleString, "somechannel").try_into().unwrap(),
+        (FrameKind::SimpleString, "this is the message").try_into().unwrap(),
+      ],
+      attributes: None,
+    };
+
+    assert!(input.is_normal_pubsub_message());
+    encode_and_verify_empty(&input, expected);
+    encode_and_verify_empty_with_attributes(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_push_keyspace_event() {
+    let expected = ">4\r\n+pubsub\r\n+message\r\n+__keyspace@0__:mykey\r\n+del\r\n";
+    let input = OwnedFrame::Push {
+      data:       vec![
+        (FrameKind::SimpleString, "pubsub").try_into().unwrap(),
+        (FrameKind::SimpleString, "message").try_into().unwrap(),
+        (FrameKind::SimpleString, "__keyspace@0__:mykey").try_into().unwrap(),
+        (FrameKind::SimpleString, "del").try_into().unwrap(),
+      ],
+      attributes: None,
+    };
+
+    assert!(input.is_normal_pubsub_message());
+    encode_and_verify_empty(&input, expected);
+    encode_and_verify_empty_with_attributes(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_simple_set() {
+    let expected_start = "~5\r\n";
+    let expected_middle = ["+orange\r\n", "+apple\r\n", "#t\r\n", ":100\r\n", ":999\r\n"];
+    let mut inner = resp3_utils::new_set(0);
+    let v1: OwnedFrame = (FrameKind::SimpleString, "orange").try_into().unwrap();
+    let v2: OwnedFrame = (FrameKind::SimpleString, "apple").try_into().unwrap();
+    let v3: OwnedFrame = true.into();
+    let v4: OwnedFrame = 100.into();
+    let v5: OwnedFrame = 999.into();
+
+    inner.insert(v1);
+    inner.insert(v2);
+    inner.insert(v3);
+    inner.insert(v4);
+    inner.insert(v5);
+    let input = OwnedFrame::Set {
+      data:       inner,
+      attributes: None,
+    };
+
+    encode_and_verify_empty_unordered(&input, expected_start, &expected_middle);
+    encode_and_verify_empty_with_attributes_unordered(&input, expected_start, &expected_middle);
+  }
+
+  #[test]
+  fn should_encode_simple_map() {
+    let expected_start = "%2\r\n";
+    let expected_middle = ["+first\r\n:1\r\n", "+second\r\n:2\r\n"];
+    let mut inner = resp3_utils::new_map(0);
+    let k1: OwnedFrame = (FrameKind::SimpleString, "first").try_into().unwrap();
+    let v1: OwnedFrame = 1.into();
+    let k2: OwnedFrame = (FrameKind::SimpleString, "second").try_into().unwrap();
+    let v2: OwnedFrame = 2.into();
+
+    inner.insert(k1, v1);
+    inner.insert(k2, v2);
+    let input = OwnedFrame::Map {
+      data:       inner,
+      attributes: None,
+    };
+
+    encode_and_verify_empty_unordered(&input, expected_start, &expected_middle);
+    encode_and_verify_empty_with_attributes_unordered(&input, expected_start, &expected_middle);
+  }
+
+  #[test]
+  fn should_encode_nested_map() {
+    let expected_start = "%2\r\n";
+    let expected_middle = ["+first\r\n:1\r\n", "+second\r\n%1\r\n+third\r\n:3\r\n"];
+    let mut inner = resp3_utils::new_map(0);
+    let k1: OwnedFrame = (FrameKind::SimpleString, "first").try_into().unwrap();
+    let v1: OwnedFrame = 1.into();
+    let k2: OwnedFrame = (FrameKind::SimpleString, "second").try_into().unwrap();
+    let k3: OwnedFrame = (FrameKind::SimpleString, "third").try_into().unwrap();
+    let v3: OwnedFrame = 3.into();
+
+    let mut v2_inner = resp3_utils::new_map(0);
+    v2_inner.insert(k3, v3);
+    let v2 = OwnedFrame::Map {
+      data:       v2_inner,
+      attributes: None,
+    };
+
+    inner.insert(k1, v1);
+    inner.insert(k2, v2);
+    let input = OwnedFrame::Map {
+      data:       inner,
+      attributes: None,
+    };
+
+    encode_and_verify_empty_unordered(&input, expected_start, &expected_middle);
+    encode_and_verify_empty_with_attributes_unordered(&input, expected_start, &expected_middle);
+  }
+
+  #[test]
+  fn should_encode_hello() {
+    let expected = "HELLO 3\r\n";
+    let input = OwnedFrame::Hello {
+      version:  RespVersion::RESP3,
+      username: None,
+      password: None,
+    };
+
+    encode_and_verify_empty(&input, expected);
+
+    let expected = "HELLO 2\r\n";
+    let input = OwnedFrame::Hello {
+      version:  RespVersion::RESP2,
+      username: None,
+      password: None,
+    };
+
+    encode_and_verify_empty(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_hello_with_auth() {
+    let expected = "HELLO 3 AUTH default mypassword\r\n";
+    let input = OwnedFrame::Hello {
+      version:  RespVersion::RESP3,
+      username: Some("default".into()),
+      password: Some("mypassword".into()),
+    };
+
+    encode_and_verify_empty(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_streaming_blobstring() {
+    let expected = "$?\r\n;2\r\nhe\r\n;4\r\nllow\r\n;1\r\no\r\n;3\r\nrld\r\n;0\r\n";
+    let chunk1 = "he";
+    let chunk2 = "llow";
+    let chunk3 = "o";
+    let chunk4 = "rld";
+
+    let mut buf = vec![0; expected.len()];
+    let mut offset = 0;
+
+    offset = streaming::encode_start_string(&mut buf, offset).unwrap();
+    offset = streaming::encode_string_chunk(&mut buf, offset, chunk1.as_bytes()).unwrap();
+    offset = streaming::encode_string_chunk(&mut buf, offset, chunk2.as_bytes()).unwrap();
+    offset = streaming::encode_string_chunk(&mut buf, offset, chunk3.as_bytes()).unwrap();
+    offset = streaming::encode_string_chunk(&mut buf, offset, chunk4.as_bytes()).unwrap();
+    offset = streaming::encode_end_string(&mut buf, offset).unwrap();
+
+    assert_eq!(offset, expected.as_bytes().len());
+    assert_eq!(buf, expected.as_bytes());
+  }
+
+  #[test]
+  fn should_encode_streaming_array() {
+    let expected = "*?\r\n:1\r\n+foo\r\n#f\r\n$9\r\nfoobarbaz\r\n.\r\n";
+    let chunk1 = OwnedFrame::Number {
+      data:       1,
+      attributes: None,
+    };
+    let chunk2 = OwnedFrame::SimpleString {
+      data:       "foo".into(),
+      attributes: None,
+    };
+    let chunk3 = OwnedFrame::Boolean {
+      data:       false,
+      attributes: None,
+    };
+    let chunk4 = OwnedFrame::BlobString {
+      data:       "foobarbaz".as_bytes().into(),
+      attributes: None,
+    };
+
+    let mut buf = vec![0; expected.len()];
+    let mut offset = 0;
+
+    offset = streaming::encode_start_aggregate_type(&mut buf, offset, FrameKind::Array).unwrap();
+    offset = streaming::encode_owned_aggregate_type_inner_value(&mut buf, offset, &chunk1).unwrap();
+    offset = streaming::encode_owned_aggregate_type_inner_value(&mut buf, offset, &chunk2).unwrap();
+    offset = streaming::encode_owned_aggregate_type_inner_value(&mut buf, offset, &chunk3).unwrap();
+    offset = streaming::encode_owned_aggregate_type_inner_value(&mut buf, offset, &chunk4).unwrap();
+    offset = streaming::encode_end_aggregate_type(&mut buf, offset).unwrap();
+
+    assert_eq!(offset, expected.as_bytes().len());
+    assert_eq!(buf, expected.as_bytes());
+  }
+
+  #[test]
+  fn should_encode_streaming_set() {
+    let expected = "~?\r\n:1\r\n+foo\r\n#f\r\n$9\r\nfoobarbaz\r\n.\r\n";
+    let chunk1 = OwnedFrame::Number {
+      data:       1,
+      attributes: None,
+    };
+    let chunk2 = OwnedFrame::SimpleString {
+      data:       "foo".into(),
+      attributes: None,
+    };
+    let chunk3 = OwnedFrame::Boolean {
+      data:       false,
+      attributes: None,
+    };
+    let chunk4 = OwnedFrame::BlobString {
+      data:       "foobarbaz".as_bytes().into(),
+      attributes: None,
+    };
+
+    let mut buf = vec![0; expected.len()];
+    let mut offset = 0;
+
+    offset = streaming::encode_start_aggregate_type(&mut buf, offset, FrameKind::Set).unwrap();
+    offset = streaming::encode_owned_aggregate_type_inner_value(&mut buf, offset, &chunk1).unwrap();
+    offset = streaming::encode_owned_aggregate_type_inner_value(&mut buf, offset, &chunk2).unwrap();
+    offset = streaming::encode_owned_aggregate_type_inner_value(&mut buf, offset, &chunk3).unwrap();
+    offset = streaming::encode_owned_aggregate_type_inner_value(&mut buf, offset, &chunk4).unwrap();
+    offset = streaming::encode_end_aggregate_type(&mut buf, offset).unwrap();
+
+    assert_eq!(offset, expected.as_bytes().len());
+    assert_eq!(buf, expected.as_bytes());
+  }
+
+  #[test]
+  fn should_encode_streaming_map() {
+    let expected = "%?\r\n+a\r\n:1\r\n+b\r\n:2\r\n.\r\n";
+    let k1 = OwnedFrame::SimpleString {
+      data:       "a".into(),
+      attributes: None,
+    };
+    let v1 = OwnedFrame::Number {
+      data:       1,
+      attributes: None,
+    };
+    let k2 = OwnedFrame::SimpleString {
+      data:       "b".into(),
+      attributes: None,
+    };
+    let v2 = OwnedFrame::Number {
+      data:       2,
+      attributes: None,
+    };
+
+    let mut buf = vec![0; expected.len()];
+    let mut offset = 0;
+
+    offset = streaming::encode_start_aggregate_type(&mut buf, offset, FrameKind::Map).unwrap();
+    offset = streaming::encode_owned_aggregate_type_inner_kv_pair(&mut buf, offset, &k1, &v1).unwrap();
+    offset = streaming::encode_owned_aggregate_type_inner_kv_pair(&mut buf, offset, &k2, &v2).unwrap();
+    offset = streaming::encode_end_aggregate_type(&mut buf, offset).unwrap();
+
+    assert_eq!(offset, expected.as_bytes().len());
+    assert_eq!(buf, expected.as_bytes());
+  }
+}
+
 #[cfg(test)]
 #[cfg(feature = "bytes")]
-mod tests {
+mod bytes_tests {
   use super::*;
   use itertools::Itertools;
   use std::{convert::TryInto, str};

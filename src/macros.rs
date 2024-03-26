@@ -58,3 +58,17 @@ macro_rules! decode_log_str(
     }
   )
 );
+
+#[cfg(feature = "convert")]
+macro_rules! check_single_vec_reply(
+  ($v:expr) => {
+    if $v.is_single_element_vec() {
+      return Self::from_frame($v.pop_or_take());
+    }
+  };
+  ($t:ty, $v:expr) => {
+    if $v.is_single_element_vec() {
+      return $t::from_frame($v.pop_or_take());
+    }
+  }
+);
