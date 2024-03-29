@@ -1,0 +1,46 @@
+version: '2'
+
+networks:
+  redis-protocol-tests:
+    driver: bridge
+
+services:
+  redis-protocol-redis-main:
+    container_name: "redis-protocol-redis-main"
+    image: 'bitnami/redis:${REDIS_VERSION}'
+    environment:
+      - 'REDIS_PORT_NUMBER=${FRED_REDIS_CENTRALIZED_PORT}'
+      - 'ALLOW_EMPTY_PASSWORD=yes'
+    ports:
+      - "${FRED_REDIS_CENTRALIZED_PORT}:${FRED_REDIS_CENTRALIZED_PORT}"
+    networks:
+      - redis-protocol-tests
+    volumes:
+      - './users.acl:/opt/bitnami/redis/mounted-etc/users.acl'
+      - './default.conf:/opt/bitnami/redis/mounted-etc/overrides.conf'
+  redis-protocol-codec-tests:
+    depends_on:
+      - redis-protocol-redis-main
+    container_name: "redis-protocol-codec-tests"
+    build:
+      context: ../..
+      dockerfile: tests/codec/base.dockerfile
+      args:
+        REDIS_VERSION: "${REDIS_VERSION}"
+    networks:
+      - redis-protocol-tests
+    command:
+      - "/project/tests/codec/codec-tests.sh"
+      - "${TEST_ARGV}"
+    environment:
+      RUST_LOG: "${RUST_LOG}"
+      RUST_BACKTRACE: "${RUST_BACKTRACE}"
+      CIRCLECI_TESTS: "${CIRCLECI_TESTS}"
+      REDIS_VERSION: "${REDIS_VERSION}"
+      FRED_REDIS_CENTRALIZED_HOST: "${FRED_REDIS_CENTRALIZED_HOST}"
+      FRED_REDIS_CENTRALIZED_PORT: "${FRED_REDIS_CENTRALIZED_PORT}"
+      REDIS_USERNAME: "${REDIS_USERNAME}"
+      REDIS_PASSWORD: "${REDIS_PASSWORD}"
+    volumes:
+      - "../..:/project"
+      - "~/.cargo/registry:/usr/local/cargo/registry"

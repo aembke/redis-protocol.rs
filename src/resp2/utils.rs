@@ -3,7 +3,7 @@ use crate::{
   resp2::types::{OwnedFrame, RangeFrame},
   utils::digits_in_number,
 };
-use alloc::{string::String, vec::Vec};
+use alloc::{borrow::ToOwned, string::String, vec::Vec};
 
 #[cfg(feature = "bytes")]
 use crate::resp2::types::BytesFrame;

@@ -1,5 +1,9 @@
 use crate::{error::RedisProtocolError, resp3::types::*, utils::digits_in_number};
-use alloc::{borrow::Cow, string::ToString, vec::Vec};
+use alloc::{
+  borrow::Cow,
+  string::{String, ToString},
+  vec::Vec,
+};
 use core::{
   hash::{Hash, Hasher},
   str,
@@ -150,18 +154,28 @@ pub fn bytes_set_encode_len(set: &FrameSet<BytesFrame>) -> usize {
 }
 
 #[cfg(feature = "bytes")]
-pub fn bytes_hello_encode_len(username: &Option<Str>, password: &Option<Str>) -> usize {
-  HELLO.as_bytes().len() + 2 + auth_encode_len(username.as_ref().map(|s| &**s), password.as_ref().map(|s| &**s)) + 2
+pub fn bytes_hello_encode_len(auth: &Option<(Str, Str)>, setname: &Option<Str>) -> usize {
+  let username = auth.as_ref().map(|(u, _)| &**u);
+  let password = auth.as_ref().map(|(_, p)| &**p);
+  let setname_len = if let Some(setname) = setname.as_ref() {
+    1 + SETNAME.as_bytes().len() + 1 + setname.as_bytes().len()
+  } else {
+    0
+  };
+
+  HELLO.as_bytes().len() + 1 + 1 + auth_encode_len(username, password) + setname_len + 2
 }
 
-pub fn owned_hello_encode_len(username: &Option<String>, password: &Option<String>) -> usize {
-  HELLO.as_bytes().len()
-    + 2
-    + auth_encode_len(
-      username.as_ref().map(|s| s.as_str()),
-      password.as_ref().map(|s| s.as_str()),
-    )
-    + 2
+pub fn owned_hello_encode_len(auth: &Option<(String, String)>, setname: &Option<String>) -> usize {
+  let username = auth.as_ref().map(|(u, _)| &**u);
+  let password = auth.as_ref().map(|(_, p)| &**p);
+  let setname_len = if let Some(setname) = setname.as_ref() {
+    1 + SETNAME.as_bytes().len() + 1 + setname.as_bytes().len()
+  } else {
+    0
+  };
+
+  HELLO.as_bytes().len() + 1 + 1 + auth_encode_len(username, password) + setname_len + 2
 }
 
 #[cfg(feature = "bytes")]
@@ -199,7 +213,7 @@ pub fn bytes_encode_len(data: &BytesFrame) -> usize {
     Map { data, attributes } => bytes_map_encode_len(data) + bytes_attribute_encode_len(attributes),
     Set { data, attributes } => bytes_set_encode_len(data) + bytes_attribute_encode_len(attributes),
     BigNumber { data, attributes } => bignumber_encode_len(data) + bytes_attribute_encode_len(attributes),
-    Hello { username, password, .. } => bytes_hello_encode_len(username, password),
+    Hello { auth, setname, .. } => bytes_hello_encode_len(auth, setname),
     ChunkedString(data) => {
       if data.is_empty() {
         END_STREAM_STRING_BYTES.as_bytes().len()
@@ -236,7 +250,7 @@ pub fn owned_encode_len(data: &OwnedFrame) -> usize {
     Map { data, attributes } => owned_map_encode_len(data) + owned_attribute_encode_len(attributes),
     Set { data, attributes } => owned_set_encode_len(data) + owned_attribute_encode_len(attributes),
     BigNumber { data, attributes } => bignumber_encode_len(data) + owned_attribute_encode_len(attributes),
-    Hello { username, password, .. } => owned_hello_encode_len(username, password),
+    Hello { auth, setname, .. } => owned_hello_encode_len(auth, setname),
     ChunkedString(data) => {
       if data.is_empty() {
         END_STREAM_STRING_BYTES.as_bytes().len()
@@ -314,14 +328,10 @@ pub fn bytes_to_owned_frame(frame: &BytesFrame) -> OwnedFrame {
       attributes: attributes.as_ref().map(bytes_to_owned_attrs),
       data:       data.iter().map(bytes_to_owned_frame).collect(),
     },
-    BytesFrame::Hello {
-      version,
-      username,
-      password,
-    } => OwnedFrame::Hello {
-      version:  version.clone(),
-      username: username.as_ref().map(|s| s.to_string()),
-      password: password.as_ref().map(|s| s.to_string()),
+    BytesFrame::Hello { version, auth, setname } => OwnedFrame::Hello {
+      version: version.clone(),
+      auth:    auth.as_ref().map(|(u, p)| (u.to_string(), p.to_string())),
+      setname: setname.as_ref().map(|name| name.to_string()),
     },
   }
 }
@@ -401,14 +411,10 @@ pub fn owned_to_bytes_frame(frame: OwnedFrame) -> BytesFrame {
       attributes: attributes.map(owned_to_bytes_attrs),
       data:       data.into_iter().map(owned_to_bytes_frame).collect(),
     },
-    OwnedFrame::Hello {
+    OwnedFrame::Hello { version, auth, setname } => BytesFrame::Hello {
       version,
-      username,
-      password,
-    } => BytesFrame::Hello {
-      version,
-      username: username.map(|s| s.into()),
-      password: password.map(|s| s.into()),
+      auth: auth.as_ref().map(|(u, p)| (u.into(), p.into())),
+      setname: setname.as_ref().map(|s| s.into()),
     },
   }
 }
@@ -424,7 +430,9 @@ pub fn owned_to_bytes_attrs(attributes: OwnedAttributes) -> BytesAttributes {
 
 /// Return the string representation of a double, accounting for `inf` and `-inf`.
 pub fn f64_to_redis_string(data: f64) -> Cow<'static, str> {
-  if data.is_infinite() {
+  if data.is_nan() {
+    Cow::Borrowed(NAN)
+  } else if data.is_infinite() {
     if data.is_sign_negative() {
       Cow::Borrowed(NEG_INFINITY)
     } else {
@@ -522,15 +530,23 @@ pub fn build_owned_frame(buf: &[u8], frame: &RangeFrame) -> Result<OwnedFrame, R
       version,
       username,
       password,
+      setname,
     } => OwnedFrame::Hello {
-      version:  version.clone(),
-      username: if let Some(username) = username {
-        Some(String::from_utf8(buf[username.0 .. username.1].to_vec())?)
+      version: version.clone(),
+      auth:    if let Some(username) = username {
+        if let Some(password) = password {
+          Some((
+            String::from_utf8(buf[username.0 .. username.1].to_vec())?,
+            String::from_utf8(buf[password.0 .. password.1].to_vec())?,
+          ))
+        } else {
+          None
+        }
       } else {
         None
       },
-      password: if let Some(password) = password {
-        Some(String::from_utf8(buf[password.0 .. password.1].to_vec())?)
+      setname: if let Some(setname) = setname {
+        Some(String::from_utf8(buf[setname.0 .. setname.1].to_vec())?)
       } else {
         None
       },
@@ -621,15 +637,23 @@ pub fn build_bytes_frame(buf: &Bytes, frame: &RangeFrame) -> Result<BytesFrame, 
       version,
       username,
       password,
+      setname,
     } => BytesFrame::Hello {
-      version:  version.clone(),
-      username: if let Some(username) = username {
-        Some(Str::from_inner(buf.slice(username.0 .. username.1))?)
+      version: version.clone(),
+      auth:    if let Some(username) = username {
+        if let Some(password) = password {
+          Some((
+            Str::from_inner(buf.slice(username.0 .. username.1))?,
+            Str::from_inner(buf.slice(password.0 .. password.1))?,
+          ))
+        } else {
+          None
+        }
       } else {
         None
       },
-      password: if let Some(password) = password {
-        Some(Str::from_inner(buf.slice(password.0 .. password.1))?)
+      setname: if let Some(setname) = setname {
+        Some(Str::from_inner(buf.slice(setname.0 .. setname.1))?)
       } else {
         None
       },
@@ -1288,32 +1312,40 @@ mod tests {
   #[test]
   fn should_get_encode_len_hello() {
     let frame = BytesFrame::Hello {
-      version:  RespVersion::RESP3,
-      username: None,
-      password: None,
+      version: RespVersion::RESP3,
+      auth:    None,
+      setname: None,
     };
-    // TODO make a test that uses resp3 codec to integration test this
 
     // HELLO 3\r\n
     let expected_len = 5 + 1 + 1 + 2;
     assert_eq!(bytes_encode_len(&frame), expected_len);
 
     let frame = BytesFrame::Hello {
-      version:  RespVersion::RESP2,
-      username: None,
-      password: None,
+      version: RespVersion::RESP2,
+      auth:    None,
+      setname: None,
     };
     // HELLO 2\r\n
     let expected_len = 5 + 1 + 1 + 2;
     assert_eq!(bytes_encode_len(&frame), expected_len);
 
     let frame = BytesFrame::Hello {
-      version:  RespVersion::RESP3,
-      username: Some("foo".into()),
-      password: Some("bar".into()),
+      version: RespVersion::RESP3,
+      auth:    Some(("foo".into(), "bar".into())),
+      setname: None,
     };
     // HELLO 3 AUTH foo bar\r\n
     let expected_len = 5 + 1 + 1 + 1 + 4 + 1 + 3 + 1 + 3 + 2;
+    assert_eq!(bytes_encode_len(&frame), expected_len);
+
+    let frame = BytesFrame::Hello {
+      version: RespVersion::RESP3,
+      auth:    Some(("foo".into(), "bar".into())),
+      setname: Some("baz".into()),
+    };
+    // HELLO 3 AUTH foo bar SETNAME baz\r\n
+    let expected_len = 5 + 1 + 1 + 1 + 4 + 1 + 3 + 1 + 3 + 1 + 7 + 1 + 3 + 2;
     assert_eq!(bytes_encode_len(&frame), expected_len);
   }
 

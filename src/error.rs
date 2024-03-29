@@ -6,11 +6,11 @@ use nom::{
   Err as NomError,
   Needed,
 };
-use std::error::Error;
 
 #[cfg(feature = "bytes")]
 use bytes_utils::string::Utf8Error as BytesUtf8Error;
-
+#[cfg(feature = "std")]
+use std::error::Error;
 #[cfg(feature = "std")]
 use std::io::Error as IoError;
 
@@ -89,6 +89,7 @@ impl RedisProtocolError {
     }
   }
 
+  #[cfg(feature = "convert")]
   pub(crate) fn new_parse<S: Into<Cow<'static, str>>>(desc: S) -> Self {
     RedisProtocolError {
       kind:    RedisProtocolErrorKind::Parse,
@@ -136,7 +137,7 @@ impl From<GenError> for RedisProtocolError {
 
 impl From<NomError<nom::error::Error<&[u8]>>> for RedisProtocolError {
   fn from(e: NomError<nom::error::Error<&[u8]>>) -> Self {
-    if let NomError::Incomplete(Needed::Size(ref s)) = e {
+    if let NomError::Incomplete(Needed::Size(s)) = e {
       RedisProtocolError {
         kind:    RedisProtocolErrorKind::BufferTooSmall(s.get()),
         details: Cow::Borrowed(""),
@@ -158,7 +159,7 @@ impl From<NomError<nom::error::Error<&[u8]>>> for RedisProtocolError {
 
 impl From<NomError<&[u8]>> for RedisProtocolError {
   fn from(e: NomError<&[u8]>) -> Self {
-    if let NomError::Incomplete(Needed::Size(ref s)) = e {
+    if let NomError::Incomplete(Needed::Size(s)) = e {
       RedisProtocolError {
         kind:    RedisProtocolErrorKind::BufferTooSmall(s.get()),
         details: Cow::Borrowed(""),
@@ -223,12 +224,9 @@ where
 {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
-      RedisParseError::Custom {
-        ref context,
-        ref message,
-      } => write!(f, "{}: {}", context, message),
+      RedisParseError::Custom { context, message } => write!(f, "{}: {}", context, message),
       RedisParseError::Nom(input, kind) => write!(f, "{:?} at {:?}", kind, input),
-      RedisParseError::Incomplete(ref needed) => write!(f, "Incomplete({:?})", needed),
+      RedisParseError::Incomplete(needed) => write!(f, "Incomplete({:?})", needed),
     }
   }
 }

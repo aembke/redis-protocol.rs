@@ -1,14 +1,16 @@
 use crate::{
   digits_in_number,
-  error::{RedisProtocolError, RedisProtocolErrorKind},
+  error::RedisProtocolError,
   resp2::utils::{bulkstring_encode_len, error_encode_len, integer_encode_len, simplestring_encode_len},
   resp3::types::OwnedFrame as Resp3OwnedFrame,
   types::{_Range, PATTERN_PUBSUB_PREFIX, PUBSUB_PREFIX, PUBSUB_PUSH_PREFIX, SHARD_PUBSUB_PREFIX},
   utils,
 };
-use alloc::{string::String, vec::Vec};
+use alloc::{
+  string::{String, ToString},
+  vec::Vec,
+};
 use core::{
-  convert::TryFrom,
   fmt::Debug,
   hash::{Hash, Hasher},
   mem,
@@ -17,6 +19,8 @@ use core::{
 
 #[cfg(feature = "convert")]
 use crate::convert::FromResp2;
+#[cfg(feature = "bytes")]
+use crate::error::RedisProtocolErrorKind;
 #[cfg(feature = "bytes")]
 use crate::resp3::types::BytesFrame as Resp3BytesFrame;
 #[cfg(feature = "bytes")]

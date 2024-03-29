@@ -1,0 +1,27 @@
+version: '2'
+
+services:
+  debug:
+    depends_on:
+      - redis-protocol-redis-main
+    container_name: "debug"
+    build:
+      context: ../..
+      dockerfile: tests/codec/base.dockerfile
+      args:
+        REDIS_VERSION: "${REDIS_VERSION}"
+    networks:
+      - redis-protocol-tests
+    command:
+      - "/bin/bash"
+    environment:
+      RUST_LOG: "${RUST_LOG}"
+      CIRCLECI_TESTS: "${CIRCLECI_TESTS}"
+      REDIS_VERSION: "${REDIS_VERSION}"
+      FRED_REDIS_CENTRALIZED_HOST: "${FRED_REDIS_CENTRALIZED_HOST}"
+      FRED_REDIS_CENTRALIZED_PORT: "${FRED_REDIS_CENTRALIZED_PORT}"
+      REDIS_USERNAME: "${REDIS_USERNAME}"
+      REDIS_PASSWORD: "${REDIS_PASSWORD}"
+    volumes:
+      - "../..:/project"
+      - "~/.cargo/registry:/usr/local/cargo/registry"

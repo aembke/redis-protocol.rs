@@ -15,7 +15,9 @@ features = [
     "bytes",
     "std",
     "codec",
-    "convert"
+    "convert",
+    "resp2",
+    "resp3"
 ]
 rustdoc-args = ["--cfg", "docsrs"]
 
@@ -30,14 +32,14 @@ nom = { version = "7.1", default-features = false }
 libm = { version = "0.2", optional = true }
 hashbrown = { version = "0.14", optional = true }
 tokio-util = { version = "0.7", features = ["codec"], optional = true }
-rand = "0.8"
 
 [dev-dependencies]
 rand = "0.8"
-tokio = { version = "1.12", features = ["full"] }
+tokio = { version = "1.36", features = ["full"] }
 pretty_env_logger = "0.5"
 futures = "0.3"
 itertools = "0.12"
+criterion = { version = "0.4", features = ["html_reports"] }
 
 [features]
 default = ["std", "resp2", "resp3"]
@@ -56,3 +58,19 @@ doc = true
 doctest = true
 name = "redis_protocol"
 test = true
+
+[[bench]]
+name = "resp2_decode"
+harness = false
+
+#[[bench]]
+#name = "resp2_encode"
+#harness = false
+
+#[[bench]]
+#name = "resp3_encode"
+#harness = false
+
+#[[bench]]
+#name = "resp3_decode"
+#harness = false

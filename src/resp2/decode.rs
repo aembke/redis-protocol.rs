@@ -175,12 +175,12 @@ fn d_parse_frame(input: (&[u8], usize)) -> DResult<RangeFrame> {
 /// This is the generic interface behind the zero-copy interface and can be used to implement zero-copy
 /// deserialization into other types.
 pub fn decode_range(buf: &[u8]) -> Result<Option<(RangeFrame, usize)>, RedisProtocolError> {
-  let (offset, len) = (0, buf.len());
+  let (offset, _len) = (0, buf.len());
 
   match d_parse_frame((buf, offset)) {
     Ok(((_remaining, amt), frame)) => {
       #[cfg(feature = "std")]
-      debug_assert_eq!(amt, len - _remaining.len(), "returned offset doesn't match");
+      debug_assert_eq!(amt, _len - _remaining.len(), "returned offset doesn't match");
       Ok(Some((frame, amt)))
     },
     Err(NomErr::Incomplete(_)) => Ok(None),
@@ -239,23 +239,15 @@ pub fn decode_bytes_mut(buf: &mut BytesMut) -> Result<Option<(BytesFrame, usize,
 mod owned_tests {
   use super::*;
 
-  pub const PADDING: &'static str = "FOOBARBAZ";
-
-  pub fn pretty_print_panic(e: RedisProtocolError) {
-    panic!("{:?}", e);
-  }
-
-  pub fn panic_no_decode() {
-    panic!("Failed to decode bytes. None returned");
-  }
+  pub const PADDING: &str = "FOOBARBAZ";
 
   fn decode_and_verify_some(bytes: &[u8], expected: &(Option<OwnedFrame>, usize)) {
-    let mut bytes = bytes.to_vec();
+    let bytes = bytes.to_vec();
 
-    let (frame, len) = match decode(&mut bytes) {
+    let (frame, len) = match decode(&bytes) {
       Ok(Some((f, l))) => (Some(f), l),
-      Ok(None) => return panic_no_decode(),
-      Err(e) => return pretty_print_panic(e),
+      Ok(None) => panic!("Failed to decode bytes. None returned"),
+      Err(e) => panic!("{:?}", e),
     };
 
     assert_eq!(frame, expected.0, "decoded frame matched");
@@ -266,10 +258,10 @@ mod owned_tests {
     let mut bytes = bytes.to_vec();
     bytes.extend_from_slice(PADDING.as_bytes());
 
-    let (frame, len) = match decode(&mut bytes) {
+    let (frame, len) = match decode(&bytes) {
       Ok(Some((f, l))) => (Some(f), l),
-      Ok(None) => return panic_no_decode(),
-      Err(e) => return pretty_print_panic(e),
+      Ok(None) => panic!("Failed to decode bytes. None returned"),
+      Err(e) => panic!("{:?}", e),
     };
 
     assert_eq!(frame, expected.0, "decoded frame matched");
@@ -277,11 +269,11 @@ mod owned_tests {
   }
 
   fn decode_and_verify_none(bytes: &[u8]) {
-    let mut bytes = bytes.to_vec();
-    let (frame, len) = match decode(&mut bytes) {
+    let bytes = bytes.to_vec();
+    let (frame, len) = match decode(&bytes) {
       Ok(Some((f, l))) => (Some(f), l),
       Ok(None) => (None, 0),
-      Err(e) => return pretty_print_panic(e),
+      Err(e) => panic!("{:?}", e),
     };
 
     assert!(frame.is_none());
@@ -408,8 +400,7 @@ mod owned_tests {
   #[test]
   #[should_panic]
   fn should_error_on_junk() {
-    let bytes: Vec<u8> = "foobarbazwibblewobble".into();
-    decode(&bytes).map_err(|e| pretty_print_panic(e)).unwrap();
+    decode("foobarbazwibblewobble".as_bytes()).unwrap();
   }
 }
 
@@ -419,15 +410,7 @@ mod bytes_tests {
   use super::*;
   use nom::AsBytes;
 
-  pub const PADDING: &'static str = "FOOBARBAZ";
-
-  pub fn pretty_print_panic(e: RedisProtocolError) {
-    panic!("{:?}", e);
-  }
-
-  pub fn panic_no_decode() {
-    panic!("Failed to decode bytes. None returned");
-  }
+  pub const PADDING: &str = "FOOBARBAZ";
 
   fn decode_and_verify_some(bytes: &Bytes, expected: &(Option<BytesFrame>, usize)) {
     let mut bytes = BytesMut::from(bytes.as_bytes());
@@ -435,8 +418,8 @@ mod bytes_tests {
 
     let (frame, len, buf) = match decode_bytes_mut(&mut bytes) {
       Ok(Some((f, l, b))) => (Some(f), l, b),
-      Ok(None) => return panic_no_decode(),
-      Err(e) => return pretty_print_panic(e),
+      Ok(None) => panic!("Failed to decode bytes. None returned"),
+      Err(e) => panic!("{:?}", e),
     };
 
     assert_eq!(frame, expected.0, "decoded frame matched");
@@ -452,8 +435,8 @@ mod bytes_tests {
 
     let (frame, len, buf) = match decode_bytes_mut(&mut bytes) {
       Ok(Some((f, l, b))) => (Some(f), l, b),
-      Ok(None) => return panic_no_decode(),
-      Err(e) => return pretty_print_panic(e),
+      Ok(None) => panic!("Failed to decode bytes. None returned"),
+      Err(e) => panic!("{:?}", e),
     };
 
     assert_eq!(frame, expected.0, "decoded frame matched");
@@ -467,7 +450,7 @@ mod bytes_tests {
     let (frame, len, buf) = match decode_bytes_mut(&mut bytes) {
       Ok(Some((f, l, b))) => (Some(f), l, b),
       Ok(None) => (None, 0, Bytes::new()),
-      Err(e) => return pretty_print_panic(e),
+      Err(e) => panic!("{:?}", e),
     };
 
     assert!(frame.is_none());
@@ -596,6 +579,6 @@ mod bytes_tests {
   #[should_panic]
   fn should_error_on_junk() {
     let mut bytes: BytesMut = "foobarbazwibblewobble".into();
-    decode_bytes_mut(&mut bytes).map_err(|e| pretty_print_panic(e)).unwrap();
+    decode_bytes_mut(&mut bytes).unwrap();
   }
 }

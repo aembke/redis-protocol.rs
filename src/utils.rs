@@ -100,20 +100,19 @@ pub fn redis_keyslot(key: &[u8]) -> u16 {
   }
 }
 
-/// Convert a string to a double, supporting "+inf" and "-inf".
+/// Convert a string to a double, supporting "nan", "+inf" and "-inf".
 pub fn str_to_f64(s: &str) -> Result<f64, RedisProtocolError> {
   // this is changing in newer versions of redis to lose the "+" prefix
-  if s == "+inf" || s == "inf" {
-    Ok(f64::INFINITY)
-  } else if s == "-inf" {
-    Ok(f64::NEG_INFINITY)
-  } else {
-    s.parse::<f64>().map_err(|_| {
+  match s {
+    "+inf" | "inf" => Ok(f64::INFINITY),
+    "-inf" => Ok(f64::NEG_INFINITY),
+    "nan" => Ok(f64::NAN),
+    _ => s.parse::<f64>().map_err(|_| {
       RedisProtocolError::new(
         RedisProtocolErrorKind::Unknown,
         "Could not convert to floating point value.",
       )
-    })
+    }),
   }
 }
 

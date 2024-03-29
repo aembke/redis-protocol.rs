@@ -9,6 +9,7 @@ macro_rules! encode_checks(
   }
 );
 
+#[cfg(feature = "convert")]
 macro_rules! debug_type(
   ($($arg:tt)*) => {
     #[cfg(all(feature="decode-logs", feature = "std"))]

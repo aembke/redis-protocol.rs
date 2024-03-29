@@ -2,10 +2,13 @@
 //!
 //! <https://redis.io/topics/protocol#resp-protocol-description>
 
-use crate::{error::RedisProtocolError, resp2::types::*, types::CRLF, utils};
+use crate::{error::RedisProtocolError, resp2::types::*, types::CRLF};
+use alloc::string::ToString;
 use cookie_factory::GenError;
 use core::str;
 
+#[cfg(feature = "bytes")]
+use crate::utils;
 #[cfg(feature = "bytes")]
 use bytes::BytesMut;
 
@@ -363,7 +366,7 @@ mod bytes_tests {
     buf.extend_from_slice(PADDING.as_bytes());
 
     let len = extend_encode(&mut buf, input).unwrap();
-    let padded = vec![PADDING, expected].join("");
+    let padded = [PADDING, expected].join("");
 
     assert_eq!(buf, padded.as_bytes(), "padded buf contents match");
     assert_eq!(len, padded.as_bytes().len(), "padded expected len is correct");

@@ -2,7 +2,12 @@ use crate::{
   error::RedisProtocolError,
   resp2::types::{OwnedFrame, Resp2Frame},
 };
-use alloc::{string::String, vec::Vec};
+use alloc::{
+  format,
+  string::{String, ToString},
+  vec,
+  vec::Vec,
+};
 use core::{
   hash::{BuildHasher, Hash},
   str,
@@ -845,9 +850,7 @@ mod owned_tests {
 
   #[test]
   fn should_convert_bytes() {
-    let foo: Vec<u8> = OwnedFrame::BulkString("foo".as_bytes().to_vec().into())
-      .convert()
-      .unwrap();
+    let foo: Vec<u8> = OwnedFrame::BulkString("foo".as_bytes().to_vec()).convert().unwrap();
     assert_eq!(foo, "foo".as_bytes().to_vec());
     let foo: Vec<u8> = OwnedFrame::BulkString("foo".into()).convert().unwrap();
     assert_eq!(foo, "foo".as_bytes().to_vec());

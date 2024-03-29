@@ -9,17 +9,30 @@ use crate::{
     utils::{self as resp3_utils},
   },
   types::CRLF,
-  utils,
 };
+use alloc::string::{String, ToString};
 use cookie_factory::GenError;
 
 #[cfg(feature = "bytes")]
+use crate::utils;
+#[cfg(feature = "bytes")]
 use bytes::BytesMut;
+#[cfg(feature = "bytes")]
+use bytes_utils::Str;
 
 enum BorrowedAttrs<'a> {
   Owned(&'a OwnedAttributes),
   #[cfg(feature = "bytes")]
   Bytes(&'a BytesAttributes),
+}
+
+fn map_owned_auth(auth: &Option<(String, String)>) -> Option<(&str, &str)> {
+  auth.as_ref().map(|(u, p)| (u.as_str(), p.as_str()))
+}
+
+#[cfg(feature = "bytes")]
+fn map_bytes_auth(auth: &Option<(Str, Str)>) -> Option<(&str, &str)> {
+  auth.as_ref().map(|(u, p)| (&**u, &**p))
 }
 
 impl<'a> From<&'a OwnedAttributes> for BorrowedAttrs<'a> {
@@ -400,21 +413,32 @@ fn gen_bytes_push<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
 fn gen_hello<'a>(
   x: (&'a mut [u8], usize),
   version: &RespVersion,
-  username: Option<&str>,
-  password: Option<&str>,
+  auth: Option<(&str, &str)>,
+  setname: Option<&str>,
 ) -> Result<(&'a mut [u8], usize), GenError> {
   let mut x = do_gen!(
     x,
     gen_slice!(HELLO.as_bytes()) >> gen_slice!(EMPTY_SPACE.as_bytes()) >> gen_be_u8!(version.to_byte())
   )?;
-  if username.is_some() || password.is_some() {
-    x = do_gen!(x, gen_slice!(EMPTY_SPACE.as_bytes()) >> gen_slice!(AUTH.as_bytes()))?;
+  if let Some((username, password)) = auth {
+    x = do_gen!(
+      x,
+      gen_slice!(EMPTY_SPACE.as_bytes())
+        >> gen_slice!(AUTH.as_bytes())
+        >> gen_slice!(EMPTY_SPACE.as_bytes())
+        >> gen_slice!(username.as_bytes())
+        >> gen_slice!(EMPTY_SPACE.as_bytes())
+        >> gen_slice!(password.as_bytes())
+    )?;
   }
-  if let Some(username) = username {
-    x = do_gen!(x, gen_slice!(EMPTY_SPACE.as_bytes()) >> gen_slice!(username.as_bytes()))?;
-  }
-  if let Some(password) = password {
-    x = do_gen!(x, gen_slice!(EMPTY_SPACE.as_bytes()) >> gen_slice!(password.as_bytes()))?;
+  if let Some(name) = setname {
+    x = do_gen!(
+      x,
+      gen_slice!(EMPTY_SPACE.as_bytes())
+        >> gen_slice!(SETNAME.as_bytes())
+        >> gen_slice!(EMPTY_SPACE.as_bytes())
+        >> gen_slice!(name.as_bytes())
+    )?;
   }
 
   do_gen!(x, gen_slice!(CRLF.as_bytes()))
@@ -462,16 +486,9 @@ fn gen_owned_frame<'a>(
     OwnedFrame::Map { data, attributes } => gen_owned_map(x, data, attributes.as_ref()),
     OwnedFrame::Set { data, attributes } => gen_owned_set(x, data, attributes.as_ref()),
     OwnedFrame::Push { data, attributes } => gen_owned_push(x, data, attributes.as_ref()),
-    OwnedFrame::Hello {
-      version,
-      username,
-      password,
-    } => gen_hello(
-      x,
-      version,
-      username.as_ref().map(|s| s.as_str()),
-      password.as_ref().map(|s| s.as_str()),
-    ),
+    OwnedFrame::Hello { version, auth, setname } => {
+      gen_hello(x, version, map_owned_auth(auth), setname.as_ref().map(|s| s.as_str()))
+    },
     OwnedFrame::BigNumber { data, attributes } => gen_bignumber(x, data, attributes.as_ref()),
     OwnedFrame::ChunkedString(b) => gen_chunked_string(x, b),
   }
@@ -504,16 +521,9 @@ fn gen_bytes_frame<'a>(
     BytesFrame::Map { data, attributes } => gen_bytes_map(x, data, attributes.as_ref()),
     BytesFrame::Set { data, attributes } => gen_bytes_set(x, data, attributes.as_ref()),
     BytesFrame::Push { data, attributes } => gen_bytes_push(x, data, attributes.as_ref()),
-    BytesFrame::Hello {
-      version,
-      username,
-      password,
-    } => gen_hello(
-      x,
-      version,
-      username.as_ref().map(|s| &**s),
-      password.as_ref().map(|s| &**s),
-    ),
+    BytesFrame::Hello { version, auth, setname } => {
+      gen_hello(x, version, map_bytes_auth(auth), setname.as_ref().map(|s| &**s))
+    },
     BytesFrame::BigNumber { data, attributes } => gen_bignumber(x, data, attributes.as_ref()),
     BytesFrame::ChunkedString(b) => gen_chunked_string(x, b),
   }
@@ -898,6 +908,7 @@ pub mod streaming {
 // Regression tests duplicated for each frame type.
 
 #[cfg(test)]
+#[cfg(feature = "std")]
 mod owned_tests {
   use super::*;
   use itertools::Itertools;
@@ -985,7 +996,7 @@ mod owned_tests {
   fn encode_and_verify_empty_with_attributes(input: &OwnedFrame, expected: &str) {
     let (attributes, encoded_attributes) = create_attributes();
     let mut frame = input.clone();
-    let _ = frame.add_attributes(attributes).unwrap();
+    frame.add_attributes(attributes).unwrap();
     let mut buf = vec![0; expected.len() + encoded_attributes.len()];
     let len = complete::encode(&mut buf, &frame).unwrap();
 
@@ -1008,7 +1019,7 @@ mod owned_tests {
   ) {
     let (attributes, encoded_attributes) = create_attributes();
     let mut frame = input.clone();
-    let _ = frame.add_attributes(attributes).unwrap();
+    frame.add_attributes(attributes).unwrap();
     let mut buf = vec![0; input.encode_len() + encoded_attributes.len()];
     let len = complete::encode(&mut buf, &frame).unwrap();
 
@@ -1168,7 +1179,7 @@ mod owned_tests {
   #[test]
   fn should_encode_negative_number() {
     let expected = ":-1000\r\n";
-    let input: OwnedFrame = (-1000 as i64).into();
+    let input: OwnedFrame = (-1000).into();
 
     encode_and_verify_empty(&input, expected);
     encode_and_verify_empty_with_attributes(&input, expected);
@@ -1213,14 +1224,15 @@ mod owned_tests {
   }
 
   #[test]
-  #[should_panic]
-  fn should_not_encode_double_nan() {
+  fn should_encode_double_nan() {
+    let expected = ",nan\r\n";
     let input = OwnedFrame::Double {
       data:       f64::NAN,
       attributes: None,
     };
-    let mut buf = vec![0; 32];
-    let _ = complete::encode(&mut buf, &input).unwrap();
+
+    encode_and_verify_empty(&input, expected);
+    encode_and_verify_empty_with_attributes(&input, expected);
   }
 
   #[test]
@@ -1422,18 +1434,18 @@ mod owned_tests {
   fn should_encode_hello() {
     let expected = "HELLO 3\r\n";
     let input = OwnedFrame::Hello {
-      version:  RespVersion::RESP3,
-      username: None,
-      password: None,
+      version: RespVersion::RESP3,
+      auth:    None,
+      setname: None,
     };
 
     encode_and_verify_empty(&input, expected);
 
     let expected = "HELLO 2\r\n";
     let input = OwnedFrame::Hello {
-      version:  RespVersion::RESP2,
-      username: None,
-      password: None,
+      version: RespVersion::RESP2,
+      auth:    None,
+      setname: None,
     };
 
     encode_and_verify_empty(&input, expected);
@@ -1443,9 +1455,21 @@ mod owned_tests {
   fn should_encode_hello_with_auth() {
     let expected = "HELLO 3 AUTH default mypassword\r\n";
     let input = OwnedFrame::Hello {
-      version:  RespVersion::RESP3,
-      username: Some("default".into()),
-      password: Some("mypassword".into()),
+      version: RespVersion::RESP3,
+      auth:    Some(("default".into(), "mypassword".into())),
+      setname: None,
+    };
+
+    encode_and_verify_empty(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_hello_with_auth_and_setname() {
+    let expected = "HELLO 3 AUTH default mypassword SETNAME myname\r\n";
+    let input = OwnedFrame::Hello {
+      version: RespVersion::RESP3,
+      auth:    Some(("default".into(), "mypassword".into())),
+      setname: Some("myname".into()),
     };
 
     encode_and_verify_empty(&input, expected);
@@ -1581,7 +1605,7 @@ mod bytes_tests {
   use itertools::Itertools;
   use std::{convert::TryInto, str};
 
-  const PADDING: &'static str = "foobar";
+  const PADDING: &str = "foobar";
 
   fn create_attributes() -> (FrameMap<BytesFrame, BytesFrame>, Vec<u8>) {
     let mut out = resp3_utils::new_map(0);
@@ -1667,7 +1691,7 @@ mod bytes_tests {
     buf.extend_from_slice(PADDING.as_bytes());
 
     let len = complete::extend_encode(&mut buf, input).unwrap();
-    let padded = vec![PADDING, expected].join("");
+    let padded = [PADDING, expected].join("");
 
     assert_eq!(
       buf,
@@ -1684,7 +1708,7 @@ mod bytes_tests {
     buf.extend_from_slice(PADDING.as_bytes());
 
     let len = complete::extend_encode(&mut buf, input).unwrap();
-    let expected_start_padded = vec![PADDING, expected_start].join("");
+    let expected_start_padded = [PADDING, expected_start].join("");
 
     unordered_assert_eq(buf, BytesMut::from(expected_start_padded.as_bytes()), expected_middle);
     let expected_middle_len: usize = expected_middle.iter().map(|x| x.as_bytes().len()).sum();
@@ -1712,7 +1736,7 @@ mod bytes_tests {
   fn encode_and_verify_empty_with_attributes(input: &BytesFrame, expected: &str) {
     let (attributes, encoded_attributes) = create_attributes();
     let mut frame = input.clone();
-    let _ = frame.add_attributes(attributes).unwrap();
+    frame.add_attributes(attributes).unwrap();
     let mut buf = BytesMut::new();
     let len = complete::extend_encode(&mut buf, &frame).unwrap();
 
@@ -1735,7 +1759,7 @@ mod bytes_tests {
   ) {
     let (attributes, encoded_attributes) = create_attributes();
     let mut frame = input.clone();
-    let _ = frame.add_attributes(attributes).unwrap();
+    frame.add_attributes(attributes).unwrap();
     let mut buf = BytesMut::new();
     let len = complete::extend_encode(&mut buf, &frame).unwrap();
 
@@ -1755,7 +1779,7 @@ mod bytes_tests {
   fn encode_and_verify_non_empty_with_attributes(input: &BytesFrame, expected: &str) {
     let (attributes, encoded_attributes) = create_attributes();
     let mut frame = input.clone();
-    let _ = frame.add_attributes(attributes).unwrap();
+    frame.add_attributes(attributes).unwrap();
 
     let mut buf = BytesMut::new();
     buf.extend_from_slice(PADDING.as_bytes());
@@ -1781,7 +1805,7 @@ mod bytes_tests {
   ) {
     let (attributes, encoded_attributes) = create_attributes();
     let mut frame = input.clone();
-    let _ = frame.add_attributes(attributes).unwrap();
+    frame.add_attributes(attributes).unwrap();
 
     let mut buf = BytesMut::new();
     buf.extend_from_slice(PADDING.as_bytes());
@@ -1963,7 +1987,7 @@ mod bytes_tests {
   #[test]
   fn should_encode_negative_number() {
     let expected = ":-1000\r\n";
-    let input: BytesFrame = (-1000 as i64).into();
+    let input: BytesFrame = (-1000).into();
 
     encode_and_verify_empty(&input, expected);
     encode_and_verify_non_empty(&input, expected);
@@ -2018,14 +2042,17 @@ mod bytes_tests {
   }
 
   #[test]
-  #[should_panic]
-  fn should_not_encode_double_nan() {
+  fn should_encode_double_nan() {
+    let expected = ",nan\r\n";
     let input = BytesFrame::Double {
       data:       f64::NAN,
       attributes: None,
     };
-    let mut buf = BytesMut::new();
-    let _ = complete::encode_bytes(&mut buf, &input).unwrap();
+
+    encode_and_verify_empty(&input, expected);
+    encode_and_verify_non_empty(&input, expected);
+    encode_and_verify_empty_with_attributes(&input, expected);
+    encode_and_verify_non_empty_with_attributes(&input, expected);
   }
 
   #[test]
@@ -2252,9 +2279,9 @@ mod bytes_tests {
   fn should_encode_hello() {
     let expected = "HELLO 3\r\n";
     let input = BytesFrame::Hello {
-      version:  RespVersion::RESP3,
-      username: None,
-      password: None,
+      version: RespVersion::RESP3,
+      auth:    None,
+      setname: None,
     };
 
     encode_and_verify_empty(&input, expected);
@@ -2262,9 +2289,9 @@ mod bytes_tests {
 
     let expected = "HELLO 2\r\n";
     let input = BytesFrame::Hello {
-      version:  RespVersion::RESP2,
-      username: None,
-      password: None,
+      version: RespVersion::RESP2,
+      auth:    None,
+      setname: None,
     };
 
     encode_and_verify_empty(&input, expected);
@@ -2275,9 +2302,22 @@ mod bytes_tests {
   fn should_encode_hello_with_auth() {
     let expected = "HELLO 3 AUTH default mypassword\r\n";
     let input = BytesFrame::Hello {
-      version:  RespVersion::RESP3,
-      username: Some("default".into()),
-      password: Some("mypassword".into()),
+      version: RespVersion::RESP3,
+      auth:    Some(("default".into(), "mypassword".into())),
+      setname: None,
+    };
+
+    encode_and_verify_empty(&input, expected);
+    encode_and_verify_non_empty(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_hello_with_auth_and_setname() {
+    let expected = "HELLO 3 AUTH default mypassword SETNAME myname\r\n";
+    let input = BytesFrame::Hello {
+      version: RespVersion::RESP3,
+      auth:    Some(("default".into(), "mypassword".into())),
+      setname: Some("myname".into()),
     };
 
     encode_and_verify_empty(&input, expected);

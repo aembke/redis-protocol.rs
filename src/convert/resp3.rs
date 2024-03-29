@@ -2,7 +2,12 @@ use crate::{
   error::RedisProtocolError,
   resp3::types::{OwnedFrame, Resp3Frame},
 };
-use alloc::{string::String, vec::Vec};
+use alloc::{
+  format,
+  string::{String, ToString},
+  vec,
+  vec::Vec,
+};
 use core::{
   hash::{BuildHasher, Hash},
   str,
@@ -1176,7 +1181,7 @@ mod owned_tests {
   #[test]
   fn should_convert_bytes() {
     let foo: Vec<u8> = OwnedFrame::BlobString {
-      data:       "foo".as_bytes().to_vec().into(),
+      data:       "foo".as_bytes().to_vec(),
       attributes: None,
     }
     .convert()

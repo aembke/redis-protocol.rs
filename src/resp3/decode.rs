@@ -1,17 +1,17 @@
 use crate::{
   error::*,
   resp3::{types::*, utils as resp3_utils},
-  types::{DResult, _Range, CRLF},
+  types::{DResult, CRLF},
   utils,
 };
+use alloc::{format, vec::Vec};
 use core::{fmt::Debug, str, str::FromStr};
 use nom::{
   bytes::streaming::{take as nom_take, take_until as nom_take_until},
-  combinator::{map as nom_map, map_res as nom_map_res, opt as nom_opt},
+  combinator::{map as nom_map, map_res as nom_map_res},
   multi::count as nom_count,
-  number::streaming::be_u8,
+  number::streaming::be_u8 as nom_be_u8,
   sequence::terminated as nom_terminated,
-  AsBytes,
   Err as NomErr,
 };
 
@@ -54,26 +54,6 @@ fn to_bool<T>(s: &[u8]) -> Result<bool, RedisParseError<T>> {
     "f" => Ok(false),
     _ => Err(RedisParseError::new_custom("to_bool", "Invalid boolean value.")),
   }
-}
-
-fn to_hello<T>(
-  version: u8,
-  username: Option<_Range>,
-  password: Option<_Range>,
-) -> Result<RangeFrame, RedisParseError<T>> {
-  let version = match version {
-    2 => RespVersion::RESP2,
-    3 => RespVersion::RESP3,
-    _ => {
-      return Err(RedisParseError::new_custom("parse_hello", "Invalid RESP version."));
-    },
-  };
-
-  Ok(RangeFrame::Hello {
-    version,
-    username,
-    password,
-  })
 }
 
 fn to_verbatimstring_format<T>(s: &[u8]) -> Result<VerbatimStringFormat, RedisParseError<T>> {
@@ -143,20 +123,29 @@ fn d_read_prefix_len_signed(input: (&[u8], usize)) -> DResult<isize> {
 }
 
 fn d_frame_type(input: (&[u8], usize)) -> DResult<FrameKind> {
-  let (input_bytes, byte) = be_u8(input.0)?;
-  let kind = match FrameKind::from_byte(byte) {
-    Some(k) => k,
-    None => e!(RedisParseError::new_custom("frame_type", "Invalid frame type prefix.")),
-  };
-  decode_log_str!(
-    input_bytes,
-    _input,
-    "Parsed frame type {:?}, remaining: {:?}",
-    kind,
-    _input
-  );
+  let (input_bytes, byte) = nom_be_u8(input.0)?;
 
-  Ok(((input_bytes, input.1 + 1), kind))
+  match FrameKind::from_byte(byte) {
+    Some(kind) => {
+      decode_log_str!(
+        input_bytes,
+        _input,
+        "Parsed frame type {:?}, remaining: {:?}",
+        kind,
+        _input
+      );
+
+      Ok(((input_bytes, input.1 + 1), kind))
+    },
+    None => {
+      if byte == b'H' {
+        // return the original bytes w/o consuming anything
+        Ok((input, FrameKind::Hello))
+      } else {
+        e!(RedisParseError::new_custom("frame_type", "Invalid frame type prefix."))
+      }
+    },
+  }
 }
 
 fn d_parse_simplestring(input: (&[u8], usize)) -> DResult<RangeFrame> {
@@ -305,40 +294,79 @@ fn d_parse_attribute(input: (&[u8], usize)) -> DResult<RangeAttributes> {
 }
 
 fn d_parse_hello(input: (&[u8], usize)) -> DResult<RangeFrame> {
-  let mut offset = input.1;
-  let (input, _) = nom_map_res(
-    nom_terminated(nom_take_until(HELLO.as_bytes()), nom_take(1_usize)),
-    str::from_utf8,
-  )(input.0)?;
-  offset += HELLO.as_bytes().len() + 1;
+  // HELLO [protover [AUTH username password] [SETNAME clientname]]\r\n
+  // The HELLO definition seems somewhat undefined, nor does it use length prefixes or CRLF delimiters, so most of the
+  // above logic isn't useful here. this is hacky and should be improved
+  let start_offset = input.1;
+  let ((input, offset), data) = d_read_to_crlf_take(input)?;
+  let parsed = etry!(str::from_utf8(data));
+  let parts: Vec<_> = parsed.split(' ').collect();
 
-  let (input, version) = be_u8(input)?;
-  offset += 1;
-
-  let (input, auth) = nom_opt(nom_map_res(
-    nom_terminated(nom_take_until(AUTH.as_bytes()), nom_take(1_usize)),
-    str::from_utf8,
-  ))(input)?;
-
-  let (input, username, password) = if auth.is_some() {
-    offset += AUTH.as_bytes().len() + 1;
-    let username_offset = offset;
-
-    let (input, username) = nom_terminated(nom_take_until(EMPTY_SPACE.as_bytes()), nom_take(1_usize))(input)?;
-    let password_offset = username_offset + username.len() + 1;
-    let (input, password) = nom_take_until(CRLF.as_bytes())(input)?;
-    offset += username.as_bytes().len() + password.as_bytes().len() + 1 + 2;
-
-    (
-      input,
-      Some((username_offset, username_offset + username.len())),
-      Some((password_offset, password_offset + password.len())),
-    )
-  } else {
-    (input, None, None)
+  if parts.len() < 2 {
+    e!(RedisParseError::new_custom("parse_hello", "Invalid HELLO."));
+  }
+  let version = match parts[1] {
+    "2" => RespVersion::RESP2,
+    "3" => RespVersion::RESP3,
+    _ => e!(RedisParseError::new_custom("parse_hello", "Invalid RESP version")),
   };
 
-  Ok(((input, offset), etry!(to_hello(version, username, password))))
+  let (username, password, setname) = if parts.len() == 5 {
+    // auth, no setname
+    if parts[2] == AUTH {
+      let username_start = start_offset + HELLO.as_bytes().len() + 3 + AUTH.as_bytes().len() + 1;
+      let username_end = username_start + parts[3].as_bytes().len();
+      let password_start = username_end + 1;
+      let password_end = password_start + parts[4].as_bytes().len();
+
+      (
+        Some((username_start, username_end)),
+        Some((password_start, password_end)),
+        None,
+      )
+    } else {
+      e!(RedisParseError::new_custom("parse_hello", "Invalid AUTH"))
+    }
+  } else if parts.len() == 7 {
+    // auth and setname
+    if parts[2] == AUTH && parts[5] == SETNAME {
+      let username_start = start_offset + HELLO.as_bytes().len() + 3 + AUTH.as_bytes().len() + 1;
+      let username_end = username_start + parts[3].as_bytes().len();
+      let password_start = username_end + 1;
+      let password_end = password_start + parts[4].as_bytes().len();
+      let name_start = password_end + 1 + SETNAME.as_bytes().len() + 1;
+      let name_end = name_start + parts[6].as_bytes().len();
+
+      (
+        Some((username_start, username_end)),
+        Some((password_start, password_end)),
+        Some((name_start, name_end)),
+      )
+    } else {
+      e!(RedisParseError::new_custom("parse_hello", "Invalid AUTH or SETNAME"))
+    }
+  } else if parts.len() == 4 {
+    // no auth, with setname
+    if parts[2] == SETNAME {
+      let name_start = start_offset + HELLO.as_bytes().len() + 3 + SETNAME.as_bytes().len() + 1;
+      let name_end = name_start + parts[3].as_bytes().len();
+
+      (None, None, Some((name_start, name_end)))
+    } else {
+      e!(RedisParseError::new_custom("parse_hello", "Invalid SETNAME"))
+    }
+  } else if parts.len() == 2 {
+    (None, None, None)
+  } else {
+    e!(RedisParseError::new_custom("parse_hello", "Invalid HELLO arguments"))
+  };
+
+  Ok(((input, offset), RangeFrame::Hello {
+    version,
+    username,
+    password,
+    setname,
+  }))
 }
 
 /// Check for a streaming variant of a frame, and if found then return the prefix bytes only, otherwise return the
@@ -450,12 +478,12 @@ pub mod complete {
   /// This is the generic interface behind the zero-copy interface and can be used to implement zero-copy
   /// deserialization into other types.
   pub fn decode_range(buf: &[u8]) -> Result<Option<(RangeFrame, usize)>, RedisProtocolError> {
-    let (offset, len) = (0, buf.len());
+    let (offset, _len) = (0, buf.len());
 
     let (frame, amt) = match d_parse_frame_or_attribute((&buf, offset)) {
       Ok(((_remaining, offset), frame)) => {
         #[cfg(feature = "std")]
-        debug_assert_eq!(offset, len - _remaining.len(), "returned offset doesn't match");
+        debug_assert_eq!(offset, _len - _remaining.len(), "returned offset doesn't match");
         (frame, offset)
       },
       Err(NomErr::Incomplete(_)) => return Ok(None),
@@ -521,12 +549,12 @@ pub mod streaming {
   /// This is the generic interface behind the zero-copy interface and can be used to implement zero-copy
   /// deserialization into other types.
   pub fn decode_range(buf: &[u8]) -> Result<Option<(DecodedRangeFrame, usize)>, RedisProtocolError> {
-    let (offset, len) = (0, buf.len());
+    let (offset, _len) = (0, buf.len());
 
     match d_parse_frame_or_attribute((&buf, offset)) {
       Ok(((_remaining, offset), frame)) => {
         #[cfg(feature = "std")]
-        debug_assert_eq!(offset, len - _remaining.len(), "returned offset doesn't match");
+        debug_assert_eq!(offset, _len - _remaining.len(), "returned offset doesn't match");
         Ok(Some((frame, offset)))
       },
       Err(NomErr::Incomplete(_)) => Ok(None),
@@ -613,19 +641,11 @@ pub mod owned_tests {
 
   pub const PADDING: &str = "FOOBARBAZ";
 
-  pub fn pretty_print_panic(e: RedisProtocolError) {
-    panic!("{:?}", e);
-  }
-
-  pub fn panic_no_decode() {
-    panic!("Failed to decode bytes. None returned.")
-  }
-
   fn decode_and_verify_some(bytes: &[u8], expected: &(Option<OwnedFrame>, usize)) {
-    let (frame, len) = match complete::decode(&bytes) {
+    let (frame, len) = match complete::decode(bytes) {
       Ok(Some((f, l))) => (Some(f), l),
-      Ok(None) => return panic_no_decode(),
-      Err(e) => return pretty_print_panic(e),
+      Ok(None) => panic!("Failed to decode bytes. None returned."),
+      Err(e) => panic!("{:?}", e),
     };
 
     assert_eq!(frame, expected.0, "decoded frame matched");
@@ -638,8 +658,8 @@ pub mod owned_tests {
 
     let (frame, len) = match complete::decode(&bytes) {
       Ok(Some((f, l))) => (Some(f), l),
-      Ok(None) => return panic_no_decode(),
-      Err(e) => return pretty_print_panic(e),
+      Ok(None) => panic!("Failed to decode bytes. None returned."),
+      Err(e) => panic!("{:?}", e),
     };
 
     assert_eq!(frame, expected.0, "decoded frame matched");
@@ -647,10 +667,10 @@ pub mod owned_tests {
   }
 
   fn decode_and_verify_none(bytes: &[u8]) {
-    let (frame, len) = match complete::decode(&bytes) {
+    let (frame, len) = match complete::decode(bytes) {
       Ok(Some((f, l))) => (Some(f), l),
       Ok(None) => (None, 0),
-      Err(e) => return pretty_print_panic(e),
+      Err(e) => panic!("{:?}", e),
     };
 
     assert!(frame.is_none());
@@ -1380,7 +1400,7 @@ pub mod owned_tests {
             attributes: None,
           },
         ],
-        attributes: Some(expected_attrs.into()),
+        attributes: Some(expected_attrs),
       }),
       81,
     );
@@ -1717,6 +1737,70 @@ pub mod owned_tests {
 
     assert_eq!(actual, expected);
   }
+
+  #[test]
+  fn should_decode_hello_no_auth() {
+    let expected = (
+      Some(OwnedFrame::Hello {
+        version: RespVersion::RESP3,
+        auth:    None,
+        setname: None,
+      }),
+      9,
+    );
+    let bytes = "HELLO 3\r\n";
+
+    decode_and_verify_some(bytes.as_bytes(), &expected);
+    decode_and_verify_padded_some(bytes.as_bytes(), &expected);
+  }
+
+  #[test]
+  fn should_decode_hello_with_auth_no_setname() {
+    let expected = (
+      Some(OwnedFrame::Hello {
+        version: RespVersion::RESP3,
+        auth:    Some(("foo".into(), "bar".into())),
+        setname: None,
+      }),
+      22,
+    );
+    let bytes = "HELLO 3 AUTH foo bar\r\n";
+
+    decode_and_verify_some(bytes.as_bytes(), &expected);
+    decode_and_verify_padded_some(bytes.as_bytes(), &expected);
+  }
+
+  #[test]
+  fn should_decode_hello_with_setname() {
+    let expected = (
+      Some(OwnedFrame::Hello {
+        version: RespVersion::RESP3,
+        auth:    None,
+        setname: Some("baz".into()),
+      }),
+      21,
+    );
+    let bytes = "HELLO 3 SETNAME baz\r\n";
+
+    decode_and_verify_some(bytes.as_bytes(), &expected);
+    decode_and_verify_padded_some(bytes.as_bytes(), &expected);
+  }
+
+  #[test]
+  fn should_decode_hello_with_auth_and_setname() {
+    let expected = (
+      Some(OwnedFrame::Hello {
+        version: RespVersion::RESP3,
+        auth:    Some(("foo".into(), "bar".into())),
+        setname: Some("baz".into()),
+      }),
+      34,
+    );
+    let bytes = "HELLO 3 AUTH foo bar SETNAME baz\r\n";
+
+    decode_and_verify_some(bytes.as_bytes(), &expected);
+    decode_and_verify_padded_some(bytes.as_bytes(), &expected);
+  }
 }
 
 #[cfg(test)]
@@ -1725,23 +1809,16 @@ pub mod bytes_tests {
   use super::*;
   use crate::resp3::decode::{complete::decode, streaming::decode_bytes as stream_decode};
   use bytes::{Bytes, BytesMut};
+  use nom::AsBytes;
   use std::str;
 
-  pub const PADDING: &str = "FOOBARBAZ";
-
-  pub fn pretty_print_panic(e: RedisProtocolError) {
-    panic!("{:?}", e);
-  }
-
-  pub fn panic_no_decode() {
-    panic!("Failed to decode bytes. None returned.")
-  }
+  const PADDING: &str = "FOOBARBAZ";
 
   fn decode_and_verify_some(bytes: &Bytes, expected: &(Option<BytesFrame>, usize)) {
-    let (frame, len) = match complete::decode_bytes(&bytes) {
+    let (frame, len) = match complete::decode_bytes(bytes) {
       Ok(Some((f, l))) => (Some(f), l),
-      Ok(None) => return panic_no_decode(),
-      Err(e) => return pretty_print_panic(e),
+      Ok(None) => panic!("Failed to decode bytes. None returned."),
+      Err(e) => panic!("{:?}", e),
     };
 
     assert_eq!(frame, expected.0, "decoded frame matched");
@@ -1755,8 +1832,8 @@ pub mod bytes_tests {
 
     let (frame, len) = match complete::decode_bytes(&bytes) {
       Ok(Some((f, l))) => (Some(f), l),
-      Ok(None) => return panic_no_decode(),
-      Err(e) => return pretty_print_panic(e),
+      Ok(None) => panic!("Failed to decode bytes. None returned."),
+      Err(e) => panic!("{:?}", e),
     };
 
     assert_eq!(frame, expected.0, "decoded frame matched");
@@ -1764,10 +1841,10 @@ pub mod bytes_tests {
   }
 
   fn decode_and_verify_none(bytes: &Bytes) {
-    let (frame, len) = match complete::decode_bytes(&bytes) {
+    let (frame, len) = match complete::decode_bytes(bytes) {
       Ok(Some((f, l))) => (Some(f), l),
       Ok(None) => (None, 0),
-      Err(e) => return pretty_print_panic(e),
+      Err(e) => panic!("{:?}", e),
     };
 
     assert!(frame.is_none());
@@ -1957,8 +2034,7 @@ pub mod bytes_tests {
   #[test]
   #[should_panic]
   fn should_error_on_junk() {
-    let bytes: Bytes = "foobarbazwibblewobble".into();
-    let _ = complete::decode(&bytes).map_err(|e| pretty_print_panic(e));
+    complete::decode("foobarbazwibblewobble".as_bytes()).unwrap();
   }
 
   // ----------------- end tests adapted from RESP2 ------------------------
@@ -2498,7 +2574,7 @@ pub mod bytes_tests {
             attributes: None,
           },
         ],
-        attributes: Some(expected_attrs.into()),
+        attributes: Some(expected_attrs),
       }),
       81,
     );
@@ -2834,5 +2910,69 @@ pub mod bytes_tests {
     };
 
     assert_eq!(actual, expected);
+  }
+
+  #[test]
+  fn should_decode_hello_no_auth() {
+    let expected = (
+      Some(BytesFrame::Hello {
+        version: RespVersion::RESP3,
+        auth:    None,
+        setname: None,
+      }),
+      9,
+    );
+    let bytes = "HELLO 3\r\n".into();
+
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
+  }
+
+  #[test]
+  fn should_decode_hello_with_auth_no_setname() {
+    let expected = (
+      Some(BytesFrame::Hello {
+        version: RespVersion::RESP3,
+        auth:    Some(("foo".into(), "bar".into())),
+        setname: None,
+      }),
+      22,
+    );
+    let bytes = "HELLO 3 AUTH foo bar\r\n".into();
+
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
+  }
+
+  #[test]
+  fn should_decode_hello_with_setname() {
+    let expected = (
+      Some(BytesFrame::Hello {
+        version: RespVersion::RESP3,
+        auth:    None,
+        setname: Some("baz".into()),
+      }),
+      21,
+    );
+    let bytes = "HELLO 3 SETNAME baz\r\n".into();
+
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
+  }
+
+  #[test]
+  fn should_decode_hello_with_auth_and_setname() {
+    let expected = (
+      Some(BytesFrame::Hello {
+        version: RespVersion::RESP3,
+        auth:    Some(("foo".into(), "bar".into())),
+        setname: Some("baz".into()),
+      }),
+      34,
+    );
+    let bytes = "HELLO 3 AUTH foo bar SETNAME baz\r\n".into();
+
+    decode_and_verify_some(&bytes, &expected);
+    decode_and_verify_padded_some(&bytes, &expected);
   }
 }

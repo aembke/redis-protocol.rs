@@ -11,7 +11,6 @@ use alloc::{
   vec::Vec,
 };
 use core::{
-  convert::TryFrom,
   fmt::Debug,
   hash::{Hash, Hasher},
   mem,
@@ -83,6 +82,8 @@ pub const NULL: &str = "_\r\n";
 pub const INFINITY: &str = "inf";
 /// Byte representation of negative infinity.
 pub const NEG_INFINITY: &str = "-inf";
+/// Byte representation of NaN.
+pub const NAN: &str = "nan";
 
 /// Byte representation of HELLO.
 pub const HELLO: &str = "HELLO";
@@ -94,6 +95,8 @@ pub const BOOL_FALSE_BYTES: &str = "#f\r\n";
 pub const EMPTY_SPACE: &str = " ";
 /// Byte representation of `AUTH`.
 pub const AUTH: &str = "AUTH";
+/// Byte representation of `SETNAME`.
+pub const SETNAME: &str = "SETNAME";
 
 /// A map struct for frames that uses either `indexmap::IndexMap`, `hashbrown::HashMap`, or
 /// `std::collections::HashMap` depending on the enabled feature flags.
@@ -377,6 +380,7 @@ pub enum RangeFrame {
     version:  RespVersion,
     username: Option<_Range>,
     password: Option<_Range>,
+    setname:  Option<_Range>,
   },
   /// One chunk of a streaming blob.
   ChunkedString(_Range),
@@ -750,9 +754,9 @@ pub enum OwnedFrame {
   /// A special frame type used when first connecting to the server to describe the protocol version and optional
   /// credentials.
   Hello {
-    version:  RespVersion,
-    username: Option<String>,
-    password: Option<String>,
+    version: RespVersion,
+    auth:    Option<(String, String)>,
+    setname: Option<String>,
   },
   /// One chunk of a streaming blob.
   ChunkedString(Vec<u8>),
@@ -1280,9 +1284,9 @@ pub enum BytesFrame {
   /// A special frame type used when first connecting to the server to describe the protocol version and optional
   /// credentials.
   Hello {
-    version:  RespVersion,
-    username: Option<Str>,
-    password: Option<Str>,
+    version: RespVersion,
+    auth:    Option<(Str, Str)>,
+    setname: Option<Str>,
   },
   /// One chunk of a streaming blob.
   ChunkedString(Bytes),
