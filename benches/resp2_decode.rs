@@ -1,4 +1,4 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{black_box, criterion_group, criterion_main, BatchSize, Bencher, Criterion};
 use rand::{distributions::Alphanumeric, Rng};
 use redis_protocol::{
   resp2::{
@@ -221,84 +221,60 @@ fn owned(c: &mut Criterion) {
   // also try mixing in integers and other types
   let input = OwnedInput::default();
 
-  c.bench_function("decode 1kb bulk string", |b| {
-    b.iter(|| decode::decode(black_box(&input._1kb_bs)).unwrap().unwrap())
+  c.bench_function("owned decode 1kb bulk string", |b| {
+    b.iter(|| decode::decode(black_box(&input._1kb_bs)))
   });
-  c.bench_function("decode 10kb bulk string", |b| {
-    b.iter(|| decode::decode(black_box(&input._10kb_bs)).unwrap().unwrap())
+  c.bench_function("owned decode 10kb bulk string", |b| {
+    b.iter(|| decode::decode(black_box(&input._10kb_bs)))
   });
-  c.bench_function("decode 100kb bulk string", |b| {
-    b.iter(|| decode::decode(black_box(&input._100kb_bs)).unwrap().unwrap())
+  c.bench_function("owned decode 100kb bulk string", |b| {
+    b.iter(|| decode::decode(black_box(&input._100kb_bs)))
   });
-  c.bench_function("decode 1mb bulk string", |b| {
-    b.iter(|| decode::decode(black_box(&input._1mb_bs)).unwrap().unwrap())
+  c.bench_function("owned decode 1mb bulk string", |b| {
+    b.iter(|| decode::decode(black_box(&input._1mb_bs)))
   });
-  c.bench_function("decode 10mb bulk string", |b| {
-    b.iter(|| decode::decode(black_box(&input._10mb_bs)).unwrap().unwrap())
-  });
-
-  c.bench_function("decode array - 10 no nulls 1k bulk string", |b| {
-    b.iter(|| decode::decode(black_box(&input._10_no_nulls_1k_bs)).unwrap().unwrap())
-  });
-  c.bench_function("decode array - 100 no nulls 1k bulk string", |b| {
-    b.iter(|| decode::decode(black_box(&input._100_no_nulls_1k_bs)).unwrap().unwrap())
-  });
-  c.bench_function("decode array - 1000 no nulls 1k bulk string", |b| {
-    b.iter(|| decode::decode(black_box(&input._1000_no_nulls_1k_bs)).unwrap().unwrap())
+  c.bench_function("owned decode 10mb bulk string", |b| {
+    b.iter(|| decode::decode(black_box(&input._10mb_bs)))
   });
 
-  c.bench_function("decode array - 10 no nulls 10k bulk string", |b| {
-    b.iter(|| decode::decode(black_box(&input._10_no_nulls_10k_bs)).unwrap().unwrap())
+  c.bench_function("owned decode array - 10 no nulls 1k bulk string", |b| {
+    b.iter(|| decode::decode(black_box(&input._10_no_nulls_1k_bs)))
   });
-  c.bench_function("decode array - 100 no nulls 10k bulk string", |b| {
-    b.iter(|| decode::decode(black_box(&input._100_no_nulls_10k_bs)).unwrap().unwrap())
+  c.bench_function("owned decode array - 100 no nulls 1k bulk string", |b| {
+    b.iter(|| decode::decode(black_box(&input._100_no_nulls_1k_bs)))
   });
-  c.bench_function("decode array - 1000 no nulls 10k bulk string", |b| {
-    b.iter(|| {
-      decode::decode(black_box(&input._1000_no_nulls_10k_bs))
-        .unwrap()
-        .unwrap()
-    })
+  c.bench_function("owned decode array - 1000 no nulls 1k bulk string", |b| {
+    b.iter(|| decode::decode(black_box(&input._1000_no_nulls_1k_bs)))
   });
 
-  c.bench_function("decode array - 10 half nulls 1k bulk string", |b| {
-    b.iter(|| decode::decode(black_box(&input._10_half_nulls_1k_bs)).unwrap().unwrap())
+  c.bench_function("owned decode array - 10 no nulls 10k bulk string", |b| {
+    b.iter(|| decode::decode(black_box(&input._10_no_nulls_10k_bs)))
   });
-  c.bench_function("decode array - 100 half nulls 1k bulk string", |b| {
-    b.iter(|| {
-      decode::decode(black_box(&input._100_half_nulls_1k_bs))
-        .unwrap()
-        .unwrap()
-    })
+  c.bench_function("owned decode array - 100 no nulls 10k bulk string", |b| {
+    b.iter(|| decode::decode(black_box(&input._100_no_nulls_10k_bs)))
   });
-  c.bench_function("decode array - 1000 half nulls 1k bulk string", |b| {
-    b.iter(|| {
-      decode::decode(black_box(&input._1000_half_nulls_1k_bs))
-        .unwrap()
-        .unwrap()
-    })
+  c.bench_function("owned decode array - 1000 no nulls 10k bulk string", |b| {
+    b.iter(|| decode::decode(black_box(&input._1000_no_nulls_10k_bs)))
   });
 
-  c.bench_function("decode array - 10 half nulls 10k bulk string", |b| {
-    b.iter(|| {
-      decode::decode(black_box(&input._10_half_nulls_10k_bs))
-        .unwrap()
-        .unwrap()
-    })
+  c.bench_function("owned decode array - 10 half nulls 1k bulk string", |b| {
+    b.iter(|| decode::decode(black_box(&input._10_half_nulls_1k_bs)))
   });
-  c.bench_function("decode array - 100 half nulls 10k bulk string", |b| {
-    b.iter(|| {
-      decode::decode(black_box(&input._100_half_nulls_10k_bs))
-        .unwrap()
-        .unwrap()
-    })
+  c.bench_function("owned decode array - 100 half nulls 1k bulk string", |b| {
+    b.iter(|| decode::decode(black_box(&input._100_half_nulls_1k_bs)))
   });
-  c.bench_function("decode array - 1000 half nulls 10k bulk string", |b| {
-    b.iter(|| {
-      decode::decode(black_box(&input._1000_half_nulls_10k_bs))
-        .unwrap()
-        .unwrap()
-    })
+  c.bench_function("owned decode array - 1000 half nulls 1k bulk string", |b| {
+    b.iter(|| decode::decode(black_box(&input._1000_half_nulls_1k_bs)))
+  });
+
+  c.bench_function("owned decode array - 10 half nulls 10k bulk string", |b| {
+    b.iter(|| decode::decode(black_box(&input._10_half_nulls_10k_bs)))
+  });
+  c.bench_function("owned decode array - 100 half nulls 10k bulk string", |b| {
+    b.iter(|| decode::decode(black_box(&input._100_half_nulls_10k_bs)))
+  });
+  c.bench_function("owned decode array - 1000 half nulls 10k bulk string", |b| {
+    b.iter(|| decode::decode(black_box(&input._1000_half_nulls_10k_bs)))
   });
 }
 
@@ -306,328 +282,191 @@ fn owned(c: &mut Criterion) {
 fn bytes(c: &mut Criterion) {
   let input = BytesInput::default();
 
-  c.bench_function("decode 1kb bulk string", |b| {
-    b.iter(|| decode::decode_bytes(black_box(&input._1kb_bs)).unwrap().unwrap())
+  c.bench_function("bytes decode 1kb bulk string", |b| {
+    b.iter(|| decode::decode_bytes(black_box(&input._1kb_bs)))
   });
-  c.bench_function("decode 10kb bulk string", |b| {
-    b.iter(|| decode::decode_bytes(black_box(&input._10kb_bs)).unwrap().unwrap())
+  c.bench_function("bytes decode 10kb bulk string", |b| {
+    b.iter(|| decode::decode_bytes(black_box(&input._10kb_bs)))
   });
-  c.bench_function("decode 100kb bulk string", |b| {
-    b.iter(|| decode::decode_bytes(black_box(&input._100kb_bs)).unwrap().unwrap())
+  c.bench_function("bytes decode 100kb bulk string", |b| {
+    b.iter(|| decode::decode_bytes(black_box(&input._100kb_bs)))
   });
-  c.bench_function("decode 1mb bulk string", |b| {
-    b.iter(|| decode::decode_bytes(black_box(&input._1mb_bs)).unwrap().unwrap())
+  c.bench_function("bytes decode 1mb bulk string", |b| {
+    b.iter(|| decode::decode_bytes(black_box(&input._1mb_bs)))
   });
-  c.bench_function("decode 10mb bulk string", |b| {
-    b.iter(|| decode::decode_bytes(black_box(&input._10mb_bs)).unwrap().unwrap())
-  });
-
-  c.bench_function("decode array - 10 no nulls 1k bulk string", |b| {
-    b.iter(|| {
-      decode::decode_bytes(black_box(&input._10_no_nulls_1k_bs))
-        .unwrap()
-        .unwrap()
-    })
-  });
-  c.bench_function("decode array - 100 no nulls 1k bulk string", |b| {
-    b.iter(|| {
-      decode::decode_bytes(black_box(&input._100_no_nulls_1k_bs))
-        .unwrap()
-        .unwrap()
-    })
-  });
-  c.bench_function("decode array - 1000 no nulls 1k bulk string", |b| {
-    b.iter(|| {
-      decode::decode_bytes(black_box(&input._1000_no_nulls_1k_bs))
-        .unwrap()
-        .unwrap()
-    })
+  c.bench_function("bytes decode 10mb bulk string", |b| {
+    b.iter(|| decode::decode_bytes(black_box(&input._10mb_bs)))
   });
 
-  c.bench_function("decode array - 10 no nulls 10k bulk string", |b| {
-    b.iter(|| {
-      decode::decode_bytes(black_box(&input._10_no_nulls_10k_bs))
-        .unwrap()
-        .unwrap()
-    })
+  c.bench_function("bytes decode array - 10 no nulls 1k bulk string", |b| {
+    b.iter(|| decode::decode_bytes(black_box(&input._10_no_nulls_1k_bs)))
   });
-  c.bench_function("decode array - 100 no nulls 10k bulk string", |b| {
-    b.iter(|| {
-      decode::decode_bytes(black_box(&input._100_no_nulls_10k_bs))
-        .unwrap()
-        .unwrap()
-    })
+  c.bench_function("bytes decode array - 100 no nulls 1k bulk string", |b| {
+    b.iter(|| decode::decode_bytes(black_box(&input._100_no_nulls_1k_bs)))
   });
-  c.bench_function("decode array - 1000 no nulls 10k bulk string", |b| {
-    b.iter(|| {
-      decode::decode_bytes(black_box(&input._1000_no_nulls_10k_bs))
-        .unwrap()
-        .unwrap()
-    })
+  c.bench_function("bytes decode array - 1000 no nulls 1k bulk string", |b| {
+    b.iter(|| decode::decode_bytes(black_box(&input._1000_no_nulls_1k_bs)))
   });
 
-  c.bench_function("decode array - 10 half nulls 1k bulk string", |b| {
-    b.iter(|| {
-      decode::decode_bytes(black_box(&input._10_half_nulls_1k_bs))
-        .unwrap()
-        .unwrap()
-    })
+  c.bench_function("bytes decode array - 10 no nulls 10k bulk string", |b| {
+    b.iter(|| decode::decode_bytes(black_box(&input._10_no_nulls_10k_bs)))
   });
-  c.bench_function("decode array - 100 half nulls 1k bulk string", |b| {
-    b.iter(|| {
-      decode::decode_bytes(black_box(&input._100_half_nulls_1k_bs))
-        .unwrap()
-        .unwrap()
-    })
+  c.bench_function("bytes decode array - 100 no nulls 10k bulk string", |b| {
+    b.iter(|| decode::decode_bytes(black_box(&input._100_no_nulls_10k_bs)))
   });
-  c.bench_function("decode array - 1000 half nulls 1k bulk string", |b| {
-    b.iter(|| {
-      decode::decode_bytes(black_box(&input._1000_half_nulls_1k_bs))
-        .unwrap()
-        .unwrap()
-    })
+  c.bench_function("bytes decode array - 1000 no nulls 10k bulk string", |b| {
+    b.iter(|| decode::decode_bytes(black_box(&input._1000_no_nulls_10k_bs)))
   });
 
-  c.bench_function("decode array - 10 half nulls 10k bulk string", |b| {
-    b.iter(|| {
-      decode::decode_bytes(black_box(&input._10_half_nulls_10k_bs))
-        .unwrap()
-        .unwrap()
-    })
+  c.bench_function("bytes decode array - 10 half nulls 1k bulk string", |b| {
+    b.iter(|| decode::decode_bytes(black_box(&input._10_half_nulls_1k_bs)))
   });
-  c.bench_function("decode array - 100 half nulls 10k bulk string", |b| {
-    b.iter(|| {
-      decode::decode_bytes(black_box(&input._100_half_nulls_10k_bs))
-        .unwrap()
-        .unwrap()
-    })
+  c.bench_function("bytes decode array - 100 half nulls 1k bulk string", |b| {
+    b.iter(|| decode::decode_bytes(black_box(&input._100_half_nulls_1k_bs)))
   });
-  c.bench_function("decode array - 1000 half nulls 10k bulk string", |b| {
-    b.iter(|| {
-      decode::decode_bytes(black_box(&input._1000_half_nulls_10k_bs))
-        .unwrap()
-        .unwrap()
-    })
+  c.bench_function("bytes decode array - 1000 half nulls 1k bulk string", |b| {
+    b.iter(|| decode::decode_bytes(black_box(&input._1000_half_nulls_1k_bs)))
   });
+
+  c.bench_function("bytes decode array - 10 half nulls 10k bulk string", |b| {
+    b.iter(|| decode::decode_bytes(black_box(&input._10_half_nulls_10k_bs)))
+  });
+  c.bench_function("bytes decode array - 100 half nulls 10k bulk string", |b| {
+    b.iter(|| decode::decode_bytes(black_box(&input._100_half_nulls_10k_bs)))
+  });
+  c.bench_function("bytes decode array - 1000 half nulls 10k bulk string", |b| {
+    b.iter(|| decode::decode_bytes(black_box(&input._1000_half_nulls_10k_bs)))
+  });
+}
+
+// TODO double check if this still counts the drop time
+#[cfg(feature = "bytes")]
+fn bytes_mut_bench(b: &mut Bencher, bytes: &BytesMut) {
+  b.iter_batched_ref(
+    || bytes.clone(),
+    |bytes| decode::decode_bytes_mut(black_box(bytes)),
+    BatchSize::PerIteration,
+  );
 }
 
 #[cfg(feature = "bytes")]
 fn bytes_mut(c: &mut Criterion) {
   let mut input = BytesMutInput::default();
 
-  c.bench_function("decode 1kb bulk string", |b| {
-    b.iter_batched_ref(|| {
-      let mut buf = input._1kb_bs.clone();
-      decode::decode_bytes_mut(&mut buf).unwrap().unwrap();
-    })
+  c.bench_function("bytes mut decode 1kb bulk string", |b| {
+    bytes_mut_bench(b, &input._1kb_bs);
   });
-  c.bench_function("decode 10kb bulk string", |b| {
-    b.iter_batched_ref(|| {
-      let mut buf = input._10kb_bs.clone();
-      decode::decode_bytes_mut(&mut buf).unwrap().unwrap();
-    })
+  c.bench_function("bytes mut decode 10kb bulk string", |b| {
+    bytes_mut_bench(b, &input._10kb_bs);
   });
-  c.bench_function("decode 100kb bulk string", |b| {
-    b.iter_batched_ref(|| {
-      let mut buf = input._100kb_bs.clone();
-      decode::decode_bytes_mut(&mut buf).unwrap().unwrap();
-    })
+  c.bench_function("bytes mut decode 100kb bulk string", |b| {
+    bytes_mut_bench(b, &input._100kb_bs);
   });
-  c.bench_function("decode 1mb bulk string", |b| {
-    b.iter_batched_ref(|| {
-      let mut buf = input._1mb_bs.clone();
-      decode::decode_bytes_mut(&mut buf).unwrap().unwrap();
-    })
+  c.bench_function("bytes mut decode 1mb bulk string", |b| {
+    bytes_mut_bench(b, &input._1mb_bs);
   });
-  c.bench_function("decode 10mb bulk string", |b| {
-    b.iter_batched_ref(|| {
-      let mut buf = input._10mb_bs.clone();
-      decode::decode_bytes_mut(&mut buf).unwrap().unwrap();
-    })
+  c.bench_function("bytes mut decode 10mb bulk string", |b| {
+    bytes_mut_bench(b, &input._10mb_bs);
   });
 
-  c.bench_function("decode array - 10 no nulls 1k bulk string", |b| {
-    b.iter_batched_ref(|| {
-      let mut buf = input._10_no_nulls_1k_bs.clone();
-      decode::decode_bytes_mut(&mut buf).unwrap().unwrap();
-    })
+  c.bench_function("bytes mut decode array - 10 no nulls 1k bulk string", |b| {
+    bytes_mut_bench(b, &input._10_no_nulls_1k_bs);
   });
-  c.bench_function("decode array - 100 no nulls 1k bulk string", |b| {
-    b.iter_batched_ref(|| {
-      let mut buf = input._100_no_nulls_1k_bs.clone();
-      decode::decode_bytes_mut(&mut buf).unwrap().unwrap();
-    })
+  c.bench_function("bytes mut decode array - 100 no nulls 1k bulk string", |b| {
+    bytes_mut_bench(b, &input._100_no_nulls_1k_bs);
   });
-  c.bench_function("decode array - 1000 no nulls 1k bulk string", |b| {
-    b.iter_batched_ref(|| {
-      let mut buf = input._1000_no_nulls_1k_bs.clone();
-      decode::decode_bytes_mut(&mut buf).unwrap().unwrap();
-    })
+  c.bench_function("bytes mut decode array - 1000 no nulls 1k bulk string", |b| {
+    bytes_mut_bench(b, &input._1000_no_nulls_1k_bs);
   });
 
-  c.bench_function("decode array - 10 no nulls 10k bulk string", |b| {
-    b.iter_batched_ref(|| {
-      let mut buf = input._10_no_nulls_10k_bs.clone();
-      decode::decode_bytes_mut(&mut buf).unwrap().unwrap();
-    })
+  c.bench_function("bytes mut decode array - 10 no nulls 10k bulk string", |b| {
+    bytes_mut_bench(b, &input._10_no_nulls_10k_bs);
   });
-  c.bench_function("decode array - 100 no nulls 10k bulk string", |b| {
-    b.iter_batched_ref(|| {
-      let mut buf = input._100_no_nulls_10k_bs.clone();
-      decode::decode_bytes_mut(&mut buf).unwrap().unwrap();
-    })
+  c.bench_function("bytes mut decode array - 100 no nulls 10k bulk string", |b| {
+    bytes_mut_bench(b, &input._100_no_nulls_10k_bs);
   });
-  c.bench_function("decode array - 1000 no nulls 10k bulk string", |b| {
-    b.iter_batched_ref(|| {
-      let mut buf = input._1000_no_nulls_10k_bs.clone();
-      decode::decode_bytes_mut(&mut buf).unwrap().unwrap();
-    })
+  c.bench_function("bytes mut decode array - 1000 no nulls 10k bulk string", |b| {
+    bytes_mut_bench(b, &input._1000_no_nulls_10k_bs);
   });
 
-  c.bench_function("decode array - 10 half nulls 1k bulk string", |b| {
-    b.iter_batched_ref(|| {
-      let mut buf = input._10_half_nulls_1k_bs.clone();
-      decode::decode_bytes_mut(&mut buf).unwrap().unwrap();
-    })
+  c.bench_function("bytes mut decode array - 10 half nulls 1k bulk string", |b| {
+    bytes_mut_bench(b, &input._10_half_nulls_1k_bs);
   });
-  c.bench_function("decode array - 100 half nulls 1k bulk string", |b| {
-    b.iter_batched_ref(|| {
-      let mut buf = input._100_half_nulls_1k_bs.clone();
-      decode::decode_bytes_mut(&mut buf).unwrap().unwrap();
-    })
+  c.bench_function("bytes mut decode array - 100 half nulls 1k bulk string", |b| {
+    bytes_mut_bench(b, &input._100_half_nulls_1k_bs);
   });
-  c.bench_function("decode array - 1000 half nulls 1k bulk string", |b| {
-    b.iter_batched_ref(|| {
-      let mut buf = input._1000_half_nulls_1k_bs.clone();
-      decode::decode_bytes_mut(&mut buf).unwrap().unwrap();
-    })
+  c.bench_function("bytes mut decode array - 1000 half nulls 1k bulk string", |b| {
+    bytes_mut_bench(b, &input._1000_half_nulls_1k_bs);
   });
 
-  c.bench_function("decode array - 10 half nulls 10k bulk string", |b| {
-    b.iter_batched_ref(|| {
-      let mut buf = input._10_half_nulls_10k_bs.clone();
-      decode::decode_bytes_mut(&mut buf).unwrap().unwrap();
-    })
+  c.bench_function("bytes mut decode array - 10 half nulls 10k bulk string", |b| {
+    bytes_mut_bench(b, &input._10_half_nulls_10k_bs);
   });
-  c.bench_function("decode array - 100 half nulls 10k bulk string", |b| {
-    b.iter_batched_ref(|| {
-      let mut buf = input._100_half_nulls_10k_bs.clone();
-      decode::decode_bytes_mut(&mut buf).unwrap().unwrap();
-    })
+  c.bench_function("bytes mut decode array - 100 half nulls 10k bulk string", |b| {
+    bytes_mut_bench(b, &input._100_half_nulls_10k_bs);
   });
-  c.bench_function("decode array - 1000 half nulls 10k bulk string", |b| {
-    b.iter_batched_ref(|| {
-      let mut buf = input._1000_half_nulls_10k_bs.clone();
-      decode::decode_bytes_mut(&mut buf).unwrap().unwrap();
-    })
+  c.bench_function("bytes mut decode array - 1000 half nulls 10k bulk string", |b| {
+    bytes_mut_bench(b, &input._1000_half_nulls_10k_bs);
   });
 }
 
 fn range(c: &mut Criterion) {
   let input = OwnedInput::default();
 
-  c.bench_function("decode 1kb bulk string", |b| {
-    b.iter(|| decode::decode_range(black_box(&input._1kb_bs)).unwrap().unwrap())
+  c.bench_function("range decode 1kb bulk string", |b| {
+    b.iter(|| decode::decode_range(black_box(&input._1kb_bs)))
   });
-  c.bench_function("decode 10kb bulk string", |b| {
-    b.iter(|| decode::decode_range(black_box(&input._10kb_bs)).unwrap().unwrap())
+  c.bench_function("range decode 10kb bulk string", |b| {
+    b.iter(|| decode::decode_range(black_box(&input._10kb_bs)))
   });
-  c.bench_function("decode 100kb bulk string", |b| {
-    b.iter(|| decode::decode_range(black_box(&input._100kb_bs)).unwrap().unwrap())
+  c.bench_function("range decode 100kb bulk string", |b| {
+    b.iter(|| decode::decode_range(black_box(&input._100kb_bs)))
   });
-  c.bench_function("decode 1mb bulk string", |b| {
-    b.iter(|| decode::decode_range(black_box(&input._1mb_bs)).unwrap().unwrap())
+  c.bench_function("range decode 1mb bulk string", |b| {
+    b.iter(|| decode::decode_range(black_box(&input._1mb_bs)))
   });
-  c.bench_function("decode 10mb bulk string", |b| {
-    b.iter(|| decode::decode_range(black_box(&input._10mb_bs)).unwrap().unwrap())
-  });
-
-  c.bench_function("decode array - 10 no nulls 1k bulk string", |b| {
-    b.iter(|| {
-      decode::decode_range(black_box(&input._10_no_nulls_1k_bs))
-        .unwrap()
-        .unwrap()
-    })
-  });
-  c.bench_function("decode array - 100 no nulls 1k bulk string", |b| {
-    b.iter(|| {
-      decode::decode_range(black_box(&input._100_no_nulls_1k_bs))
-        .unwrap()
-        .unwrap()
-    })
-  });
-  c.bench_function("decode array - 1000 no nulls 1k bulk string", |b| {
-    b.iter(|| {
-      decode::decode_range(black_box(&input._1000_no_nulls_1k_bs))
-        .unwrap()
-        .unwrap()
-    })
+  c.bench_function("range decode 10mb bulk string", |b| {
+    b.iter(|| decode::decode_range(black_box(&input._10mb_bs)))
   });
 
-  c.bench_function("decode array - 10 no nulls 10k bulk string", |b| {
-    b.iter(|| {
-      decode::decode_range(black_box(&input._10_no_nulls_10k_bs))
-        .unwrap()
-        .unwrap()
-    })
+  c.bench_function("range decode array - 10 no nulls 1k bulk string", |b| {
+    b.iter(|| decode::decode_range(black_box(&input._10_no_nulls_1k_bs)))
   });
-  c.bench_function("decode array - 100 no nulls 10k bulk string", |b| {
-    b.iter(|| {
-      decode::decode_range(black_box(&input._100_no_nulls_10k_bs))
-        .unwrap()
-        .unwrap()
-    })
+  c.bench_function("range decode array - 100 no nulls 1k bulk string", |b| {
+    b.iter(|| decode::decode_range(black_box(&input._100_no_nulls_1k_bs)))
   });
-  c.bench_function("decode array - 1000 no nulls 10k bulk string", |b| {
-    b.iter(|| {
-      decode::decode_range(black_box(&input._1000_no_nulls_10k_bs))
-        .unwrap()
-        .unwrap()
-    })
+  c.bench_function("range decode array - 1000 no nulls 1k bulk string", |b| {
+    b.iter(|| decode::decode_range(black_box(&input._1000_no_nulls_1k_bs)))
   });
 
-  c.bench_function("decode array - 10 half nulls 1k bulk string", |b| {
-    b.iter(|| {
-      decode::decode_range(black_box(&input._10_half_nulls_1k_bs))
-        .unwrap()
-        .unwrap()
-    })
+  c.bench_function("range decode array - 10 no nulls 10k bulk string", |b| {
+    b.iter(|| decode::decode_range(black_box(&input._10_no_nulls_10k_bs)))
   });
-  c.bench_function("decode array - 100 half nulls 1k bulk string", |b| {
-    b.iter(|| {
-      decode::decode_range(black_box(&input._100_half_nulls_1k_bs))
-        .unwrap()
-        .unwrap()
-    })
+  c.bench_function("range decode array - 100 no nulls 10k bulk string", |b| {
+    b.iter(|| decode::decode_range(black_box(&input._100_no_nulls_10k_bs)))
   });
-  c.bench_function("decode array - 1000 half nulls 1k bulk string", |b| {
-    b.iter(|| {
-      decode::decode_range(black_box(&input._1000_half_nulls_1k_bs))
-        .unwrap()
-        .unwrap()
-    })
+  c.bench_function("range decode array - 1000 no nulls 10k bulk string", |b| {
+    b.iter(|| decode::decode_range(black_box(&input._1000_no_nulls_10k_bs)))
   });
 
-  c.bench_function("decode array - 10 half nulls 10k bulk string", |b| {
-    b.iter(|| {
-      decode::decode_range(black_box(&input._10_half_nulls_10k_bs))
-        .unwrap()
-        .unwrap()
-    })
+  c.bench_function("range decode array - 10 half nulls 1k bulk string", |b| {
+    b.iter(|| decode::decode_range(black_box(&input._10_half_nulls_1k_bs)))
   });
-  c.bench_function("decode array - 100 half nulls 10k bulk string", |b| {
-    b.iter(|| {
-      decode::decode_range(black_box(&input._100_half_nulls_10k_bs))
-        .unwrap()
-        .unwrap()
-    })
+  c.bench_function("range decode array - 100 half nulls 1k bulk string", |b| {
+    b.iter(|| decode::decode_range(black_box(&input._100_half_nulls_1k_bs)))
   });
-  c.bench_function("decode array - 1000 half nulls 10k bulk string", |b| {
-    b.iter(|| {
-      decode::decode_range(black_box(&input._1000_half_nulls_10k_bs))
-        .unwrap()
-        .unwrap()
-    })
+  c.bench_function("range decode array - 1000 half nulls 1k bulk string", |b| {
+    b.iter(|| decode::decode_range(black_box(&input._1000_half_nulls_1k_bs)))
+  });
+
+  c.bench_function("range decode array - 10 half nulls 10k bulk string", |b| {
+    b.iter(|| decode::decode_range(black_box(&input._10_half_nulls_10k_bs)))
+  });
+  c.bench_function("range decode array - 100 half nulls 10k bulk string", |b| {
+    b.iter(|| decode::decode_range(black_box(&input._100_half_nulls_10k_bs)))
+  });
+  c.bench_function("range decode array - 1000 half nulls 10k bulk string", |b| {
+    b.iter(|| decode::decode_range(black_box(&input._1000_half_nulls_10k_bs)))
   });
 }
 
