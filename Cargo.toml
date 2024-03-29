@@ -62,6 +62,7 @@ test = true
 [[bench]]
 name = "resp2_decode"
 harness = false
+required-features = ["std", "bytes", "resp2"]
 
 #[[bench]]
 #name = "resp2_encode"
