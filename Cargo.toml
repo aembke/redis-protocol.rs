@@ -24,7 +24,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 [dependencies]
 bytes = { version = "1.1", default-features = false, optional = true }
 bytes-utils = { version = "0.1", default-features = false, optional = true }
-cookie-factory = { version = "0.3", default-features = false }
+cookie-factory = { version = "=0.3.2", default-features = false }
 crc16 = { version = "0.4" }
 indexmap = { version = "2.2", optional = true }
 log = "0.4"
