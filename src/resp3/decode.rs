@@ -77,14 +77,27 @@ fn to_map<T>(mut data: Vec<RangeFrame>) -> Result<FrameMap<RangeFrame, RangeFram
     let value = data.pop().unwrap();
     let key = data.pop().unwrap();
 
-    out.insert(key, value);
+    if key.kind().can_hash() {
+      out.insert(key, value);
+    } else {
+      return Err(RedisParseError::new_custom("to_map", "Invalid map key."));
+    }
   }
 
   Ok(out)
 }
 
 fn to_set<T>(data: Vec<RangeFrame>) -> Result<FrameSet<RangeFrame>, RedisParseError<T>> {
-  Ok(data.into_iter().collect())
+  data
+    .into_iter()
+    .map(|value| {
+      if value.kind().can_hash() {
+        Ok(value)
+      } else {
+        Err(RedisParseError::new_custom("to_set", "Invalid hash key."))
+      }
+    })
+    .collect()
 }
 
 fn attach_attributes<T>(
@@ -221,14 +234,22 @@ fn d_parse_bloberror(input: (&[u8], usize)) -> DResult<RangeFrame> {
 fn d_parse_verbatimstring(input: (&[u8], usize)) -> DResult<RangeFrame> {
   let ((input, prefix_offset), len) = d_read_prefix_len(input)?;
   let (input, format_bytes) = nom_terminated(nom_take(3_usize), nom_take(1_usize))(input)?;
-  let format = etry!(to_verbatimstring_format(format_bytes));
+  if len < 4 {
+    e!(RedisParseError::new_custom(
+      "parse_verbatimstring",
+      "Invalid prefix length."
+    ));
+  }
   let (input, _) = nom_terminated(nom_take(len - 4), nom_take(2_usize))(input)?;
 
-  Ok(((input, prefix_offset + len + 2), RangeFrame::VerbatimString {
-    data: (prefix_offset + 4, prefix_offset + len),
-    format,
-    attributes: None,
-  }))
+  Ok((
+    (input, prefix_offset.saturating_add(len).saturating_add(2)),
+    RangeFrame::VerbatimString {
+      data:       (prefix_offset + 4, prefix_offset.saturating_add(len)),
+      format:     etry!(to_verbatimstring_format(format_bytes)),
+      attributes: None,
+    },
+  ))
 }
 
 fn d_parse_bignumber(input: (&[u8], usize)) -> DResult<RangeFrame> {
@@ -252,7 +273,7 @@ fn d_parse_kv_pairs(input: (&[u8], usize), len: usize) -> DResult<FrameMap<Range
   nom_map_res(
     nom_count(
       nom_map_res(d_parse_frame_or_attribute, expect_complete_index_frame::<&[u8]>),
-      len * 2,
+      len.saturating_mul(2),
     ),
     to_map::<&[u8]>,
   )(input)
@@ -299,13 +320,12 @@ fn d_parse_hello(input: (&[u8], usize)) -> DResult<RangeFrame> {
   // above logic isn't useful here. this is hacky and should be improved
   let start_offset = input.1;
   let ((input, offset), data) = d_read_to_crlf_take(input)?;
-  let parsed = etry!(str::from_utf8(data));
-  let parts: Vec<_> = parsed.split(' ').collect();
+  let parts: Vec<_> = data.split(|b| *b == b' ').collect();
 
-  if parts.len() < 2 {
+  if parts.len() < 2 || parts[0] != HELLO.as_bytes() {
     e!(RedisParseError::new_custom("parse_hello", "Invalid HELLO."));
   }
-  let version = match parts[1] {
+  let version = match etry!(str::from_utf8(parts[1])) {
     "2" => RespVersion::RESP2,
     "3" => RespVersion::RESP3,
     _ => e!(RedisParseError::new_custom("parse_hello", "Invalid RESP version")),
@@ -313,11 +333,11 @@ fn d_parse_hello(input: (&[u8], usize)) -> DResult<RangeFrame> {
 
   let (username, password, setname) = if parts.len() == 5 {
     // auth, no setname
-    if parts[2] == AUTH {
+    if parts[2] == AUTH.as_bytes() {
       let username_start = start_offset + HELLO.as_bytes().len() + 3 + AUTH.as_bytes().len() + 1;
-      let username_end = username_start + parts[3].as_bytes().len();
+      let username_end = username_start + parts[3].len();
       let password_start = username_end + 1;
-      let password_end = password_start + parts[4].as_bytes().len();
+      let password_end = password_start + parts[4].len();
 
       (
         Some((username_start, username_end)),
@@ -329,13 +349,13 @@ fn d_parse_hello(input: (&[u8], usize)) -> DResult<RangeFrame> {
     }
   } else if parts.len() == 7 {
     // auth and setname
-    if parts[2] == AUTH && parts[5] == SETNAME {
+    if parts[2] == AUTH.as_bytes() && parts[5] == SETNAME.as_bytes() {
       let username_start = start_offset + HELLO.as_bytes().len() + 3 + AUTH.as_bytes().len() + 1;
-      let username_end = username_start + parts[3].as_bytes().len();
+      let username_end = username_start + parts[3].len();
       let password_start = username_end + 1;
-      let password_end = password_start + parts[4].as_bytes().len();
+      let password_end = password_start + parts[4].len();
       let name_start = password_end + 1 + SETNAME.as_bytes().len() + 1;
-      let name_end = name_start + parts[6].as_bytes().len();
+      let name_end = name_start + parts[6].len();
 
       (
         Some((username_start, username_end)),
@@ -347,9 +367,9 @@ fn d_parse_hello(input: (&[u8], usize)) -> DResult<RangeFrame> {
     }
   } else if parts.len() == 4 {
     // no auth, with setname
-    if parts[2] == SETNAME {
+    if parts[2] == SETNAME.as_bytes() {
       let name_start = start_offset + HELLO.as_bytes().len() + 3 + SETNAME.as_bytes().len() + 1;
-      let name_end = name_start + parts[3].as_bytes().len();
+      let name_end = name_start + parts[3].len();
 
       (None, None, Some((name_start, name_end)))
     } else {
@@ -438,7 +458,6 @@ fn d_parse_non_attribute_frame(input: (&[u8], usize), kind: FrameKind) -> DResul
     FrameKind::ChunkedString => d_parse_chunked_string(input)?,
     FrameKind::EndStream => d_return_end_stream(input)?,
     FrameKind::Attribute => {
-      error!("Found unexpected attribute frame.");
       e!(RedisParseError::new_custom(
         "parse_non_attribute_frame",
         "Unexpected attribute frame.",

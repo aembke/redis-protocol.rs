@@ -14,6 +14,7 @@ use bytes::{Bytes, BytesMut};
 #[cfg(feature = "bytes")]
 use bytes_utils::Str;
 
+use crate::error::RedisProtocolErrorKind;
 #[cfg(feature = "hashbrown")]
 use hashbrown::{HashMap, HashSet};
 #[cfg(feature = "index-map")]
@@ -568,7 +569,18 @@ pub fn build_owned_frame(buf: &[u8], frame: &RangeFrame) -> Result<OwnedFrame, R
     RangeFrame::Set { data, attributes } => OwnedFrame::Set {
       data:       data
         .iter()
-        .map(|f| build_owned_frame(buf, f))
+        .map(|f| {
+          let value = build_owned_frame(buf, f)?;
+
+          if !value.kind().can_hash() {
+            Err(RedisProtocolError::new(
+              RedisProtocolErrorKind::DecodeError,
+              "Invalid hash key.",
+            ))
+          } else {
+            Ok(value)
+          }
+        })
         .collect::<Result<FrameSet<OwnedFrame>, RedisProtocolError>>()?,
       attributes: build_owned_attributes(buf, attributes.as_ref())?,
     },
@@ -578,7 +590,15 @@ pub fn build_owned_frame(buf: &[u8], frame: &RangeFrame) -> Result<OwnedFrame, R
         .map(|(k, v)| {
           let key = build_owned_frame(buf, k)?;
           let value = build_owned_frame(buf, v)?;
-          Ok((key, value))
+
+          if !key.kind().can_hash() {
+            Err(RedisProtocolError::new(
+              RedisProtocolErrorKind::DecodeError,
+              "Invalid hash key.",
+            ))
+          } else {
+            Ok((key, value))
+          }
         })
         .collect::<Result<FrameMap<OwnedFrame, OwnedFrame>, RedisProtocolError>>()?,
       attributes: build_owned_attributes(buf, attributes.as_ref())?,
@@ -675,7 +695,18 @@ pub fn build_bytes_frame(buf: &Bytes, frame: &RangeFrame) -> Result<BytesFrame, 
     RangeFrame::Set { data, attributes } => BytesFrame::Set {
       data:       data
         .iter()
-        .map(|f| build_bytes_frame(buf, f))
+        .map(|f| {
+          let value = build_bytes_frame(buf, f)?;
+
+          if !value.kind().can_hash() {
+            Err(RedisProtocolError::new(
+              RedisProtocolErrorKind::DecodeError,
+              "Invalid hash key.",
+            ))
+          } else {
+            Ok(value)
+          }
+        })
         .collect::<Result<FrameSet<_>, RedisProtocolError>>()?,
       attributes: build_bytes_attributes(buf, attributes.as_ref())?,
     },
@@ -685,7 +716,15 @@ pub fn build_bytes_frame(buf: &Bytes, frame: &RangeFrame) -> Result<BytesFrame, 
         .map(|(k, v)| {
           let key = build_bytes_frame(buf, k)?;
           let value = build_bytes_frame(buf, v)?;
-          Ok::<(_, _), RedisProtocolError>((key, value))
+
+          if !key.kind().can_hash() {
+            Err(RedisProtocolError::new(
+              RedisProtocolErrorKind::DecodeError,
+              "Invalid hash key.",
+            ))
+          } else {
+            Ok((key, value))
+          }
         })
         .collect::<Result<FrameMap<_, _>, RedisProtocolError>>()?,
       attributes: build_bytes_attributes(buf, attributes.as_ref())?,
