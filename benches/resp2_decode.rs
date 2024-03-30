@@ -1,17 +1,12 @@
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, Bencher, Criterion};
 use rand::{distributions::Alphanumeric, Rng};
 use redis_protocol::{
-  resp2::{
-    decode,
-    types::{FrameKind, OwnedFrame, Resp2Frame, NULL},
-  },
+  resp2::{decode, types::NULL},
   types::CRLF,
 };
 
 #[cfg(feature = "bytes")]
 use bytes::{BufMut, Bytes, BytesMut};
-#[cfg(feature = "bytes")]
-use redis_protocol::resp2::types::BytesFrame;
 
 #[cfg(feature = "bytes")]
 fn gen_bulkstring_bytes(len: usize, buf: Option<BytesMut>) -> BytesMut {
@@ -351,7 +346,7 @@ fn bytes_mut_bench(b: &mut Bencher, bytes: &BytesMut) {
 
 #[cfg(feature = "bytes")]
 fn bytes_mut(c: &mut Criterion) {
-  let mut input = BytesMutInput::default();
+  let input = BytesMutInput::default();
 
   c.bench_function("bytes mut decode 1kb bulk string", |b| {
     bytes_mut_bench(b, &input._1kb_bs);
