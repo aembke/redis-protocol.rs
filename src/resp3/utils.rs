@@ -61,7 +61,6 @@ pub fn blobstring_encode_len(b: &[u8]) -> usize {
   length_prefix_encode_len(len) + len + 2
 }
 
-/// TODO docs
 pub fn bignumber_encode_len(b: &[u8]) -> usize {
   1 + b.len() + 2
 }

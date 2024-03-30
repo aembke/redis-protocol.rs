@@ -1197,7 +1197,7 @@ impl From<f64> for OwnedFrame {
   }
 }
 
-/// A RESP3 frame that uses [Bytes] and [Str] as the underlying buffer type.
+/// A RESP3 frame that uses [Bytes](bytes::Bytes) and [Str](bytes_utils::Str) as the underlying buffer type.
 ///
 /// <https://github.com/antirez/RESP3/blob/master/spec.md>
 #[cfg(feature = "bytes")]
@@ -1674,7 +1674,6 @@ impl Resp3Frame for BytesFrame {
     resp3_utils::bytes_encode_len(self)
   }
 
-  // TODO make sure this hasn't changed across redis versions
   fn is_normal_pubsub_message(&self) -> bool {
     // format is ["pubsub", "message", <channel>, <message>]
     match self {

@@ -399,7 +399,7 @@ impl Resp2Frame for OwnedFrame {
   }
 }
 
-/// A RESP2 frame that uses [Bytes] and [Str] as the underlying buffer type.
+/// A RESP2 frame that uses [Bytes](bytes::Bytes) and [Str](bytes_utils::Str) as the underlying buffer type.
 #[cfg(feature = "bytes")]
 #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
 #[derive(Clone, Debug, Eq, PartialEq)]
