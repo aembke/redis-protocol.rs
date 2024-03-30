@@ -1,47 +1,58 @@
 [package]
 authors = ["Alec Embke <aembke@gmail.com>"]
-description = "Structs and functions to implement the Redis protocol."
+description = "An implementation of the RESP2 and RESP3 protocols."
 homepage = "https://github.com/aembke/redis-protocol.rs"
-keywords = ["redis", "protocol", "nom", "resp", "no_std"]
+keywords = ["redis", "protocol", "RESP", "no_std"]
 license = "MIT"
 name = "redis-protocol"
 readme = "README.md"
 repository = "https://github.com/aembke/redis-protocol.rs"
-version = "4.1.0"
-edition = "2018"
+version = "5.0.0"
+edition = "2021"
+exclude = ["fuzz", ".circleci", "benches"]
 
-[badges.maintenance]
-status = "actively-developed"
-
-[badges.travis-ci]
-branch = "main"
-repository = "aembke/redis-protocol.rs"
+[package.metadata.docs.rs]
+features = [
+    "bytes",
+    "std",
+    "codec",
+    "convert",
+    "resp2",
+    "resp3"
+]
+rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-bytes = { version = "1.1", default-features = false }
-bytes-utils = { version = "0.1.2", default-features = false }
-cookie-factory = { version = "0.3", default-features = false }
-crc16 = "0.4"
-indexmap = { version = "1.6", optional = true }
+bytes = { version = "1.1", default-features = false, optional = true }
+bytes-utils = { version = "0.1", default-features = false, optional = true }
+cookie-factory = { version = "=0.3.2", default-features = false }
+crc16 = { version = "0.4" }
+indexmap = { version = "2.2", optional = true }
 log = "0.4"
 nom = { version = "7.1", default-features = false }
-libm = { version = "0.2.2", optional = true }
-hashbrown = { version = "0.13.2", optional = true }
+libm = { version = "0.2", optional = true }
+hashbrown = { version = "0.14", optional = true }
+tokio-util = { version = "0.7", features = ["codec"], optional = true }
 
 [dev-dependencies]
-rand = "0.5"
-tokio-util = { version = "0.6", features = ["codec"] }
-tokio = { version = "1.12", features = ["full"] }
-itertools = "0.10"
-pretty_env_logger = "0.4"
+rand = "0.8"
+tokio = { version = "1.36", features = ["full"] }
+pretty_env_logger = "0.5"
+futures = "0.3"
+itertools = "0.12"
+criterion = { version = "0.4", features = ["html_reports"] }
 
 [features]
-default = ["std"]
+default = ["std", "resp2", "resp3"]
+resp2 = []
+resp3 = []
 index-map = ["indexmap"]
+bytes = ["dep:bytes", "bytes-utils"]
 decode-logs = []
-decode-mut = []
 alloc = ["nom/alloc"]
-std = ["bytes/default", "bytes-utils/std", "cookie-factory/default", "nom/default"]
+std = ["cookie-factory/default", "nom/default"]
+codec = ["tokio-util", "bytes", "resp2", "resp3"]
+convert = []
 
 [lib]
 doc = true
@@ -49,12 +60,18 @@ doctest = true
 name = "redis_protocol"
 test = true
 
-[profile]
-[profile.bench]
-codegen-units = 16
-debug = false
-debug-assertions = false
-incremental = false
-opt-level = 3
-overflow-checks = false
-rpath = false
+#[[bench]]
+#name = "resp2_decode"
+#harness = false
+
+#[[bench]]
+#name = "resp2_encode"
+#harness = false
+
+#[[bench]]
+#name = "resp3_encode"
+#harness = false
+
+#[[bench]]
+#name = "resp3_decode"
+#harness = false

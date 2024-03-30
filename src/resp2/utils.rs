@@ -1,19 +1,19 @@
-use crate::resp2::types::{Frame, FrameKind, NULL};
-use crate::utils::{digits_in_number, PATTERN_PUBSUB_PREFIX, PUBSUB_PREFIX};
-use alloc::string::String;
-use alloc::vec::Vec;
-use cookie_factory::GenError;
+use crate::{
+  error::RedisProtocolError,
+  resp2::types::{OwnedFrame, RangeFrame},
+  utils::digits_in_number,
+};
+use alloc::{borrow::ToOwned, string::String, vec::Vec};
+
+#[cfg(feature = "bytes")]
+use crate::resp2::types::BytesFrame;
+#[cfg(feature = "bytes")]
+use bytes::{Bytes, BytesMut};
+#[cfg(feature = "bytes")]
+use bytes_utils::Str;
 
 pub fn bulkstring_encode_len(b: &[u8]) -> usize {
   1 + digits_in_number(b.len()) + 2 + b.len() + 2
-}
-
-pub fn array_encode_len(frames: &Vec<Frame>) -> Result<usize, GenError> {
-  let padding = 1 + digits_in_number(frames.len()) + 2;
-
-  frames
-    .iter()
-    .fold(Ok(padding), |m, f| m.and_then(|s| encode_len(f).map(|l| s + l)))
 }
 
 pub fn simplestring_encode_len(s: &[u8]) -> usize {
@@ -24,39 +24,75 @@ pub fn error_encode_len(s: &str) -> usize {
   1 + s.as_bytes().len() + 2
 }
 
-pub fn integer_encode_len(i: &i64) -> usize {
-  let prefix = if *i < 0 { 1 } else { 0 };
-  let as_usize = if *i < 0 { (*i * -1) as usize } else { *i as usize };
+pub fn integer_encode_len(i: i64) -> usize {
+  let prefix = if i < 0 { 1 } else { 0 };
+  let as_usize = if i < 0 { -i as usize } else { i as usize };
 
   1 + digits_in_number(as_usize) + 2 + prefix
 }
 
-pub fn opt_frame_to_string_panic(f: Option<Frame>, msg: &str) -> String {
-  f.expect(msg).to_string().expect(msg)
+/// Move or copy the contents of `buf` based on the ranges in the provided frame.
+pub fn build_owned_frame(buf: &[u8], frame: &RangeFrame) -> Result<OwnedFrame, RedisProtocolError> {
+  Ok(match frame {
+    RangeFrame::Error((start, end)) => OwnedFrame::Error(String::from_utf8(buf[*start .. *end].to_vec())?),
+    RangeFrame::SimpleString((start, end)) => OwnedFrame::SimpleString(buf[*start .. *end].to_owned()),
+    RangeFrame::BulkString((start, end)) => OwnedFrame::BulkString(buf[*start .. *end].to_owned()),
+    RangeFrame::Integer(i) => OwnedFrame::Integer(*i),
+    RangeFrame::Null => OwnedFrame::Null,
+    RangeFrame::Array(frames) => {
+      // FIXME is there a cleaner way to do this with results?
+      let mut out = Vec::with_capacity(frames.len());
+      for frame in frames.iter() {
+        out.push(build_owned_frame(buf, frame)?);
+      }
+      OwnedFrame::Array(out)
+    },
+  })
 }
 
-pub fn is_normal_pubsub(frames: &Vec<Frame>) -> bool {
-  frames.len() == 3
-    && frames[0].kind() == FrameKind::BulkString
-    && frames[0].as_str().map(|s| s == PUBSUB_PREFIX).unwrap_or(false)
+/// Use the `Bytes` interface to create owned views into the provided buffer for each of the provided range frames.
+#[cfg(feature = "bytes")]
+pub fn build_bytes_frame(buf: &Bytes, frame: &RangeFrame) -> Result<BytesFrame, RedisProtocolError> {
+  Ok(match frame {
+    RangeFrame::Error((start, end)) => {
+      let bytes = buf.slice(start .. end);
+      BytesFrame::Error(Str::from_inner(bytes)?)
+    },
+    RangeFrame::SimpleString((start, end)) => {
+      let bytes = buf.slice(start .. end);
+      BytesFrame::SimpleString(bytes)
+    },
+    RangeFrame::BulkString((start, end)) => {
+      let bytes = buf.slice(start .. end);
+      BytesFrame::BulkString(bytes)
+    },
+    RangeFrame::Integer(i) => BytesFrame::Integer(*i),
+    RangeFrame::Null => BytesFrame::Null,
+    RangeFrame::Array(frames) => {
+      // FIXME is there a cleaner way to do this with results?
+      let mut out = Vec::with_capacity(frames.len());
+      for frame in frames.iter() {
+        out.push(build_bytes_frame(buf, frame)?);
+      }
+      BytesFrame::Array(out)
+    },
+  })
 }
 
-pub fn is_pattern_pubsub(frames: &Vec<Frame>) -> bool {
-  frames.len() == 4
-    && frames[0].kind() == FrameKind::BulkString
-    && frames[0].as_str().map(|s| s == PATTERN_PUBSUB_PREFIX).unwrap_or(false)
-}
-
-/// Returns the number of bytes necessary to represent the frame.
-pub fn encode_len(data: &Frame) -> Result<usize, GenError> {
-  match *data {
-    Frame::BulkString(ref b) => Ok(bulkstring_encode_len(&b)),
-    Frame::Array(ref frames) => array_encode_len(frames),
-    Frame::Null => Ok(NULL.as_bytes().len()),
-    Frame::SimpleString(ref s) => Ok(simplestring_encode_len(s)),
-    Frame::Error(ref s) => Ok(error_encode_len(s)),
-    Frame::Integer(ref i) => Ok(integer_encode_len(i)),
-  }
+/// Split off and [freeze](bytes::BytesMut::freeze) `amt` bytes from `buf` and return owned views into the buffer
+/// based on the provided range frame.
+///
+/// The returned `Bytes` represents the `Bytes` buffer that was sliced off `buf`. The returned frames hold
+/// owned `Bytes` views to slices within this buffer.
+#[cfg(feature = "bytes")]
+pub fn freeze_parse(
+  buf: &mut BytesMut,
+  frame: &RangeFrame,
+  amt: usize,
+) -> Result<(BytesFrame, Bytes), RedisProtocolError> {
+  let buffer = buf.split_to(amt).freeze();
+  let frame = build_bytes_frame(&buffer, frame)?;
+  Ok((frame, buffer))
 }
 
 #[cfg(test)]
@@ -87,10 +123,7 @@ mod tests {
 
   #[test]
   fn should_get_encode_len_integer() {
-    let i1: i64 = 38473;
-    let i2: i64 = -74834;
-
-    assert_eq!(integer_encode_len(&i1), 8);
-    assert_eq!(integer_encode_len(&i2), 9);
+    assert_eq!(integer_encode_len(38473), 8);
+    assert_eq!(integer_encode_len(-74834), 9);
   }
 }

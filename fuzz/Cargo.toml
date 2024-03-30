@@ -1,0 +1,45 @@
+[package]
+name = "redis-protocol-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+log = "0.4"
+pretty_env_logger = "0.5"
+
+[dependencies.redis-protocol]
+path = ".."
+features = ["std", "bytes", "resp2", "resp3", "decode-logs"]
+
+[[bin]]
+name = "resp2_owned"
+path = "fuzz_targets/resp2_owned.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "resp2_bytes"
+path = "fuzz_targets/resp2_bytes.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "resp3_owned"
+path = "fuzz_targets/resp3_owned.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "resp3_bytes"
+path = "fuzz_targets/resp3_bytes.rs"
+test = false
+doc = false
+bench = false

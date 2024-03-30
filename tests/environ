@@ -1,0 +1,29 @@
+#!/bin/bash
+
+if [ -z "$REDIS_VERSION" ]; then
+  export REDIS_VERSION=7.2.4
+fi
+
+export ROOT=$PWD \
+  RUST_BACKTRACE=full \
+  FRED_REDIS_CENTRALIZED_HOST=redis-protocol-redis-main \
+  FRED_REDIS_CENTRALIZED_PORT=6383 \
+  REDIS_USERNAME=foo \
+  REDIS_PASSWORD=bar
+
+if [ -z "${CIRCLECI_TESTS}" ]; then
+  echo "Skip checking registry cache."
+else
+  mkdir -p /home/circleci/.cargo/registry
+fi
+
+# generate ACL users and redis.conf overrides for the docker images based on the environment variables above
+echo "Setting up docker redis.conf overrides..."
+truncate -s 0 $PWD/tests/codec/users.acl
+echo "user $REDIS_USERNAME on allkeys allcommands allchannels >$REDIS_PASSWORD" | tee -a $PWD/tests/codec/users.acl > /dev/null
+
+# generate redis.conf overrides based on the env variables above
+truncate -s 0 $PWD/tests/codec/default.conf
+echo "enable-debug-command yes" | tee -a $PWD/tests/codec/default.conf > /dev/null
+echo "aclfile /opt/bitnami/redis/mounted-etc/users.acl" | tee -a $PWD/tests/codec/default.conf > /dev/null
+echo "loglevel verbose" | tee -a $PWD/tests/codec/default.conf > /dev/null
