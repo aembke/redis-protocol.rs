@@ -1,10 +1,34 @@
 version: 2
+
+commands:
+  install-docker-compose:
+    steps:
+      - run:
+          name: Install Docker Compose
+          environment:
+            COMPOSE_VERSION: '1.29.2'
+          command: |
+            curl -L "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-$(uname -s)-$(uname -m)" -o ~/docker-compose
+            chmod +x ~/docker-compose
+            sudo mv ~/docker-compose /usr/local/bin/docker-compose
+
 jobs:
+  build-docs:
+    docker:
+      - image: cimg/rust:1.77.0
+    steps:
+      - run:
+          name: Install nightly
+          command: rustup install nightly
+      - run:
+          name: Build documentation
+          command: tests/doc.sh
   tests-codec:
     docker:
       - image: cimg/rust:1.77.0
     steps:
       - checkout
+      - install-docker-compose
       - run:
           name: Run tests with codec features
           command: source tests/environ && tests/codec/runner.sh
@@ -15,7 +39,7 @@ jobs:
       - checkout
       - run:
           name: Run tests with bytes features
-          command: cargo test --release --features "resp2 resp3 bytes codec convert"
+          command: cargo test --release --features "resp2 resp3 bytes codec convert" --lib
   tests-no-bytes:
     docker:
       - image: cimg/rust:1.77.0
@@ -23,7 +47,7 @@ jobs:
       - checkout
       - run:
           name: Run tests without bytes or bytes_utils
-          command: cargo test --release --features "resp2 resp3 convert"
+          command: cargo test --release --features "resp2 resp3 convert" --lib
   tests-indexmap:
     docker:
       - image: cimg/rust:1.77.0
@@ -31,7 +55,7 @@ jobs:
       - checkout
       - run:
           name: Run tests with indexmap features
-          command: cargo test --release --features "index-map resp2 resp3 convert"
+          command: cargo test --release --features "index-map resp2 resp3 convert" --lib
   clippy-lint:
     docker:
       - image: cimg/rust:1.77.0
@@ -68,3 +92,4 @@ workflows:
       - tests-indexmap
       - build-no-std
       - clippy-lint
+      - build-docs
