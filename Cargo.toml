@@ -51,7 +51,7 @@ bytes = ["dep:bytes", "bytes-utils"]
 decode-logs = []
 alloc = ["nom/alloc"]
 std = ["cookie-factory/default", "nom/default"]
-codec = ["tokio-util", "bytes", "resp2", "resp3"]
+codec = ["tokio-util", "bytes"]
 convert = []
 
 [lib]
