@@ -1070,36 +1070,42 @@ impl Resp3Frame for OwnedFrame {
   }
 
   fn is_normal_pubsub_message(&self) -> bool {
-    // format is ["pubsub", "message", <channel>, <message>]
+    // see the `BytesFrame::is_normal_pubsub_message` comments
+    // format should be ["pubsub", "message", <channel>, <message>]
     match self {
       OwnedFrame::Array { data, .. } | OwnedFrame::Push { data, .. } => {
-        data.len() == 4
-          && data[0].as_str().map(|s| s == PUBSUB_PUSH_PREFIX).unwrap_or(false)
-          && data[1].as_str().map(|s| s == PUBSUB_PREFIX).unwrap_or(false)
+        (data.len() == 3 && data[0].as_str().map(|s| s == PUBSUB_PREFIX).unwrap_or(false))
+          || (data.len() == 4
+            && data[0].as_str().map(|s| s == PUBSUB_PUSH_PREFIX).unwrap_or(false)
+            && data[1].as_str().map(|s| s == PUBSUB_PREFIX).unwrap_or(false))
       },
       _ => false,
     }
   }
 
   fn is_pattern_pubsub_message(&self) -> bool {
-    // format is ["pubsub", "pmessage", <pattern>, <channel>, <message>]
+    // see the `BytesFrame::is_normal_pubsub_message` comments
+    // format should be ["pubsub", "pmessage", <pattern>, <channel>, <message>]
     match self {
       OwnedFrame::Array { data, .. } | OwnedFrame::Push { data, .. } => {
-        data.len() == 5
-          && data[0].as_str().map(|s| s == PUBSUB_PUSH_PREFIX).unwrap_or(false)
-          && data[1].as_str().map(|s| s == PATTERN_PUBSUB_PREFIX).unwrap_or(false)
+        (data.len() == 4 && data[0].as_str().map(|s| s == PATTERN_PUBSUB_PREFIX).unwrap_or(false))
+          || (data.len() == 5
+            && data[0].as_str().map(|s| s == PUBSUB_PUSH_PREFIX).unwrap_or(false)
+            && data[1].as_str().map(|s| s == PATTERN_PUBSUB_PREFIX).unwrap_or(false))
       },
       _ => false,
     }
   }
 
   fn is_shard_pubsub_message(&self) -> bool {
-    // format is ["pubsub", "pmessage", <channel>, <message>]
+    // see the `BytesFrame::is_normal_pubsub_message` comments
+    // format should be ["pubsub", "smessage", <channel>, <message>]
     match self {
       OwnedFrame::Array { data, .. } | OwnedFrame::Push { data, .. } => {
-        data.len() == 4
-          && data[0].as_str().map(|s| s == PUBSUB_PUSH_PREFIX).unwrap_or(false)
-          && data[1].as_str().map(|s| s == SHARD_PUBSUB_PREFIX).unwrap_or(false)
+        (data.len() == 3 && data[0].as_str().map(|s| s == SHARD_PUBSUB_PREFIX).unwrap_or(false))
+          || (data.len() == 4
+            && data[0].as_str().map(|s| s == PUBSUB_PUSH_PREFIX).unwrap_or(false)
+            && data[1].as_str().map(|s| s == SHARD_PUBSUB_PREFIX).unwrap_or(false))
       },
       _ => false,
     }
@@ -1675,36 +1681,48 @@ impl Resp3Frame for BytesFrame {
   }
 
   fn is_normal_pubsub_message(&self) -> bool {
-    // format is ["pubsub", "message", <channel>, <message>]
+    // All of these `is_pubsub_message` variants currently require this hack to get around some differences between the RESP3 spec (https://github.com/antirez/RESP3/blob/master/spec.md#push-type)
+    // and what Redis does in practice. According to the spec pubsub events are sent as Push frames with either a
+    // `pubsub` or `monitor` prefix frame in the inner array. However, in practice Redis (v7 at least) doesn't send
+    // this prefix frame. Instead, the inner contents typically begin with the operation (subscribe, unsubscribe,
+    // pmessage, message, smessage, etc). The RESP2 `into_resp3()` function adds the `pubsub` prefix, so this code
+    // needs to handle both formats.
+
+    // format should be ["pubsub", "message", <channel>, <message>]
     match self {
       BytesFrame::Array { data, .. } | BytesFrame::Push { data, .. } => {
-        data.len() == 4
-          && data[0].as_str().map(|s| s == PUBSUB_PUSH_PREFIX).unwrap_or(false)
-          && data[1].as_str().map(|s| s == PUBSUB_PREFIX).unwrap_or(false)
+        (data.len() == 3 && data[0].as_str().map(|s| s == PUBSUB_PREFIX).unwrap_or(false))
+          || (data.len() == 4
+            && data[0].as_str().map(|s| s == PUBSUB_PUSH_PREFIX).unwrap_or(false)
+            && data[1].as_str().map(|s| s == PUBSUB_PREFIX).unwrap_or(false))
       },
       _ => false,
     }
   }
 
   fn is_pattern_pubsub_message(&self) -> bool {
-    // format is ["pubsub", "pmessage", <pattern>, <channel>, <message>]
+    // see the `BytesFrame::is_normal_pubsub_message` comments
+    // format should be ["pubsub", "pmessage", <pattern>, <channel>, <message>]
     match self {
       BytesFrame::Array { data, .. } | BytesFrame::Push { data, .. } => {
-        data.len() == 5
-          && data[0].as_str().map(|s| s == PUBSUB_PUSH_PREFIX).unwrap_or(false)
-          && data[1].as_str().map(|s| s == PATTERN_PUBSUB_PREFIX).unwrap_or(false)
+        (data.len() == 4 && data[0].as_str().map(|s| s == PATTERN_PUBSUB_PREFIX).unwrap_or(false))
+          || (data.len() == 5
+            && data[0].as_str().map(|s| s == PUBSUB_PUSH_PREFIX).unwrap_or(false)
+            && data[1].as_str().map(|s| s == PATTERN_PUBSUB_PREFIX).unwrap_or(false))
       },
       _ => false,
     }
   }
 
   fn is_shard_pubsub_message(&self) -> bool {
-    // format is ["pubsub", "pmessage", <channel>, <message>]
+    // see the `BytesFrame::is_normal_pubsub_message` comments
+    // format should be ["pubsub", "smessage", <channel>, <message>]
     match self {
       BytesFrame::Array { data, .. } | BytesFrame::Push { data, .. } => {
-        data.len() == 4
-          && data[0].as_str().map(|s| s == PUBSUB_PUSH_PREFIX).unwrap_or(false)
-          && data[1].as_str().map(|s| s == SHARD_PUBSUB_PREFIX).unwrap_or(false)
+        (data.len() == 3 && data[0].as_str().map(|s| s == SHARD_PUBSUB_PREFIX).unwrap_or(false))
+          || (data.len() == 4
+            && data[0].as_str().map(|s| s == PUBSUB_PUSH_PREFIX).unwrap_or(false)
+            && data[1].as_str().map(|s| s == SHARD_PUBSUB_PREFIX).unwrap_or(false))
       },
       _ => false,
     }
