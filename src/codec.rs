@@ -1,20 +1,22 @@
 #[cfg(feature = "resp3")]
 mod resp3 {
-  use crate::error::{RedisProtocolError, RedisProtocolErrorKind};
-  use crate::resp3::{
-    decode::streaming::decode_bytes_mut as resp3_decode,
-    encode::complete::extend_encode as resp3_encode,
-    types::{BytesFrame as Resp3Frame, StreamedFrame},
+  use crate::{
+    error::{RedisProtocolError, RedisProtocolErrorKind},
+    resp3::{
+      decode::streaming::decode_bytes_mut as resp3_decode,
+      encode::complete::extend_encode as resp3_encode,
+      types::{BytesFrame as Resp3Frame, StreamedFrame},
+    },
   };
   use bytes::BytesMut;
   use tokio_util::codec::{Decoder, Encoder};
   /// Encode a redis command string (`SET foo bar NX`, etc) into a RESP3 blob string array.
   pub fn resp3_encode_command(cmd: &str) -> Resp3Frame {
     Resp3Frame::Array {
-      data: cmd
+      data:       cmd
         .split(' ')
         .map(|s| Resp3Frame::BlobString {
-          data: s.as_bytes().to_vec().into(),
+          data:       s.as_bytes().to_vec().into(),
           attributes: None,
         })
         .collect(),
@@ -119,9 +121,13 @@ mod resp3 {
 
 #[cfg(feature = "resp2")]
 mod resp2 {
-  use crate::error::RedisProtocolError;
-  use crate::resp2::{
-    decode::decode_bytes_mut as resp2_decode, encode::extend_encode as resp2_encode, types::BytesFrame as Resp2Frame,
+  use crate::{
+    error::RedisProtocolError,
+    resp2::{
+      decode::decode_bytes_mut as resp2_decode,
+      encode::extend_encode as resp2_encode,
+      types::BytesFrame as Resp2Frame,
+    },
   };
   use bytes::BytesMut;
   use tokio_util::codec::{Decoder, Encoder};
@@ -192,7 +198,9 @@ mod resp2 {
 }
 
 #[cfg(feature = "resp3")]
+#[cfg_attr(docsrs, doc(cfg(feature = "resp3")))]
 pub use resp3::*;
 
 #[cfg(feature = "resp2")]
+#[cfg_attr(docsrs, doc(cfg(feature = "resp2")))]
 pub use resp2::*;

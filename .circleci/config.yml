@@ -3,7 +3,7 @@ version: 2
 jobs:
   build-docs:
     docker:
-      - image: cimg/rust:1.77.0
+      - image: cimg/rust:1.77
     steps:
       - checkout
       - run:
@@ -26,7 +26,7 @@ jobs:
           command: source tests/environ && tests/codec/runner.sh
   tests-bytes:
     docker:
-      - image: cimg/rust:1.77.0
+      - image: cimg/rust:1.77
     steps:
       - checkout
       - run:
@@ -34,7 +34,7 @@ jobs:
           command: cargo test --release --features "resp2 resp3 bytes codec convert" --lib
   tests-no-bytes:
     docker:
-      - image: cimg/rust:1.77.0
+      - image: cimg/rust:1.77
     steps:
       - checkout
       - run:
@@ -42,7 +42,7 @@ jobs:
           command: cargo test --release --features "resp2 resp3 convert" --lib
   tests-indexmap:
     docker:
-      - image: cimg/rust:1.77.0
+      - image: cimg/rust:1.77
     steps:
       - checkout
       - run:
@@ -50,7 +50,7 @@ jobs:
           command: cargo test --release --features "index-map resp2 resp3 convert" --lib
   clippy-lint:
     docker:
-      - image: cimg/rust:1.77.0
+      - image: cimg/rust:1.77
     environment:
       CARGO_NET_GIT_FETCH_WITH_CLI: true
     steps:
@@ -60,7 +60,7 @@ jobs:
           command: cargo clippy --features "bytes convert codec std resp2 resp3" --lib --tests --benches -- -Dwarnings
   build-no-std:
     docker:
-      - image: cimg/rust:1.77.0
+      - image: cimg/rust:1.77
     steps:
       - checkout
       - run:
