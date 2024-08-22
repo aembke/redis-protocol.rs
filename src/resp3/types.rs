@@ -126,6 +126,8 @@ pub type RangeAttributes = FrameMap<RangeFrame, RangeFrame>;
 
 /// The RESP version used in the `HELLO` request.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "UPPERCASE"))]
 pub enum RespVersion {
   RESP2,
   RESP3,
