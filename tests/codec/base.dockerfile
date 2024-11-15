@@ -1,4 +1,4 @@
-FROM rust:1.77.0-slim-buster
+FROM rust:1.80-slim-bullseye
 
 WORKDIR /project
 

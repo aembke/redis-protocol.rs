@@ -302,6 +302,262 @@ impl FrameKind {
   }
 }
 
+/// A borrowed attributes type, typically used with `BorrowedFrame` for encoding use cases.
+#[derive(Debug, PartialEq, Eq)]
+pub enum BorrowedAttrs<'a> {
+  Owned(&'a OwnedAttributes),
+  #[cfg(feature = "bytes")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
+  Bytes(&'a BytesAttributes),
+}
+
+impl<'a> Clone for BorrowedAttrs<'a> {
+  fn clone(self: &BorrowedAttrs<'a>) -> BorrowedAttrs<'a> {
+    match self {
+      BorrowedAttrs::Owned(owned) => BorrowedAttrs::Owned(owned),
+      #[cfg(feature = "bytes")]
+      BorrowedAttrs::Bytes(bytes) => BorrowedAttrs::Bytes(bytes),
+    }
+  }
+}
+
+impl<'a> From<&'a BorrowedAttrs<'a>> for BorrowedAttrs<'a> {
+  fn from(value: &'a BorrowedAttrs) -> Self {
+    value.clone()
+  }
+}
+
+impl<'a> From<&'a OwnedAttributes> for BorrowedAttrs<'a> {
+  fn from(attr: &'a OwnedAttributes) -> BorrowedAttrs<'a> {
+    BorrowedAttrs::Owned(attr)
+  }
+}
+
+#[cfg(feature = "bytes")]
+#[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
+impl<'a> From<&'a BytesAttributes> for BorrowedAttrs<'a> {
+  fn from(attr: &'a BytesAttributes) -> BorrowedAttrs<'a> {
+    BorrowedAttrs::Bytes(attr)
+  }
+}
+
+/// A borrowed frame variant, typically used for encoding use cases.
+#[derive(Debug, PartialEq)]
+pub enum BorrowedFrame<'a> {
+  /// A blob of bytes.
+  BlobString {
+    data:       &'a [u8],
+    attributes: Option<BorrowedAttrs<'a>>,
+  },
+  /// A blob representing an error.
+  BlobError {
+    data:       &'a [u8],
+    attributes: Option<BorrowedAttrs<'a>>,
+  },
+  /// A small string.
+  SimpleString {
+    data:       &'a [u8],
+    attributes: Option<BorrowedAttrs<'a>>,
+  },
+  /// A small string representing an error.
+  SimpleError {
+    data:       &'a str,
+    attributes: Option<BorrowedAttrs<'a>>,
+  },
+  /// A boolean type.
+  Boolean {
+    data:       bool,
+    attributes: Option<BorrowedAttrs<'a>>,
+  },
+  /// A null type.
+  Null,
+  /// A signed 64-bit integer.
+  Number {
+    data:       i64,
+    attributes: Option<BorrowedAttrs<'a>>,
+  },
+  /// A signed 64-bit floating point number.
+  Double {
+    data:       f64,
+    attributes: Option<BorrowedAttrs<'a>>,
+  },
+  /// A large number not representable as a `Number` or `Double`.
+  BigNumber {
+    data:       &'a [u8],
+    attributes: Option<BorrowedAttrs<'a>>,
+  },
+  /// A string to be displayed without any escaping or filtering.
+  VerbatimString {
+    data:       &'a [u8],
+    format:     VerbatimStringFormat,
+    attributes: Option<BorrowedAttrs<'a>>,
+  },
+  /// An array of frames.
+  Array {
+    data:       &'a [BorrowedFrame<'a>],
+    attributes: Option<BorrowedAttrs<'a>>,
+  },
+  /// An unordered map of key-value pairs.
+  Map {
+    data:       &'a FrameMap<BorrowedFrame<'a>, BorrowedFrame<'a>>,
+    attributes: Option<BorrowedAttrs<'a>>,
+  },
+  /// An unordered collection of other frames with a uniqueness constraint.
+  Set {
+    data:       &'a FrameSet<BorrowedFrame<'a>>,
+    attributes: Option<BorrowedAttrs<'a>>,
+  },
+  /// Out-of-band data.
+  Push {
+    data:       &'a [BorrowedFrame<'a>],
+    attributes: Option<BorrowedAttrs<'a>>,
+  },
+  /// A special frame type used when first connecting to the server to describe the protocol version and optional
+  /// credentials.
+  Hello {
+    version: RespVersion,
+    auth:    Option<(&'a str, &'a str)>,
+    setname: Option<&'a str>,
+  },
+  /// One chunk of a streaming blob.
+  ChunkedString(&'a [u8]),
+}
+
+impl<'a> Clone for BorrowedFrame<'a> {
+  fn clone(self: &BorrowedFrame<'a>) -> BorrowedFrame<'a> {
+    use self::BorrowedFrame::*;
+
+    match self {
+      Array { data, attributes } => Array {
+        data,
+        attributes: attributes.clone(),
+      },
+      Push { data, attributes } => Push {
+        data,
+        attributes: attributes.clone(),
+      },
+      Set { data, attributes } => Set {
+        data,
+        attributes: attributes.clone(),
+      },
+      Map { data, attributes } => Map {
+        data,
+        attributes: attributes.clone(),
+      },
+      BlobString { data, attributes } => BlobString {
+        data,
+        attributes: attributes.clone(),
+      },
+      SimpleString { data, attributes } => SimpleString {
+        data,
+        attributes: attributes.clone(),
+      },
+      SimpleError { data, attributes } => SimpleError {
+        data,
+        attributes: attributes.clone(),
+      },
+      Number { data, attributes } => Number {
+        data:       *data,
+        attributes: attributes.clone(),
+      },
+      Null => Null,
+      Double { data, attributes } => Double {
+        data:       *data,
+        attributes: attributes.clone(),
+      },
+      Boolean { data, attributes } => Boolean {
+        data:       *data,
+        attributes: attributes.clone(),
+      },
+      BlobError { data, attributes } => BlobError {
+        data,
+        attributes: attributes.clone(),
+      },
+      VerbatimString {
+        data,
+        format,
+        attributes,
+      } => VerbatimString {
+        data,
+        format: format.clone(),
+        attributes: attributes.clone(),
+      },
+      ChunkedString(data) => ChunkedString(data),
+      BigNumber { data, attributes } => BigNumber {
+        data,
+        attributes: attributes.clone(),
+      },
+      Hello { auth, setname, version } => Hello {
+        version: version.clone(),
+        setname: setname.clone(),
+        auth:    auth.clone(),
+      },
+    }
+  }
+}
+
+impl Eq for BorrowedFrame<'_> {}
+
+impl<'a> Hash for BorrowedFrame<'a> {
+  fn hash<H: Hasher>(&self, state: &mut H) {
+    use self::BorrowedFrame::*;
+    self.kind().hash_prefix().hash(state);
+
+    match self {
+      BlobString { data, .. } => data.hash(state),
+      SimpleString { data, .. } => data.hash(state),
+      SimpleError { data, .. } => data.hash(state),
+      Number { data, .. } => data.hash(state),
+      Null => NULL.hash(state),
+      Double { data, .. } => data.to_string().hash(state),
+      Boolean { data, .. } => data.hash(state),
+      BlobError { data, .. } => data.hash(state),
+      VerbatimString { data, format, .. } => {
+        format.hash(state);
+        data.hash(state);
+      },
+      ChunkedString(data) => data.hash(state),
+      BigNumber { data, .. } => data.hash(state),
+      _ => panic!("Invalid RESP3 data type to use as hash key."),
+    };
+  }
+}
+
+impl<'a> BorrowedFrame<'a> {
+  /// Read the `FrameKind` value for this frame.
+  pub fn kind(&self) -> FrameKind {
+    match self {
+      BorrowedFrame::Array { .. } => FrameKind::Array,
+      BorrowedFrame::BlobString { .. } => FrameKind::BlobString,
+      BorrowedFrame::SimpleString { .. } => FrameKind::SimpleString,
+      BorrowedFrame::SimpleError { .. } => FrameKind::SimpleError,
+      BorrowedFrame::Number { .. } => FrameKind::Number,
+      BorrowedFrame::Null => FrameKind::Null,
+      BorrowedFrame::Double { .. } => FrameKind::Double,
+      BorrowedFrame::BlobError { .. } => FrameKind::BlobError,
+      BorrowedFrame::VerbatimString { .. } => FrameKind::VerbatimString,
+      BorrowedFrame::Boolean { .. } => FrameKind::Boolean,
+      BorrowedFrame::Map { .. } => FrameKind::Map,
+      BorrowedFrame::Set { .. } => FrameKind::Set,
+      BorrowedFrame::Push { .. } => FrameKind::Push,
+      BorrowedFrame::Hello { .. } => FrameKind::Hello,
+      BorrowedFrame::BigNumber { .. } => FrameKind::BigNumber,
+      BorrowedFrame::ChunkedString(inner) => {
+        if inner.is_empty() {
+          FrameKind::EndStream
+        } else {
+          FrameKind::ChunkedString
+        }
+      },
+    }
+  }
+
+  /// Return the number of byte necessary to encode this frame.
+  pub fn encode_len(&self, int_as_blobstring: bool) -> usize {
+    resp3_utils::borrowed_encode_len(self, int_as_blobstring)
+  }
+}
+
 /// A reference-free frame type representing ranges into an associated buffer, typically used to implement zero-copy
 /// parsing.
 #[derive(Clone, Debug, PartialEq)]
@@ -624,7 +880,7 @@ pub trait Resp3Frame: Debug + Hash + Eq + Sized {
   fn as_bytes(&self) -> Option<&[u8]>;
 
   /// Read the number of bytes necessary to represent the frame and any associated attributes.
-  fn encode_len(&self) -> usize;
+  fn encode_len(&self, int_as_blobstring: bool) -> usize;
 
   /// Whether the frame is a message from a `subscribe` call.
   fn is_normal_pubsub_message(&self) -> bool;
@@ -1065,8 +1321,8 @@ impl Resp3Frame for OwnedFrame {
     }
   }
 
-  fn encode_len(&self) -> usize {
-    resp3_utils::owned_encode_len(self)
+  fn encode_len(&self, int_as_blobstring: bool) -> usize {
+    resp3_utils::owned_encode_len(self, int_as_blobstring)
   }
 
   fn is_normal_pubsub_message(&self) -> bool {
@@ -1676,8 +1932,8 @@ impl Resp3Frame for BytesFrame {
     }
   }
 
-  fn encode_len(&self) -> usize {
-    resp3_utils::bytes_encode_len(self)
+  fn encode_len(&self, int_as_blobstring: bool) -> usize {
+    resp3_utils::bytes_encode_len(self, int_as_blobstring)
   }
 
   fn is_normal_pubsub_message(&self) -> bool {

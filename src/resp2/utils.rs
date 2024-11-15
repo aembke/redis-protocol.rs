@@ -1,7 +1,7 @@
 use crate::{
   error::RedisProtocolError,
   resp2::types::{OwnedFrame, RangeFrame},
-  utils::digits_in_number,
+  utils::digits_in_usize,
 };
 use alloc::{borrow::ToOwned, string::String, vec::Vec};
 
@@ -13,7 +13,7 @@ use bytes::{Bytes, BytesMut};
 use bytes_utils::Str;
 
 pub fn bulkstring_encode_len(b: &[u8]) -> usize {
-  1 + digits_in_number(b.len()) + 2 + b.len() + 2
+  1 + digits_in_usize(b.len()) + 2 + b.len() + 2
 }
 
 pub fn simplestring_encode_len(s: &[u8]) -> usize {
@@ -24,11 +24,15 @@ pub fn error_encode_len(s: &str) -> usize {
   1 + s.as_bytes().len() + 2
 }
 
-pub fn integer_encode_len(i: i64) -> usize {
+pub fn integer_encode_len(i: i64, int_as_bulkstring: bool) -> usize {
   let prefix = if i < 0 { 1 } else { 0 };
-  let as_usize = if i < 0 { -i as usize } else { i as usize };
+  let digits = digits_in_usize(i.unsigned_abs() as usize);
 
-  1 + digits_in_number(as_usize) + 2 + prefix
+  if int_as_bulkstring {
+    1 + digits_in_usize(digits + prefix) + 2 + prefix + digits + 2
+  } else {
+    1 + digits + 2 + prefix
+  }
 }
 
 /// Move or copy the contents of `buf` based on the ranges in the provided frame.
@@ -123,7 +127,7 @@ mod tests {
 
   #[test]
   fn should_get_encode_len_integer() {
-    assert_eq!(integer_encode_len(38473), 8);
-    assert_eq!(integer_encode_len(-74834), 9);
+    assert_eq!(integer_encode_len(38473, false), 8);
+    assert_eq!(integer_encode_len(-74834, false), 9);
   }
 }

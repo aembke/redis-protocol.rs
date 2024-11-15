@@ -1,5 +1,5 @@
 use crate::{
-  digits_in_number,
+  digits_in_usize,
   resp2::utils::{bulkstring_encode_len, error_encode_len, integer_encode_len, simplestring_encode_len},
   resp3::types::OwnedFrame as Resp3OwnedFrame,
   types::{_Range, PATTERN_PUBSUB_PREFIX, PUBSUB_PREFIX, PUBSUB_PUSH_PREFIX, SHARD_PUBSUB_PREFIX},
@@ -102,6 +102,81 @@ impl FrameKind {
   }
 }
 
+/// A borrowed frame variant, typically used for encoding use cases.
+#[derive(Debug, Eq, PartialEq)]
+pub enum BorrowedFrame<'a> {
+  /// A RESP2 simple string.
+  SimpleString(&'a [u8]),
+  /// A short string representing an error.
+  Error(&'a str),
+  /// A signed 64-bit integer.
+  Integer(i64),
+  /// A byte array.
+  BulkString(&'a [u8]),
+  /// An array of frames,
+  Array(&'a [BorrowedFrame<'a>]),
+  /// A null value.
+  Null,
+}
+
+impl<'a> Clone for BorrowedFrame<'a> {
+  fn clone(self: &BorrowedFrame<'a>) -> BorrowedFrame<'a> {
+    match self {
+      BorrowedFrame::Null => BorrowedFrame::Null,
+      BorrowedFrame::Array(a) => BorrowedFrame::Array(*a),
+      BorrowedFrame::BulkString(b) => BorrowedFrame::BulkString(*b),
+      BorrowedFrame::SimpleString(s) => BorrowedFrame::SimpleString(*s),
+      BorrowedFrame::Error(e) => BorrowedFrame::Error(*e),
+      BorrowedFrame::Integer(i) => BorrowedFrame::Integer(*i),
+    }
+  }
+}
+
+impl<'a> Hash for BorrowedFrame<'a> {
+  fn hash<H: Hasher>(&self, state: &mut H) {
+    self.kind().hash_prefix().hash(state);
+
+    match self {
+      BorrowedFrame::SimpleString(b) | BorrowedFrame::BulkString(b) => b.hash(state),
+      BorrowedFrame::Error(s) => s.hash(state),
+      BorrowedFrame::Integer(i) => i.hash(state),
+      BorrowedFrame::Array(f) => f.iter().for_each(|f| f.hash(state)),
+      BorrowedFrame::Null => NULL.hash(state),
+    }
+  }
+}
+
+impl<'a> BorrowedFrame<'a> {
+  /// Read the `FrameKind` value for this frame.
+  pub fn kind(&self) -> FrameKind {
+    match self {
+      BorrowedFrame::SimpleString(_) => FrameKind::SimpleString,
+      BorrowedFrame::Error(_) => FrameKind::Error,
+      BorrowedFrame::Integer(_) => FrameKind::Integer,
+      BorrowedFrame::BulkString(_) => FrameKind::BulkString,
+      BorrowedFrame::Array(_) => FrameKind::Array,
+      BorrowedFrame::Null => FrameKind::Null,
+    }
+  }
+
+  /// Return the number of bytes needed to encode this frame.
+  ///
+  /// The `int_as_bulkstring` argument controls whether integers should be encoded as bulk strings, which is how Redis
+  /// expects integers in practice.
+  pub fn encode_len(&self, int_as_bulkstring: bool) -> usize {
+    match self {
+      BorrowedFrame::BulkString(b) => bulkstring_encode_len(b),
+      BorrowedFrame::Array(frames) => frames.iter().fold(1 + digits_in_usize(frames.len()) + 2, |m, f| {
+        m + f.encode_len(int_as_bulkstring)
+      }),
+      BorrowedFrame::Null => NULL.as_bytes().len(),
+      BorrowedFrame::SimpleString(s) => simplestring_encode_len(s),
+      BorrowedFrame::Error(s) => error_encode_len(s),
+      BorrowedFrame::Integer(i) => integer_encode_len(*i, int_as_bulkstring),
+    }
+  }
+}
+
 /// A reference-free frame type representing ranges into an associated buffer, typically used to implement zero-copy
 /// parsing.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -141,7 +216,7 @@ pub trait Resp2Frame: Debug + Hash + Eq {
   fn to_string(&self) -> Option<String>;
 
   /// Read the number of bytes needed to encode this frame.
-  fn encode_len(&self) -> usize;
+  fn encode_len(&self, int_as_bulkstring: bool) -> usize;
 
   /// Whether the frame is a message from a `subscribe` call.
   fn is_normal_pubsub_message(&self) -> bool;
@@ -278,16 +353,16 @@ impl Hash for OwnedFrame {
 }
 
 impl Resp2Frame for OwnedFrame {
-  fn encode_len(&self) -> usize {
+  fn encode_len(&self, int_as_bulkstring: bool) -> usize {
     match self {
       OwnedFrame::BulkString(b) => bulkstring_encode_len(b),
-      OwnedFrame::Array(frames) => frames
-        .iter()
-        .fold(1 + digits_in_number(frames.len()) + 2, |m, f| m + f.encode_len()),
+      OwnedFrame::Array(frames) => frames.iter().fold(1 + digits_in_usize(frames.len()) + 2, |m, f| {
+        m + f.encode_len(int_as_bulkstring)
+      }),
       OwnedFrame::Null => NULL.as_bytes().len(),
       OwnedFrame::SimpleString(s) => simplestring_encode_len(s),
       OwnedFrame::Error(s) => error_encode_len(s),
-      OwnedFrame::Integer(i) => integer_encode_len(*i),
+      OwnedFrame::Integer(i) => integer_encode_len(*i, int_as_bulkstring),
     }
   }
 
@@ -436,16 +511,16 @@ impl Hash for BytesFrame {
 
 #[cfg(feature = "bytes")]
 impl Resp2Frame for BytesFrame {
-  fn encode_len(&self) -> usize {
+  fn encode_len(&self, int_as_bulkstring: bool) -> usize {
     match self {
       BytesFrame::BulkString(b) => bulkstring_encode_len(b),
-      BytesFrame::Array(frames) => frames
-        .iter()
-        .fold(1 + digits_in_number(frames.len()) + 2, |m, f| m + f.encode_len()),
+      BytesFrame::Array(frames) => frames.iter().fold(1 + digits_in_usize(frames.len()) + 2, |m, f| {
+        m + f.encode_len(int_as_bulkstring)
+      }),
       BytesFrame::Null => NULL.as_bytes().len(),
       BytesFrame::SimpleString(s) => simplestring_encode_len(s),
       BytesFrame::Error(s) => error_encode_len(s),
-      BytesFrame::Integer(i) => integer_encode_len(*i),
+      BytesFrame::Integer(i) => integer_encode_len(*i, int_as_bulkstring),
     }
   }
 

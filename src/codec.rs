@@ -4,8 +4,8 @@ mod resp3 {
     error::{RedisProtocolError, RedisProtocolErrorKind},
     resp3::{
       decode::streaming::decode_bytes_mut as resp3_decode,
-      encode::complete::extend_encode as resp3_encode,
-      types::{BytesFrame as Resp3Frame, StreamedFrame},
+      encode::complete::{extend_encode as resp3_encode, extend_encode_borrowed as resp3_encode_borrowed},
+      types::{BorrowedFrame, BytesFrame as Resp3Frame, StreamedFrame},
     },
   };
   use bytes::BytesMut;
@@ -40,10 +40,10 @@ mod resp3 {
   ///   let socket = TcpStream::connect("127.0.0.1:6379").await.unwrap();
   ///   let mut framed = Framed::new(socket, Resp3::default());
   ///
-  ///   let hello = Resp3Frame::Hello {
-  ///     version:  RespVersion::RESP3,
-  ///     username: Some("foo".into()),
-  ///     password: Some("bar".into()),
+  ///   let hello = BytesFrame::Hello {
+  ///     version: RespVersion::RESP3,
+  ///     auth:    Some(("foo".into(), "bar".into())),
+  ///     setname: None,
   ///   };
   ///   // or use the shorthand, but this likely only works for simple use cases
   ///   let get_foo = resp3_encode_command("GET foo");
@@ -60,14 +60,38 @@ mod resp3 {
   /// ```
   #[derive(Debug, Default)]
   pub struct Resp3 {
-    streaming: Option<StreamedFrame<Resp3Frame>>,
+    streaming:         Option<StreamedFrame<Resp3Frame>>,
+    int_as_blobstring: bool,
+  }
+
+  impl Resp3 {
+    /// Create a new codec with the provided flag describing whether the encoder logic should send integers as blob
+    /// strings.
+    pub fn new(int_as_blobstring: bool) -> Resp3 {
+      Resp3 {
+        int_as_blobstring,
+        streaming: None,
+      }
+    }
   }
 
   impl Encoder<Resp3Frame> for Resp3 {
     type Error = RedisProtocolError;
 
     fn encode(&mut self, item: Resp3Frame, dst: &mut BytesMut) -> Result<(), Self::Error> {
-      resp3_encode(dst, &item).map(|_| ()).map_err(RedisProtocolError::from)
+      resp3_encode(dst, &item, self.int_as_blobstring)
+        .map(|_| ())
+        .map_err(RedisProtocolError::from)
+    }
+  }
+
+  impl Encoder<BorrowedFrame<'_>> for Resp3 {
+    type Error = RedisProtocolError;
+
+    fn encode(&mut self, item: BorrowedFrame, dst: &mut BytesMut) -> Result<(), Self::Error> {
+      resp3_encode_borrowed(dst, &item, self.int_as_blobstring)
+        .map(|_| ())
+        .map_err(RedisProtocolError::from)
     }
   }
 
@@ -125,8 +149,8 @@ mod resp2 {
     error::RedisProtocolError,
     resp2::{
       decode::decode_bytes_mut as resp2_decode,
-      encode::extend_encode as resp2_encode,
-      types::BytesFrame as Resp2Frame,
+      encode::{extend_encode as resp2_encode, extend_encode_borrowed as resp2_encode_borrowed},
+      types::{BorrowedFrame, BytesFrame as Resp2Frame},
     },
   };
   use bytes::BytesMut;
@@ -169,13 +193,35 @@ mod resp2 {
   /// }
   /// ```
   #[derive(Clone, Debug, Default)]
-  pub struct Resp2;
+  pub struct Resp2 {
+    int_as_bulkstring: bool,
+  }
+
+  impl Resp2 {
+    /// Create a new codec with the provided flag describing whether the encoder logic should send integers as blob
+    /// strings.
+    pub fn new(int_as_bulkstring: bool) -> Resp2 {
+      Resp2 { int_as_bulkstring }
+    }
+  }
 
   impl Encoder<Resp2Frame> for Resp2 {
     type Error = RedisProtocolError;
 
     fn encode(&mut self, item: Resp2Frame, dst: &mut BytesMut) -> Result<(), Self::Error> {
-      resp2_encode(dst, &item).map(|_| ()).map_err(RedisProtocolError::from)
+      resp2_encode(dst, &item, self.int_as_bulkstring)
+        .map(|_| ())
+        .map_err(RedisProtocolError::from)
+    }
+  }
+
+  impl Encoder<BorrowedFrame<'_>> for Resp2 {
+    type Error = RedisProtocolError;
+
+    fn encode(&mut self, item: BorrowedFrame, dst: &mut BytesMut) -> Result<(), Self::Error> {
+      resp2_encode_borrowed(dst, &item, self.int_as_bulkstring)
+        .map(|_| ())
+        .map_err(RedisProtocolError::from)
     }
   }
 

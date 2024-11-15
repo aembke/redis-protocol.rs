@@ -8,7 +8,7 @@ use bytes::BytesMut;
 
 /// Returns the number of bytes necessary to encode a string representation of `d`.
 #[cfg(feature = "std")]
-pub fn digits_in_number(d: usize) -> usize {
+pub fn digits_in_usize(d: usize) -> usize {
   if d == 0 {
     return 1;
   }
@@ -18,12 +18,34 @@ pub fn digits_in_number(d: usize) -> usize {
 
 /// Returns the number of bytes necessary to encode a string representation of `d`.
 #[cfg(feature = "libm")]
-pub fn digits_in_number(d: usize) -> usize {
+pub fn digits_in_usize(d: usize) -> usize {
   if d == 0 {
     return 1;
   }
 
   libm::floor(libm::log10(d as f64)) as usize + 1
+}
+
+/// Returns the number of bytes necessary to encode a string representation of `d`.
+#[cfg(feature = "std")]
+pub fn digits_in_i64(d: i64) -> usize {
+  if d == 0 {
+    return 1;
+  }
+  let prefix = if d.is_negative() { 1 } else { 0 };
+
+  prefix + ((d.unsigned_abs() as f64).log10()).floor() as usize + 1
+}
+
+/// Returns the number of bytes necessary to encode a string representation of `d`.
+#[cfg(feature = "libm")]
+pub fn digits_in_i64(d: i64) -> usize {
+  if d == 0 {
+    return 1;
+  }
+  let prefix = if d.is_negative() { 1 } else { 0 };
+
+  prefix + libm::floor(libm::log10(d.unsigned_abs() as f64)) as usize + 1
 }
 
 pub fn isize_to_usize<T>(val: isize) -> Result<usize, RedisParseError<T>> {

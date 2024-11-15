@@ -1,8 +1,20 @@
 use futures::{SinkExt, StreamExt};
 use redis_protocol::{
   codec::{resp2_encode_command, resp3_encode_command, Resp2, Resp3},
-  resp2::types::{BytesFrame as Resp2BytesFrame, FrameKind as Resp2FrameKind, Resp2Frame},
-  resp3::types::{BytesFrame as Resp3BytesFrame, FrameKind as Resp3FrameKind, FrameMap, Resp3Frame, RespVersion},
+  resp2::types::{
+    BorrowedFrame as Resp2BorrowedFrame,
+    BytesFrame as Resp2BytesFrame,
+    FrameKind as Resp2FrameKind,
+    Resp2Frame,
+  },
+  resp3::types::{
+    BorrowedFrame as Resp3BorrowedFrame,
+    BytesFrame as Resp3BytesFrame,
+    FrameKind as Resp3FrameKind,
+    FrameMap,
+    Resp3Frame,
+    RespVersion,
+  },
 };
 use std::env;
 use tokio::net::TcpStream;
@@ -30,24 +42,24 @@ fn read_redis_username() -> String {
   read_env_var("REDIS_USERNAME").expect("Failed to read REDIS_USERNAME env")
 }
 
-async fn connect_resp2() -> Framed<TcpStream, Resp2> {
+async fn connect_resp2(int_as_bulkstring: bool) -> Framed<TcpStream, Resp2> {
   let addr = format!("{}:{}", read_redis_centralized_host(), read_redis_centralized_port());
   debug!("Connecting to {}", addr);
   let socket = TcpStream::connect(addr).await.unwrap();
-  Framed::new(socket, Resp2)
+  Framed::new(socket, Resp2::new(int_as_bulkstring))
 }
 
-async fn connect_resp3() -> Framed<TcpStream, Resp3> {
+async fn connect_resp3(int_as_blobstring: bool) -> Framed<TcpStream, Resp3> {
   let addr = format!("{}:{}", read_redis_centralized_host(), read_redis_centralized_port());
   debug!("Connecting to {}", addr);
   let socket = TcpStream::connect(addr).await.unwrap();
-  Framed::new(socket, Resp3::default())
+  Framed::new(socket, Resp3::new(int_as_blobstring))
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn should_use_resp2_codec_ping() {
   let _ = pretty_env_logger::try_init();
-  let mut socket = connect_resp2().await;
+  let mut socket = connect_resp2(false).await;
 
   let ping = Resp2BytesFrame::Array(vec![Resp2BytesFrame::BulkString("PING".into())]);
   socket.send(ping).await.unwrap();
@@ -56,9 +68,31 @@ async fn should_use_resp2_codec_ping() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn should_use_resp2_codec_borrowed_ping_incr() {
+  let _ = pretty_env_logger::try_init();
+  let mut socket = connect_resp2(true).await;
+
+  let inner = vec![Resp2BorrowedFrame::BulkString("PING".as_bytes())];
+  let ping = Resp2BorrowedFrame::Array(&inner);
+  socket.send(ping).await.unwrap();
+  let response = socket.next().await.unwrap().unwrap();
+  assert_eq!(response.as_str().unwrap(), "PONG");
+
+  let inner = vec![
+    Resp2BorrowedFrame::BulkString("INCRBY".as_bytes()),
+    Resp2BorrowedFrame::BulkString("baz".as_bytes()),
+    Resp2BorrowedFrame::BulkString("2".as_bytes()),
+  ];
+  let incr = Resp2BorrowedFrame::Array(&inner);
+  socket.send(incr).await.unwrap();
+  let response = socket.next().await.unwrap().unwrap();
+  assert_eq!(response, Resp2BytesFrame::Integer(2));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn should_use_resp2_codec_get_set() {
   let _ = pretty_env_logger::try_init();
-  let mut socket = connect_resp2().await;
+  let mut socket = connect_resp2(false).await;
 
   let get_foo = resp2_encode_command("GET foo");
   socket.send(get_foo).await.unwrap();
@@ -84,7 +118,7 @@ async fn should_use_resp2_codec_get_set() {
 #[tokio::test(flavor = "multi_thread")]
 async fn should_use_resp2_codec_hgetall() {
   let _ = pretty_env_logger::try_init();
-  let mut socket = connect_resp2().await;
+  let mut socket = connect_resp2(false).await;
 
   let hmset = resp2_encode_command("HMSET foo a b c d");
   socket.send(hmset).await.unwrap();
@@ -113,7 +147,7 @@ async fn should_use_resp2_codec_hgetall() {
 #[tokio::test(flavor = "multi_thread")]
 async fn should_use_resp3_codec_hello() {
   let _ = pretty_env_logger::try_init();
-  let mut socket = connect_resp3().await;
+  let mut socket = connect_resp3(false).await;
 
   let hello = Resp3BytesFrame::Hello {
     version: RespVersion::RESP3,
@@ -155,7 +189,7 @@ async fn should_use_resp3_codec_hello() {
 #[tokio::test(flavor = "multi_thread")]
 async fn should_use_resp3_codec_get_set() {
   let _ = pretty_env_logger::try_init();
-  let mut socket = connect_resp3().await;
+  let mut socket = connect_resp3(false).await;
 
   let hello = Resp3BytesFrame::Hello {
     version: RespVersion::RESP3,
@@ -193,7 +227,7 @@ async fn should_use_resp3_codec_get_set() {
 #[tokio::test(flavor = "multi_thread")]
 async fn should_use_resp3_codec_hgetall() {
   let _ = pretty_env_logger::try_init();
-  let mut socket = connect_resp3().await;
+  let mut socket = connect_resp3(false).await;
 
   let hello = Resp3BytesFrame::Hello {
     version: RespVersion::RESP3,

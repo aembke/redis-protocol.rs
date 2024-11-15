@@ -1,4 +1,8 @@
-use crate::{error::RedisProtocolError, resp3::types::*, utils::digits_in_number};
+use crate::{
+  error::{RedisProtocolError, RedisProtocolErrorKind},
+  resp3::types::*,
+  utils::digits_in_usize,
+};
 use alloc::{
   borrow::Cow,
   string::{String, ToString},
@@ -14,7 +18,6 @@ use bytes::{Bytes, BytesMut};
 #[cfg(feature = "bytes")]
 use bytes_utils::Str;
 
-use crate::error::RedisProtocolErrorKind;
 #[cfg(feature = "hashbrown")]
 use hashbrown::{HashMap, HashSet};
 #[cfg(feature = "index-map")]
@@ -53,7 +56,7 @@ pub fn new_map<K: Hash + Eq, V>(capacity: usize) -> IndexMap<K, V> {
 /// Read the number of bytes needed to encode the length prefix on any aggregate type frame.
 pub fn length_prefix_encode_len(len: usize) -> usize {
   // prefix, length, CRLF
-  1 + digits_in_number(len) + 2
+  1 + digits_in_usize(len) + 2
 }
 
 pub fn blobstring_encode_len(b: &[u8]) -> usize {
@@ -76,11 +79,15 @@ pub fn verbatimstring_encode_len(format: &VerbatimStringFormat, data: &[u8]) -> 
   length_prefix_encode_len(payload_len) + payload_len + 2
 }
 
-pub fn number_encode_len(i: i64) -> usize {
+pub fn number_encode_len(i: i64, int_as_blobstring: bool) -> usize {
   let prefix = if i < 0 { 1 } else { 0 };
-  let as_usize = if i < 0 { -i as usize } else { i as usize };
+  let digits = digits_in_usize(i.unsigned_abs() as usize);
 
-  1 + digits_in_number(as_usize) + 2 + prefix
+  if int_as_blobstring {
+    1 + digits_in_usize(digits + prefix) + 2 + prefix + digits + 2
+  } else {
+    1 + digits + 2 + prefix
+  }
 }
 
 pub fn double_encode_len(f: f64) -> usize {
@@ -115,42 +122,60 @@ pub fn auth_encode_len(username: Option<&str>, password: Option<&str>) -> usize 
 // of those trade-offs I decided to just copy a few private functions.
 
 #[cfg(feature = "bytes")]
-pub fn bytes_array_or_push_encode_len(frames: &[BytesFrame]) -> usize {
-  frames
-    .iter()
-    .fold(length_prefix_encode_len(frames.len()), |m, f| m + bytes_encode_len(f))
+pub fn bytes_array_or_push_encode_len(frames: &[BytesFrame], int_as_blobstring: bool) -> usize {
+  frames.iter().fold(length_prefix_encode_len(frames.len()), |m, f| {
+    m + bytes_encode_len(f, int_as_blobstring)
+  })
 }
 
-pub fn owned_array_or_push_encode_len(frames: &[OwnedFrame]) -> usize {
-  frames
-    .iter()
-    .fold(length_prefix_encode_len(frames.len()), |m, f| m + owned_encode_len(f))
+pub fn owned_array_or_push_encode_len(frames: &[OwnedFrame], int_as_blobstring: bool) -> usize {
+  frames.iter().fold(length_prefix_encode_len(frames.len()), |m, f| {
+    m + owned_encode_len(f, int_as_blobstring)
+  })
 }
 
-pub fn owned_map_encode_len(map: &FrameMap<OwnedFrame, OwnedFrame>) -> usize {
+pub fn borrowed_array_or_push_encode_len(frames: &[BorrowedFrame], int_as_blobstring: bool) -> usize {
+  frames.iter().fold(length_prefix_encode_len(frames.len()), |m, f| {
+    m + borrowed_encode_len(f, int_as_blobstring)
+  })
+}
+
+pub fn owned_map_encode_len(map: &FrameMap<OwnedFrame, OwnedFrame>, int_as_blobstring: bool) -> usize {
   map.iter().fold(length_prefix_encode_len(map.len()), |m, (k, v)| {
-    m + owned_encode_len(k) + owned_encode_len(v)
+    m + owned_encode_len(k, int_as_blobstring) + owned_encode_len(v, int_as_blobstring)
+  })
+}
+
+pub fn borrowed_map_encode_len(map: &FrameMap<BorrowedFrame, BorrowedFrame>, int_as_blobstring: bool) -> usize {
+  map.iter().fold(length_prefix_encode_len(map.len()), |m, (k, v)| {
+    m + borrowed_encode_len(k, int_as_blobstring) + borrowed_encode_len(v, int_as_blobstring)
   })
 }
 
 #[cfg(feature = "bytes")]
-pub fn bytes_map_encode_len(map: &FrameMap<BytesFrame, BytesFrame>) -> usize {
+pub fn bytes_map_encode_len(map: &FrameMap<BytesFrame, BytesFrame>, int_as_blobstring: bool) -> usize {
   map.iter().fold(length_prefix_encode_len(map.len()), |m, (k, v)| {
-    m + bytes_encode_len(k) + bytes_encode_len(v)
+    m + bytes_encode_len(k, int_as_blobstring) + bytes_encode_len(v, int_as_blobstring)
   })
 }
 
-pub fn owned_set_encode_len(set: &FrameSet<OwnedFrame>) -> usize {
-  set
-    .iter()
-    .fold(length_prefix_encode_len(set.len()), |m, f| m + owned_encode_len(f))
+pub fn owned_set_encode_len(set: &FrameSet<OwnedFrame>, int_as_blobstring: bool) -> usize {
+  set.iter().fold(length_prefix_encode_len(set.len()), |m, f| {
+    m + owned_encode_len(f, int_as_blobstring)
+  })
+}
+
+pub fn borrowed_set_encode_len(set: &FrameSet<BorrowedFrame>, int_as_blobstring: bool) -> usize {
+  set.iter().fold(length_prefix_encode_len(set.len()), |m, f| {
+    m + borrowed_encode_len(f, int_as_blobstring)
+  })
 }
 
 #[cfg(feature = "bytes")]
-pub fn bytes_set_encode_len(set: &FrameSet<BytesFrame>) -> usize {
-  set
-    .iter()
-    .fold(length_prefix_encode_len(set.len()), |m, f| m + bytes_encode_len(f))
+pub fn bytes_set_encode_len(set: &FrameSet<BytesFrame>, int_as_blobstring: bool) -> usize {
+  set.iter().fold(length_prefix_encode_len(set.len()), |m, f| {
+    m + bytes_encode_len(f, int_as_blobstring)
+  })
 }
 
 #[cfg(feature = "bytes")]
@@ -178,41 +203,153 @@ pub fn owned_hello_encode_len(auth: &Option<(String, String)>, setname: &Option<
   HELLO.as_bytes().len() + 1 + 1 + auth_encode_len(username, password) + setname_len + 2
 }
 
-#[cfg(feature = "bytes")]
-pub fn bytes_attribute_encode_len(attributes: &Option<BytesAttributes>) -> usize {
-  attributes.as_ref().map(bytes_map_encode_len).unwrap_or(0)
+pub fn borrowed_hello_encode_len(auth: &Option<(&str, &str)>, setname: &Option<&str>) -> usize {
+  let username = auth.as_ref().map(|(u, _)| &**u);
+  let password = auth.as_ref().map(|(_, p)| &**p);
+  let setname_len = if let Some(setname) = setname.as_ref() {
+    1 + SETNAME.as_bytes().len() + 1 + setname.as_bytes().len()
+  } else {
+    0
+  };
+
+  HELLO.as_bytes().len() + 1 + 1 + auth_encode_len(username, password) + setname_len + 2
 }
 
-pub fn owned_attribute_encode_len(attributes: &Option<OwnedAttributes>) -> usize {
-  attributes.as_ref().map(owned_map_encode_len).unwrap_or(0)
+#[cfg(feature = "bytes")]
+pub fn bytes_attribute_encode_len(attributes: Option<&BytesAttributes>, int_as_blobstring: bool) -> usize {
+  attributes
+    .map(|f| bytes_map_encode_len(f, int_as_blobstring))
+    .unwrap_or(0)
+}
+
+pub fn owned_attribute_encode_len(attributes: Option<&OwnedAttributes>, int_as_blobstring: bool) -> usize {
+  attributes
+    .map(|f| owned_map_encode_len(f, int_as_blobstring))
+    .unwrap_or(0)
+}
+
+pub fn borrowed_attribute_encode_len(attributes: &Option<BorrowedAttrs>, int_as_blobstring: bool) -> usize {
+  attributes
+    .as_ref()
+    .map(|a| match a {
+      #[cfg(feature = "bytes")]
+      BorrowedAttrs::Bytes(b) => bytes_attribute_encode_len(Some(b), int_as_blobstring),
+      BorrowedAttrs::Owned(a) => owned_attribute_encode_len(Some(a), int_as_blobstring),
+    })
+    .unwrap_or(0)
 }
 
 /// Returns the number of bytes necessary to represent the frame and any associated attributes.
-#[cfg(feature = "bytes")]
-pub fn bytes_encode_len(data: &BytesFrame) -> usize {
-  use BytesFrame::*;
+pub fn borrowed_encode_len(data: &BorrowedFrame, int_as_blobstring: bool) -> usize {
+  use BorrowedFrame::*;
 
   match data {
-    Array { data, attributes } => bytes_array_or_push_encode_len(data) + bytes_attribute_encode_len(attributes),
-    Push { data, attributes } => bytes_array_or_push_encode_len(data) + bytes_attribute_encode_len(attributes),
-    BlobString { data, attributes } => blobstring_encode_len(data) + bytes_attribute_encode_len(attributes),
-    BlobError { data, attributes } => blobstring_encode_len(data) + bytes_attribute_encode_len(attributes),
-    SimpleString { data, attributes } => simplestring_encode_len(data) + bytes_attribute_encode_len(attributes),
-    SimpleError { data, attributes } => {
-      simplestring_encode_len(data.as_bytes()) + bytes_attribute_encode_len(attributes)
+    Array { data, attributes } => {
+      borrowed_array_or_push_encode_len(data, int_as_blobstring)
+        + borrowed_attribute_encode_len(attributes, int_as_blobstring)
     },
-    Number { data, attributes } => number_encode_len(*data) + bytes_attribute_encode_len(attributes),
-    Double { data, attributes } => double_encode_len(*data) + bytes_attribute_encode_len(attributes),
-    Boolean { attributes, .. } => BOOLEAN_ENCODE_LEN + bytes_attribute_encode_len(attributes),
+    Push { data, attributes } => {
+      borrowed_array_or_push_encode_len(data, int_as_blobstring)
+        + borrowed_attribute_encode_len(attributes, int_as_blobstring)
+    },
+    BlobString { data, attributes } => {
+      blobstring_encode_len(data) + borrowed_attribute_encode_len(attributes, int_as_blobstring)
+    },
+    BlobError { data, attributes } => {
+      blobstring_encode_len(data) + borrowed_attribute_encode_len(attributes, int_as_blobstring)
+    },
+    SimpleString { data, attributes } => {
+      simplestring_encode_len(data) + borrowed_attribute_encode_len(attributes, int_as_blobstring)
+    },
+    SimpleError { data, attributes } => {
+      simplestring_encode_len(data.as_bytes()) + borrowed_attribute_encode_len(attributes, int_as_blobstring)
+    },
+    Number { data, attributes } => {
+      number_encode_len(*data, int_as_blobstring) + borrowed_attribute_encode_len(attributes, int_as_blobstring)
+    },
+    Double { data, attributes } => {
+      double_encode_len(*data) + borrowed_attribute_encode_len(attributes, int_as_blobstring)
+    },
+    Boolean { attributes, .. } => BOOLEAN_ENCODE_LEN + borrowed_attribute_encode_len(attributes, int_as_blobstring),
     VerbatimString {
       data,
       attributes,
       format,
       ..
-    } => verbatimstring_encode_len(format, data) + bytes_attribute_encode_len(attributes),
-    Map { data, attributes } => bytes_map_encode_len(data) + bytes_attribute_encode_len(attributes),
-    Set { data, attributes } => bytes_set_encode_len(data) + bytes_attribute_encode_len(attributes),
-    BigNumber { data, attributes } => bignumber_encode_len(data) + bytes_attribute_encode_len(attributes),
+    } => verbatimstring_encode_len(format, data) + borrowed_attribute_encode_len(attributes, int_as_blobstring),
+    Map { data, attributes } => {
+      borrowed_map_encode_len(data, int_as_blobstring) + borrowed_attribute_encode_len(attributes, int_as_blobstring)
+    },
+    Set { data, attributes } => {
+      borrowed_set_encode_len(data, int_as_blobstring) + borrowed_attribute_encode_len(attributes, int_as_blobstring)
+    },
+    BigNumber { data, attributes } => {
+      bignumber_encode_len(data) + borrowed_attribute_encode_len(attributes, int_as_blobstring)
+    },
+    Hello { auth, setname, .. } => borrowed_hello_encode_len(auth, setname),
+    ChunkedString(data) => {
+      if data.is_empty() {
+        END_STREAM_STRING_BYTES.as_bytes().len()
+      } else {
+        blobstring_encode_len(data)
+      }
+    },
+    Null => NULL.as_bytes().len(),
+  }
+}
+
+/// Returns the number of bytes necessary to represent the frame and any associated attributes.
+#[cfg(feature = "bytes")]
+pub fn bytes_encode_len(data: &BytesFrame, int_as_blobstring: bool) -> usize {
+  use BytesFrame::*;
+
+  match data {
+    Array { data, attributes } => {
+      bytes_array_or_push_encode_len(data, int_as_blobstring)
+        + bytes_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+    },
+    Push { data, attributes } => {
+      bytes_array_or_push_encode_len(data, int_as_blobstring)
+        + bytes_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+    },
+    BlobString { data, attributes } => {
+      blobstring_encode_len(data) + bytes_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+    },
+    BlobError { data, attributes } => {
+      blobstring_encode_len(data) + bytes_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+    },
+    SimpleString { data, attributes } => {
+      simplestring_encode_len(data) + bytes_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+    },
+    SimpleError { data, attributes } => {
+      simplestring_encode_len(data.as_bytes()) + bytes_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+    },
+    Number { data, attributes } => {
+      number_encode_len(*data, int_as_blobstring) + bytes_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+    },
+    Double { data, attributes } => {
+      double_encode_len(*data) + bytes_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+    },
+    Boolean { attributes, .. } => {
+      BOOLEAN_ENCODE_LEN + bytes_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+    },
+    VerbatimString {
+      data,
+      attributes,
+      format,
+      ..
+    } => verbatimstring_encode_len(format, data) + bytes_attribute_encode_len(attributes.as_ref(), int_as_blobstring),
+    Map { data, attributes } => {
+      bytes_map_encode_len(data, int_as_blobstring)
+        + bytes_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+    },
+    Set { data, attributes } => {
+      bytes_set_encode_len(data, int_as_blobstring)
+        + bytes_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+    },
+    BigNumber { data, attributes } => {
+      bignumber_encode_len(data) + bytes_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+    },
     Hello { auth, setname, .. } => bytes_hello_encode_len(auth, setname),
     ChunkedString(data) => {
       if data.is_empty() {
@@ -226,30 +363,56 @@ pub fn bytes_encode_len(data: &BytesFrame) -> usize {
 }
 
 /// Returns the number of bytes necessary to represent the frame and any associated attributes.
-pub fn owned_encode_len(data: &OwnedFrame) -> usize {
+pub fn owned_encode_len(data: &OwnedFrame, int_as_blobstring: bool) -> usize {
   use OwnedFrame::*;
 
   match data {
-    Array { data, attributes } => owned_array_or_push_encode_len(data) + owned_attribute_encode_len(attributes),
-    Push { data, attributes } => owned_array_or_push_encode_len(data) + owned_attribute_encode_len(attributes),
-    BlobString { data, attributes } => blobstring_encode_len(data) + owned_attribute_encode_len(attributes),
-    BlobError { data, attributes } => blobstring_encode_len(data) + owned_attribute_encode_len(attributes),
-    SimpleString { data, attributes } => simplestring_encode_len(data) + owned_attribute_encode_len(attributes),
-    SimpleError { data, attributes } => {
-      simplestring_encode_len(data.as_bytes()) + owned_attribute_encode_len(attributes)
+    Array { data, attributes } => {
+      owned_array_or_push_encode_len(data, int_as_blobstring)
+        + owned_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
     },
-    Number { data, attributes } => number_encode_len(*data) + owned_attribute_encode_len(attributes),
-    Double { data, attributes } => double_encode_len(*data) + owned_attribute_encode_len(attributes),
-    Boolean { attributes, .. } => BOOLEAN_ENCODE_LEN + owned_attribute_encode_len(attributes),
+    Push { data, attributes } => {
+      owned_array_or_push_encode_len(data, int_as_blobstring)
+        + owned_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+    },
+    BlobString { data, attributes } => {
+      blobstring_encode_len(data) + owned_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+    },
+    BlobError { data, attributes } => {
+      blobstring_encode_len(data) + owned_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+    },
+    SimpleString { data, attributes } => {
+      simplestring_encode_len(data) + owned_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+    },
+    SimpleError { data, attributes } => {
+      simplestring_encode_len(data.as_bytes()) + owned_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+    },
+    Number { data, attributes } => {
+      number_encode_len(*data, int_as_blobstring) + owned_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+    },
+    Double { data, attributes } => {
+      double_encode_len(*data) + owned_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+    },
+    Boolean { attributes, .. } => {
+      BOOLEAN_ENCODE_LEN + owned_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+    },
     VerbatimString {
       data,
       attributes,
       format,
       ..
-    } => verbatimstring_encode_len(format, data) + owned_attribute_encode_len(attributes),
-    Map { data, attributes } => owned_map_encode_len(data) + owned_attribute_encode_len(attributes),
-    Set { data, attributes } => owned_set_encode_len(data) + owned_attribute_encode_len(attributes),
-    BigNumber { data, attributes } => bignumber_encode_len(data) + owned_attribute_encode_len(attributes),
+    } => verbatimstring_encode_len(format, data) + owned_attribute_encode_len(attributes.as_ref(), int_as_blobstring),
+    Map { data, attributes } => {
+      owned_map_encode_len(data, int_as_blobstring)
+        + owned_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+    },
+    Set { data, attributes } => {
+      owned_set_encode_len(data, int_as_blobstring)
+        + owned_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+    },
+    BigNumber { data, attributes } => {
+      bignumber_encode_len(data) + owned_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+    },
     Hello { auth, setname, .. } => owned_hello_encode_len(auth, setname),
     ChunkedString(data) => {
       if data.is_empty() {
@@ -1199,11 +1362,11 @@ mod tests {
       attributes: None,
     };
     let expected_len = 1 + 1 + 2 + 9 + 2;
-    assert_eq!(bytes_encode_len(&frame), expected_len);
+    assert_eq!(bytes_encode_len(&frame, false), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
     frame.add_attributes(attributes.clone()).unwrap();
-    assert_eq!(bytes_encode_len(&frame), expected_len + attributes_len);
+    assert_eq!(bytes_encode_len(&frame, false), expected_len + attributes_len);
   }
 
   #[test]
@@ -1213,11 +1376,11 @@ mod tests {
       attributes: None,
     };
     let expected_len = 1 + 1 + 2 + 9 + 2;
-    assert_eq!(bytes_encode_len(&frame), expected_len);
+    assert_eq!(bytes_encode_len(&frame, false), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
     frame.add_attributes(attributes.clone()).unwrap();
-    assert_eq!(bytes_encode_len(&frame), expected_len + attributes_len);
+    assert_eq!(bytes_encode_len(&frame, false), expected_len + attributes_len);
   }
 
   #[test]
@@ -1227,11 +1390,11 @@ mod tests {
       attributes: None,
     };
     let expected_len = 1 + 9 + 2;
-    assert_eq!(bytes_encode_len(&frame), expected_len);
+    assert_eq!(bytes_encode_len(&frame, false), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
     frame.add_attributes(attributes.clone()).unwrap();
-    assert_eq!(bytes_encode_len(&frame), expected_len + attributes_len);
+    assert_eq!(bytes_encode_len(&frame, false), expected_len + attributes_len);
   }
 
   #[test]
@@ -1241,22 +1404,22 @@ mod tests {
       attributes: None,
     };
     let expected_len = 1 + 1 + 2;
-    assert_eq!(bytes_encode_len(&frame), expected_len);
+    assert_eq!(bytes_encode_len(&frame, false), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
     frame.add_attributes(attributes.clone()).unwrap();
-    assert_eq!(bytes_encode_len(&frame), expected_len + attributes_len);
+    assert_eq!(bytes_encode_len(&frame, false), expected_len + attributes_len);
 
     let mut frame = BytesFrame::Boolean {
       data:       false,
       attributes: None,
     };
     let expected_len = 1 + 1 + 2;
-    assert_eq!(bytes_encode_len(&frame), expected_len);
+    assert_eq!(bytes_encode_len(&frame, false), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
     frame.add_attributes(attributes.clone()).unwrap();
-    assert_eq!(bytes_encode_len(&frame), expected_len + attributes_len);
+    assert_eq!(bytes_encode_len(&frame, false), expected_len + attributes_len);
   }
 
   #[test]
@@ -1266,11 +1429,11 @@ mod tests {
       attributes: None,
     };
     let expected_len = 1 + 3 + 2;
-    assert_eq!(bytes_encode_len(&frame), expected_len);
+    assert_eq!(bytes_encode_len(&frame, false), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
     frame.add_attributes(attributes.clone()).unwrap();
-    assert_eq!(bytes_encode_len(&frame), expected_len + attributes_len);
+    assert_eq!(bytes_encode_len(&frame, false), expected_len + attributes_len);
   }
 
   #[test]
@@ -1280,11 +1443,11 @@ mod tests {
       attributes: None,
     };
     let expected_len = 1 + 4 + 2;
-    assert_eq!(bytes_encode_len(&frame), expected_len);
+    assert_eq!(bytes_encode_len(&frame, false), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
     frame.add_attributes(attributes.clone()).unwrap();
-    assert_eq!(bytes_encode_len(&frame), expected_len + attributes_len);
+    assert_eq!(bytes_encode_len(&frame, false), expected_len + attributes_len);
   }
 
   #[test]
@@ -1294,11 +1457,11 @@ mod tests {
       attributes: None,
     };
     let expected_len = 1 + 7 + 2;
-    assert_eq!(bytes_encode_len(&frame), expected_len);
+    assert_eq!(bytes_encode_len(&frame, false), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
     frame.add_attributes(attributes.clone()).unwrap();
-    assert_eq!(bytes_encode_len(&frame), expected_len + attributes_len);
+    assert_eq!(bytes_encode_len(&frame, false), expected_len + attributes_len);
   }
 
   #[test]
@@ -1308,11 +1471,11 @@ mod tests {
       attributes: None,
     };
     let expected_len = 1 + 8 + 2;
-    assert_eq!(bytes_encode_len(&frame), expected_len);
+    assert_eq!(bytes_encode_len(&frame, false), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
     frame.add_attributes(attributes.clone()).unwrap();
-    assert_eq!(bytes_encode_len(&frame), expected_len + attributes_len);
+    assert_eq!(bytes_encode_len(&frame, false), expected_len + attributes_len);
   }
 
   #[test]
@@ -1322,29 +1485,29 @@ mod tests {
       attributes: None,
     };
     let expected_len = 1 + 3 + 2;
-    assert_eq!(bytes_encode_len(&frame), expected_len);
+    assert_eq!(bytes_encode_len(&frame, false), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
     frame.add_attributes(attributes.clone()).unwrap();
-    assert_eq!(bytes_encode_len(&frame), expected_len + attributes_len);
+    assert_eq!(bytes_encode_len(&frame, false), expected_len + attributes_len);
 
     let mut frame = BytesFrame::Double {
       data:       f64::NEG_INFINITY,
       attributes: None,
     };
     let expected_len = 1 + 4 + 2;
-    assert_eq!(bytes_encode_len(&frame), expected_len);
+    assert_eq!(bytes_encode_len(&frame, false), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
     frame.add_attributes(attributes.clone()).unwrap();
-    assert_eq!(bytes_encode_len(&frame), expected_len + attributes_len);
+    assert_eq!(bytes_encode_len(&frame, false), expected_len + attributes_len);
   }
 
   #[test]
   fn should_get_encode_len_null() {
     let frame = BytesFrame::Null;
     let expected_len = 3;
-    assert_eq!(bytes_encode_len(&frame), expected_len);
+    assert_eq!(bytes_encode_len(&frame, false), expected_len);
   }
 
   #[test]
@@ -1357,7 +1520,7 @@ mod tests {
 
     // HELLO 3\r\n
     let expected_len = 5 + 1 + 1 + 2;
-    assert_eq!(bytes_encode_len(&frame), expected_len);
+    assert_eq!(bytes_encode_len(&frame, false), expected_len);
 
     let frame = BytesFrame::Hello {
       version: RespVersion::RESP2,
@@ -1366,7 +1529,7 @@ mod tests {
     };
     // HELLO 2\r\n
     let expected_len = 5 + 1 + 1 + 2;
-    assert_eq!(bytes_encode_len(&frame), expected_len);
+    assert_eq!(bytes_encode_len(&frame, false), expected_len);
 
     let frame = BytesFrame::Hello {
       version: RespVersion::RESP3,
@@ -1375,7 +1538,7 @@ mod tests {
     };
     // HELLO 3 AUTH foo bar\r\n
     let expected_len = 5 + 1 + 1 + 1 + 4 + 1 + 3 + 1 + 3 + 2;
-    assert_eq!(bytes_encode_len(&frame), expected_len);
+    assert_eq!(bytes_encode_len(&frame, false), expected_len);
 
     let frame = BytesFrame::Hello {
       version: RespVersion::RESP3,
@@ -1384,7 +1547,7 @@ mod tests {
     };
     // HELLO 3 AUTH foo bar SETNAME baz\r\n
     let expected_len = 5 + 1 + 1 + 1 + 4 + 1 + 3 + 1 + 3 + 1 + 7 + 1 + 3 + 2;
-    assert_eq!(bytes_encode_len(&frame), expected_len);
+    assert_eq!(bytes_encode_len(&frame, false), expected_len);
   }
 
   #[test]
@@ -1395,11 +1558,11 @@ mod tests {
       attributes: None,
     };
     let expected_len = 1 + 2 + 2 + 3 + 1 + 9 + 2;
-    assert_eq!(bytes_encode_len(&frame), expected_len);
+    assert_eq!(bytes_encode_len(&frame, false), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
     frame.add_attributes(attributes.clone()).unwrap();
-    assert_eq!(bytes_encode_len(&frame), expected_len + attributes_len);
+    assert_eq!(bytes_encode_len(&frame, false), expected_len + attributes_len);
 
     let mut frame = BytesFrame::VerbatimString {
       format:     VerbatimStringFormat::Text,
@@ -1407,24 +1570,24 @@ mod tests {
       attributes: None,
     };
     let expected_len = 1 + 2 + 2 + 3 + 1 + 9 + 2;
-    assert_eq!(bytes_encode_len(&frame), expected_len);
+    assert_eq!(bytes_encode_len(&frame, false), expected_len);
 
     let (attributes, attributes_len) = create_attributes();
     frame.add_attributes(attributes.clone()).unwrap();
-    assert_eq!(bytes_encode_len(&frame), expected_len + attributes_len);
+    assert_eq!(bytes_encode_len(&frame, false), expected_len + attributes_len);
   }
 
   #[test]
   fn should_get_encode_len_chunked_string() {
     let frame = BytesFrame::ChunkedString("foobarbaz".as_bytes().into());
     let expected_len = 1 + 1 + 2 + 9 + 2;
-    assert_eq!(bytes_encode_len(&frame), expected_len);
+    assert_eq!(bytes_encode_len(&frame, false), expected_len);
   }
 
   #[test]
   fn should_get_encode_len_end_stream() {
     let end_frame = BytesFrame::new_end_stream();
     let expected_len = 1 + 1 + 2;
-    assert_eq!(bytes_encode_len(&end_frame), expected_len);
+    assert_eq!(bytes_encode_len(&end_frame, false), expected_len);
   }
 }

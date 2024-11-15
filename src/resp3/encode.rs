@@ -4,6 +4,7 @@
 
 use crate::{
   error::RedisProtocolError,
+  int2dec,
   resp3::{
     types::*,
     utils::{self as resp3_utils},
@@ -20,12 +21,6 @@ use bytes::BytesMut;
 #[cfg(feature = "bytes")]
 use bytes_utils::Str;
 
-enum BorrowedAttrs<'a> {
-  Owned(&'a OwnedAttributes),
-  #[cfg(feature = "bytes")]
-  Bytes(&'a BytesAttributes),
-}
-
 fn map_owned_auth(auth: &Option<(String, String)>) -> Option<(&str, &str)> {
   auth.as_ref().map(|(u, p)| (u.as_str(), p.as_str()))
 }
@@ -35,27 +30,14 @@ fn map_bytes_auth(auth: &Option<(Str, Str)>) -> Option<(&str, &str)> {
   auth.as_ref().map(|(u, p)| (&**u, &**p))
 }
 
-impl<'a> From<&'a OwnedAttributes> for BorrowedAttrs<'a> {
-  fn from(value: &'a OwnedAttributes) -> Self {
-    BorrowedAttrs::Owned(value)
-  }
-}
-
-#[cfg(feature = "bytes")]
-impl<'a> From<&'a BytesAttributes> for BorrowedAttrs<'a> {
-  fn from(value: &'a BytesAttributes) -> Self {
-    BorrowedAttrs::Bytes(value)
-  }
-}
-
 macro_rules! encode_attributes (
-  ($x:ident, $attributes:ident) => {
+  ($x:ident, $attributes:ident, $int_as_blobstring:expr) => {
     if let Some(attributes) = $attributes {
       let attributes: BorrowedAttrs = attributes.into();
       $x = match attributes {
-        BorrowedAttrs::Owned(attrs) => gen_owned_attribute($x, attrs)?,
+        BorrowedAttrs::Owned(attrs) => gen_owned_attribute($x, attrs, $int_as_blobstring)?,
         #[cfg(feature = "bytes")]
-        BorrowedAttrs::Bytes(attrs) => gen_bytes_attribute($x, attrs)?,
+        BorrowedAttrs::Bytes(attrs) => gen_bytes_attribute($x, attrs, $int_as_blobstring)?,
       };
     }
   }
@@ -65,8 +47,9 @@ fn gen_simplestring<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   mut x: (&'a mut [u8], usize),
   data: &[u8],
   attributes: Option<A>,
+  int_as_blobstring: bool,
 ) -> Result<(&'a mut [u8], usize), GenError> {
-  encode_attributes!(x, attributes);
+  encode_attributes!(x, attributes, int_as_blobstring);
 
   do_gen!(
     x,
@@ -78,8 +61,9 @@ fn gen_simpleerror<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   mut x: (&'a mut [u8], usize),
   data: &str,
   attributes: Option<A>,
+  int_as_blobstring: bool,
 ) -> Result<(&'a mut [u8], usize), GenError> {
-  encode_attributes!(x, attributes);
+  encode_attributes!(x, attributes, int_as_blobstring);
 
   do_gen!(
     x,
@@ -91,13 +75,30 @@ fn gen_number<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   mut x: (&'a mut [u8], usize),
   data: i64,
   attributes: Option<A>,
+  int_as_blobstring: bool,
 ) -> Result<(&'a mut [u8], usize), GenError> {
-  encode_attributes!(x, attributes);
+  encode_attributes!(x, attributes, int_as_blobstring);
+  let (buf, buf_padding) = int2dec::i64_to_digits(data);
 
-  do_gen!(
-    x,
-    gen_be_u8!(FrameKind::Number.to_byte()) >> gen_slice!(data.to_string().as_bytes()) >> gen_slice!(CRLF.as_bytes())
-  )
+  if int_as_blobstring {
+    // a more optimized way to encode an i64 as a BulkString, which is how Redis expects integers in practice
+    let encoded_len = buf.len() - buf_padding;
+    let (len, len_padding) = int2dec::u64_to_digits(encoded_len as u64);
+
+    do_gen!(
+      x,
+      gen_be_u8!(FrameKind::BlobString.to_byte())
+        >> gen_slice!(&len[len_padding ..])
+        >> gen_slice!(CRLF.as_bytes())
+        >> gen_slice!(&buf[buf_padding ..])
+        >> gen_slice!(CRLF.as_bytes())
+    )
+  } else {
+    do_gen!(
+      x,
+      gen_be_u8!(FrameKind::Number.to_byte()) >> gen_slice!(&buf[buf_padding ..]) >> gen_slice!(CRLF.as_bytes())
+    )
+  }
 }
 
 fn gen_null(x: (&mut [u8], usize)) -> Result<(&mut [u8], usize), GenError> {
@@ -108,8 +109,9 @@ fn gen_double<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   mut x: (&'a mut [u8], usize),
   data: f64,
   attributes: Option<A>,
+  int_as_blobstring: bool,
 ) -> Result<(&'a mut [u8], usize), GenError> {
-  encode_attributes!(x, attributes);
+  encode_attributes!(x, attributes, int_as_blobstring);
 
   let as_string = resp3_utils::f64_to_redis_string(data);
   do_gen!(
@@ -122,8 +124,9 @@ fn gen_boolean<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   mut x: (&'a mut [u8], usize),
   data: bool,
   attributes: Option<A>,
+  int_as_blobstring: bool,
 ) -> Result<(&'a mut [u8], usize), GenError> {
-  encode_attributes!(x, attributes);
+  encode_attributes!(x, attributes, int_as_blobstring);
 
   let data = if data { BOOL_TRUE_BYTES } else { BOOL_FALSE_BYTES };
   do_gen!(x, gen_slice!(data.as_bytes()))
@@ -133,8 +136,9 @@ fn gen_bignumber<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   mut x: (&'a mut [u8], usize),
   data: &[u8],
   attributes: Option<A>,
+  int_as_blobstring: bool,
 ) -> Result<(&'a mut [u8], usize), GenError> {
-  encode_attributes!(x, attributes);
+  encode_attributes!(x, attributes, int_as_blobstring);
 
   do_gen!(
     x,
@@ -146,13 +150,15 @@ fn gen_blobstring<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   mut x: (&'a mut [u8], usize),
   data: &[u8],
   attributes: Option<A>,
+  int_as_blobstring: bool,
 ) -> Result<(&'a mut [u8], usize), GenError> {
-  encode_attributes!(x, attributes);
+  encode_attributes!(x, attributes, int_as_blobstring);
 
+  let (len, padding) = int2dec::u64_to_digits(data.len() as u64);
   do_gen!(
     x,
     gen_be_u8!(FrameKind::BlobString.to_byte())
-      >> gen_slice!(data.len().to_string().as_bytes())
+      >> gen_slice!(&len[padding ..])
       >> gen_slice!(CRLF.as_bytes())
       >> gen_slice!(data)
       >> gen_slice!(CRLF.as_bytes())
@@ -163,13 +169,15 @@ fn gen_bloberror<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   mut x: (&'a mut [u8], usize),
   data: &[u8],
   attributes: Option<A>,
+  int_as_blobstring: bool,
 ) -> Result<(&'a mut [u8], usize), GenError> {
-  encode_attributes!(x, attributes);
+  encode_attributes!(x, attributes, int_as_blobstring);
 
+  let (len, padding) = int2dec::u64_to_digits(data.len() as u64);
   do_gen!(
     x,
     gen_be_u8!(FrameKind::BlobError.to_byte())
-      >> gen_slice!(data.len().to_string().as_bytes())
+      >> gen_slice!(&len[padding ..])
       >> gen_slice!(CRLF.as_bytes())
       >> gen_slice!(data)
       >> gen_slice!(CRLF.as_bytes())
@@ -181,14 +189,16 @@ fn gen_verbatimstring<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   data: &[u8],
   format: &VerbatimStringFormat,
   attributes: Option<A>,
+  int_as_blobstring: bool,
 ) -> Result<(&'a mut [u8], usize), GenError> {
-  encode_attributes!(x, attributes);
-  let total_len = format.encode_len() + data.len();
+  encode_attributes!(x, attributes, int_as_blobstring);
 
+  let total_len = format.encode_len() + data.len();
+  let (len, padding) = int2dec::u64_to_digits(total_len as u64);
   do_gen!(
     x,
     gen_be_u8!(FrameKind::VerbatimString.to_byte())
-      >> gen_slice!(total_len.to_string().as_bytes())
+      >> gen_slice!(&len[padding ..])
       >> gen_slice!(CRLF.as_bytes())
       >> gen_slice!(format.to_str().as_bytes())
       >> gen_be_u8!(VERBATIM_FORMAT_BYTE)
@@ -201,18 +211,39 @@ fn gen_owned_array<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   mut x: (&'a mut [u8], usize),
   data: &[OwnedFrame],
   attributes: Option<A>,
+  int_as_blobstring: bool,
 ) -> Result<(&'a mut [u8], usize), GenError> {
-  encode_attributes!(x, attributes);
+  encode_attributes!(x, attributes, int_as_blobstring);
 
+  let (len, padding) = int2dec::u64_to_digits(data.len() as u64);
   let mut x = do_gen!(
     x,
-    gen_be_u8!(FrameKind::Array.to_byte())
-      >> gen_slice!(data.len().to_string().as_bytes())
-      >> gen_slice!(CRLF.as_bytes())
+    gen_be_u8!(FrameKind::Array.to_byte()) >> gen_slice!(&len[padding ..]) >> gen_slice!(CRLF.as_bytes())
   )?;
 
   for frame in data.iter() {
-    x = gen_owned_frame(x.0, x.1, frame)?;
+    x = gen_owned_frame(x.0, x.1, frame, int_as_blobstring)?;
+  }
+
+  Ok(x)
+}
+
+fn gen_borrowed_array<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
+  mut x: (&'a mut [u8], usize),
+  data: &[BorrowedFrame],
+  attributes: Option<A>,
+  int_as_blobstring: bool,
+) -> Result<(&'a mut [u8], usize), GenError> {
+  encode_attributes!(x, attributes, int_as_blobstring);
+
+  let (len, padding) = int2dec::u64_to_digits(data.len() as u64);
+  let mut x = do_gen!(
+    x,
+    gen_be_u8!(FrameKind::Array.to_byte()) >> gen_slice!(&len[padding ..]) >> gen_slice!(CRLF.as_bytes())
+  )?;
+
+  for frame in data.iter() {
+    x = gen_borrowed_frame(x.0, x.1, frame, int_as_blobstring)?;
   }
 
   Ok(x)
@@ -223,18 +254,18 @@ fn gen_bytes_array<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   mut x: (&'a mut [u8], usize),
   data: &[BytesFrame],
   attributes: Option<A>,
+  int_as_blobstring: bool,
 ) -> Result<(&'a mut [u8], usize), GenError> {
-  encode_attributes!(x, attributes);
+  encode_attributes!(x, attributes, int_as_blobstring);
 
+  let (len, padding) = int2dec::u64_to_digits(data.len() as u64);
   let mut x = do_gen!(
     x,
-    gen_be_u8!(FrameKind::Array.to_byte())
-      >> gen_slice!(data.len().to_string().as_bytes())
-      >> gen_slice!(CRLF.as_bytes())
+    gen_be_u8!(FrameKind::Array.to_byte()) >> gen_slice!(&len[padding ..]) >> gen_slice!(CRLF.as_bytes())
   )?;
 
   for frame in data.iter() {
-    x = gen_bytes_frame(x.0, x.1, frame)?;
+    x = gen_bytes_frame(x.0, x.1, frame, int_as_blobstring)?;
   }
 
   Ok(x)
@@ -244,19 +275,41 @@ fn gen_owned_map<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   mut x: (&'a mut [u8], usize),
   data: &FrameMap<OwnedFrame, OwnedFrame>,
   attributes: Option<A>,
+  int_as_blobstring: bool,
 ) -> Result<(&'a mut [u8], usize), GenError> {
-  encode_attributes!(x, attributes);
+  encode_attributes!(x, attributes, int_as_blobstring);
 
+  let (len, padding) = int2dec::u64_to_digits(data.len() as u64);
   x = do_gen!(
     x,
-    gen_be_u8!(FrameKind::Map.to_byte())
-      >> gen_slice!(data.len().to_string().as_bytes())
-      >> gen_slice!(CRLF.as_bytes())
+    gen_be_u8!(FrameKind::Map.to_byte()) >> gen_slice!(&len[padding ..]) >> gen_slice!(CRLF.as_bytes())
   )?;
 
   for (key, value) in data.iter() {
-    x = gen_owned_frame(x.0, x.1, key)?;
-    x = gen_owned_frame(x.0, x.1, value)?;
+    x = gen_owned_frame(x.0, x.1, key, int_as_blobstring)?;
+    x = gen_owned_frame(x.0, x.1, value, int_as_blobstring)?;
+  }
+
+  Ok(x)
+}
+
+fn gen_borrowed_map<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
+  mut x: (&'a mut [u8], usize),
+  data: &FrameMap<BorrowedFrame, BorrowedFrame>,
+  attributes: Option<A>,
+  int_as_blobstring: bool,
+) -> Result<(&'a mut [u8], usize), GenError> {
+  encode_attributes!(x, attributes, int_as_blobstring);
+
+  let (len, padding) = int2dec::u64_to_digits(data.len() as u64);
+  x = do_gen!(
+    x,
+    gen_be_u8!(FrameKind::Map.to_byte()) >> gen_slice!(&len[padding ..]) >> gen_slice!(CRLF.as_bytes())
+  )?;
+
+  for (key, value) in data.iter() {
+    x = gen_borrowed_frame(x.0, x.1, key, int_as_blobstring)?;
+    x = gen_borrowed_frame(x.0, x.1, value, int_as_blobstring)?;
   }
 
   Ok(x)
@@ -267,19 +320,19 @@ fn gen_bytes_map<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   mut x: (&'a mut [u8], usize),
   data: &FrameMap<BytesFrame, BytesFrame>,
   attributes: Option<A>,
+  int_as_blobstring: bool,
 ) -> Result<(&'a mut [u8], usize), GenError> {
-  encode_attributes!(x, attributes);
+  encode_attributes!(x, attributes, int_as_blobstring);
 
+  let (len, padding) = int2dec::u64_to_digits(data.len() as u64);
   x = do_gen!(
     x,
-    gen_be_u8!(FrameKind::Map.to_byte())
-      >> gen_slice!(data.len().to_string().as_bytes())
-      >> gen_slice!(CRLF.as_bytes())
+    gen_be_u8!(FrameKind::Map.to_byte()) >> gen_slice!(&len[padding ..]) >> gen_slice!(CRLF.as_bytes())
   )?;
 
   for (key, value) in data.iter() {
-    x = gen_bytes_frame(x.0, x.1, key)?;
-    x = gen_bytes_frame(x.0, x.1, value)?;
+    x = gen_bytes_frame(x.0, x.1, key, int_as_blobstring)?;
+    x = gen_bytes_frame(x.0, x.1, value, int_as_blobstring)?;
   }
 
   Ok(x)
@@ -289,18 +342,39 @@ fn gen_owned_set<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   mut x: (&'a mut [u8], usize),
   data: &FrameSet<OwnedFrame>,
   attributes: Option<A>,
+  int_as_blobstring: bool,
 ) -> Result<(&'a mut [u8], usize), GenError> {
-  encode_attributes!(x, attributes);
+  encode_attributes!(x, attributes, int_as_blobstring);
 
+  let (len, padding) = int2dec::u64_to_digits(data.len() as u64);
   x = do_gen!(
     x,
-    gen_be_u8!(FrameKind::Set.to_byte())
-      >> gen_slice!(data.len().to_string().as_bytes())
-      >> gen_slice!(CRLF.as_bytes())
+    gen_be_u8!(FrameKind::Set.to_byte()) >> gen_slice!(&len[padding ..]) >> gen_slice!(CRLF.as_bytes())
   )?;
 
   for frame in data.iter() {
-    x = gen_owned_frame(x.0, x.1, frame)?;
+    x = gen_owned_frame(x.0, x.1, frame, int_as_blobstring)?;
+  }
+
+  Ok(x)
+}
+
+fn gen_borrowed_set<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
+  mut x: (&'a mut [u8], usize),
+  data: &FrameSet<BorrowedFrame>,
+  attributes: Option<A>,
+  int_as_blobstring: bool,
+) -> Result<(&'a mut [u8], usize), GenError> {
+  encode_attributes!(x, attributes, int_as_blobstring);
+
+  let (len, padding) = int2dec::u64_to_digits(data.len() as u64);
+  x = do_gen!(
+    x,
+    gen_be_u8!(FrameKind::Set.to_byte()) >> gen_slice!(&len[padding ..]) >> gen_slice!(CRLF.as_bytes())
+  )?;
+
+  for frame in data.iter() {
+    x = gen_borrowed_frame(x.0, x.1, frame, int_as_blobstring)?;
   }
 
   Ok(x)
@@ -311,18 +385,18 @@ fn gen_bytes_set<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   mut x: (&'a mut [u8], usize),
   data: &FrameSet<BytesFrame>,
   attributes: Option<A>,
+  int_as_blobstring: bool,
 ) -> Result<(&'a mut [u8], usize), GenError> {
-  encode_attributes!(x, attributes);
+  encode_attributes!(x, attributes, int_as_blobstring);
 
+  let (len, padding) = int2dec::u64_to_digits(data.len() as u64);
   x = do_gen!(
     x,
-    gen_be_u8!(FrameKind::Set.to_byte())
-      >> gen_slice!(data.len().to_string().as_bytes())
-      >> gen_slice!(CRLF.as_bytes())
+    gen_be_u8!(FrameKind::Set.to_byte()) >> gen_slice!(&len[padding ..]) >> gen_slice!(CRLF.as_bytes())
   )?;
 
   for frame in data.iter() {
-    x = gen_bytes_frame(x.0, x.1, frame)?;
+    x = gen_bytes_frame(x.0, x.1, frame, int_as_blobstring)?;
   }
 
   Ok(x)
@@ -331,17 +405,17 @@ fn gen_bytes_set<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
 fn gen_owned_attribute<'a>(
   x: (&'a mut [u8], usize),
   data: &OwnedAttributes,
+  int_as_blobstring: bool,
 ) -> Result<(&'a mut [u8], usize), GenError> {
+  let (len, padding) = int2dec::u64_to_digits(data.len() as u64);
   let mut x = do_gen!(
     x,
-    gen_be_u8!(FrameKind::Attribute.to_byte())
-      >> gen_slice!(data.len().to_string().as_bytes())
-      >> gen_slice!(CRLF.as_bytes())
+    gen_be_u8!(FrameKind::Attribute.to_byte()) >> gen_slice!(&len[padding ..]) >> gen_slice!(CRLF.as_bytes())
   )?;
 
   for (key, value) in data.iter() {
-    x = gen_owned_frame(x.0, x.1, key)?;
-    x = gen_owned_frame(x.0, x.1, value)?;
+    x = gen_owned_frame(x.0, x.1, key, int_as_blobstring)?;
+    x = gen_owned_frame(x.0, x.1, value, int_as_blobstring)?;
   }
 
   Ok(x)
@@ -351,17 +425,17 @@ fn gen_owned_attribute<'a>(
 fn gen_bytes_attribute<'a>(
   x: (&'a mut [u8], usize),
   data: &BytesAttributes,
+  int_as_blobstring: bool,
 ) -> Result<(&'a mut [u8], usize), GenError> {
+  let (len, padding) = int2dec::u64_to_digits(data.len() as u64);
   let mut x = do_gen!(
     x,
-    gen_be_u8!(FrameKind::Attribute.to_byte())
-      >> gen_slice!(data.len().to_string().as_bytes())
-      >> gen_slice!(CRLF.as_bytes())
+    gen_be_u8!(FrameKind::Attribute.to_byte()) >> gen_slice!(&len[padding ..]) >> gen_slice!(CRLF.as_bytes())
   )?;
 
   for (key, value) in data.iter() {
-    x = gen_bytes_frame(x.0, x.1, key)?;
-    x = gen_bytes_frame(x.0, x.1, value)?;
+    x = gen_bytes_frame(x.0, x.1, key, int_as_blobstring)?;
+    x = gen_bytes_frame(x.0, x.1, value, int_as_blobstring)?;
   }
 
   Ok(x)
@@ -371,18 +445,39 @@ fn gen_owned_push<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   mut x: (&'a mut [u8], usize),
   data: &[OwnedFrame],
   attributes: Option<A>,
+  int_as_blobstring: bool,
 ) -> Result<(&'a mut [u8], usize), GenError> {
-  encode_attributes!(x, attributes);
+  encode_attributes!(x, attributes, int_as_blobstring);
 
+  let (len, padding) = int2dec::u64_to_digits(data.len() as u64);
   x = do_gen!(
     x,
-    gen_be_u8!(FrameKind::Push.to_byte())
-      >> gen_slice!(data.len().to_string().as_bytes())
-      >> gen_slice!(CRLF.as_bytes())
+    gen_be_u8!(FrameKind::Push.to_byte()) >> gen_slice!(&len[padding ..]) >> gen_slice!(CRLF.as_bytes())
   )?;
 
   for frame in data.iter() {
-    x = gen_owned_frame(x.0, x.1, frame)?;
+    x = gen_owned_frame(x.0, x.1, frame, int_as_blobstring)?;
+  }
+
+  Ok(x)
+}
+
+fn gen_borrowed_push<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
+  mut x: (&'a mut [u8], usize),
+  data: &[BorrowedFrame],
+  attributes: Option<A>,
+  int_as_blobstring: bool,
+) -> Result<(&'a mut [u8], usize), GenError> {
+  encode_attributes!(x, attributes, int_as_blobstring);
+
+  let (len, padding) = int2dec::u64_to_digits(data.len() as u64);
+  x = do_gen!(
+    x,
+    gen_be_u8!(FrameKind::Push.to_byte()) >> gen_slice!(&len[padding ..]) >> gen_slice!(CRLF.as_bytes())
+  )?;
+
+  for frame in data.iter() {
+    x = gen_borrowed_frame(x.0, x.1, frame, int_as_blobstring)?;
   }
 
   Ok(x)
@@ -393,18 +488,18 @@ fn gen_bytes_push<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   mut x: (&'a mut [u8], usize),
   data: &[BytesFrame],
   attributes: Option<A>,
+  int_as_blobstring: bool,
 ) -> Result<(&'a mut [u8], usize), GenError> {
-  encode_attributes!(x, attributes);
+  encode_attributes!(x, attributes, int_as_blobstring);
 
+  let (len, padding) = int2dec::u64_to_digits(data.len() as u64);
   x = do_gen!(
     x,
-    gen_be_u8!(FrameKind::Push.to_byte())
-      >> gen_slice!(data.len().to_string().as_bytes())
-      >> gen_slice!(CRLF.as_bytes())
+    gen_be_u8!(FrameKind::Push.to_byte()) >> gen_slice!(&len[padding ..]) >> gen_slice!(CRLF.as_bytes())
   )?;
 
   for frame in data.iter() {
-    x = gen_bytes_frame(x.0, x.1, frame)?;
+    x = gen_bytes_frame(x.0, x.1, frame, int_as_blobstring)?;
   }
 
   Ok(x)
@@ -449,10 +544,11 @@ fn gen_chunked_string<'a>(x: (&'a mut [u8], usize), data: &[u8]) -> Result<(&'a 
     // signal the end of the chunked stream
     do_gen!(x, gen_slice!(END_STREAM_STRING_BYTES.as_bytes()))
   } else {
+    let (len, padding) = int2dec::u64_to_digits(data.len() as u64);
     do_gen!(
       x,
       gen_be_u8!(FrameKind::ChunkedString.to_byte())
-        >> gen_slice!(data.len().to_string().as_bytes())
+        >> gen_slice!(&len[padding ..])
         >> gen_slice!(CRLF.as_bytes())
         >> gen_slice!(data)
         >> gen_slice!(CRLF.as_bytes())
@@ -464,33 +560,73 @@ fn gen_owned_frame<'a>(
   buf: &'a mut [u8],
   offset: usize,
   frame: &OwnedFrame,
+  int_as_blobstring: bool,
 ) -> Result<(&'a mut [u8], usize), GenError> {
   trace!("Encode {:?}, buf len: {}", frame.kind(), buf.len());
   let x = (buf, offset);
 
   match frame {
-    OwnedFrame::Array { data, attributes } => gen_owned_array(x, data, attributes.as_ref()),
-    OwnedFrame::BlobString { data, attributes } => gen_blobstring(x, data, attributes.as_ref()),
-    OwnedFrame::SimpleString { data, attributes } => gen_simplestring(x, data, attributes.as_ref()),
-    OwnedFrame::SimpleError { data, attributes } => gen_simpleerror(x, data, attributes.as_ref()),
-    OwnedFrame::Number { data, attributes } => gen_number(x, *data, attributes.as_ref()),
+    OwnedFrame::Array { data, attributes } => gen_owned_array(x, data, attributes.as_ref(), int_as_blobstring),
+    OwnedFrame::BlobString { data, attributes } => gen_blobstring(x, data, attributes.as_ref(), int_as_blobstring),
+    OwnedFrame::SimpleString { data, attributes } => {
+      gen_simplestring(x, data, attributes.as_ref(), int_as_blobstring)
+    },
+    OwnedFrame::SimpleError { data, attributes } => gen_simpleerror(x, data, attributes.as_ref(), int_as_blobstring),
+    OwnedFrame::Number { data, attributes } => gen_number(x, *data, attributes.as_ref(), int_as_blobstring),
     OwnedFrame::Null => gen_null(x),
-    OwnedFrame::Double { data, attributes } => gen_double(x, *data, attributes.as_ref()),
-    OwnedFrame::BlobError { data, attributes } => gen_bloberror(x, data, attributes.as_ref()),
+    OwnedFrame::Double { data, attributes } => gen_double(x, *data, attributes.as_ref(), int_as_blobstring),
+    OwnedFrame::BlobError { data, attributes } => gen_bloberror(x, data, attributes.as_ref(), int_as_blobstring),
     OwnedFrame::VerbatimString {
       data,
       format,
       attributes,
-    } => gen_verbatimstring(x, data, format, attributes.as_ref()),
-    OwnedFrame::Boolean { data, attributes } => gen_boolean(x, *data, attributes.as_ref()),
-    OwnedFrame::Map { data, attributes } => gen_owned_map(x, data, attributes.as_ref()),
-    OwnedFrame::Set { data, attributes } => gen_owned_set(x, data, attributes.as_ref()),
-    OwnedFrame::Push { data, attributes } => gen_owned_push(x, data, attributes.as_ref()),
+    } => gen_verbatimstring(x, data, format, attributes.as_ref(), int_as_blobstring),
+    OwnedFrame::Boolean { data, attributes } => gen_boolean(x, *data, attributes.as_ref(), int_as_blobstring),
+    OwnedFrame::Map { data, attributes } => gen_owned_map(x, data, attributes.as_ref(), int_as_blobstring),
+    OwnedFrame::Set { data, attributes } => gen_owned_set(x, data, attributes.as_ref(), int_as_blobstring),
+    OwnedFrame::Push { data, attributes } => gen_owned_push(x, data, attributes.as_ref(), int_as_blobstring),
     OwnedFrame::Hello { version, auth, setname } => {
       gen_hello(x, version, map_owned_auth(auth), setname.as_ref().map(|s| s.as_str()))
     },
-    OwnedFrame::BigNumber { data, attributes } => gen_bignumber(x, data, attributes.as_ref()),
+    OwnedFrame::BigNumber { data, attributes } => gen_bignumber(x, data, attributes.as_ref(), int_as_blobstring),
     OwnedFrame::ChunkedString(b) => gen_chunked_string(x, b),
+  }
+}
+
+fn gen_borrowed_frame<'a>(
+  buf: &'a mut [u8],
+  offset: usize,
+  frame: &BorrowedFrame,
+  int_as_blobstring: bool,
+) -> Result<(&'a mut [u8], usize), GenError> {
+  trace!("Encode {:?}, buf len: {}", frame.kind(), buf.len());
+  let x = (buf, offset);
+
+  match frame {
+    BorrowedFrame::Array { data, attributes } => gen_borrowed_array(x, data, attributes.as_ref(), int_as_blobstring),
+    BorrowedFrame::BlobString { data, attributes } => gen_blobstring(x, data, attributes.as_ref(), int_as_blobstring),
+    BorrowedFrame::SimpleString { data, attributes } => {
+      gen_simplestring(x, data, attributes.as_ref(), int_as_blobstring)
+    },
+    BorrowedFrame::SimpleError { data, attributes } => {
+      gen_simpleerror(x, data, attributes.as_ref(), int_as_blobstring)
+    },
+    BorrowedFrame::Number { data, attributes } => gen_number(x, *data, attributes.as_ref(), int_as_blobstring),
+    BorrowedFrame::Null => gen_null(x),
+    BorrowedFrame::Double { data, attributes } => gen_double(x, *data, attributes.as_ref(), int_as_blobstring),
+    BorrowedFrame::BlobError { data, attributes } => gen_bloberror(x, data, attributes.as_ref(), int_as_blobstring),
+    BorrowedFrame::VerbatimString {
+      data,
+      format,
+      attributes,
+    } => gen_verbatimstring(x, data, format, attributes.as_ref(), int_as_blobstring),
+    BorrowedFrame::Boolean { data, attributes } => gen_boolean(x, *data, attributes.as_ref(), int_as_blobstring),
+    BorrowedFrame::Map { data, attributes } => gen_borrowed_map(x, data, attributes.as_ref(), int_as_blobstring),
+    BorrowedFrame::Set { data, attributes } => gen_borrowed_set(x, data, attributes.as_ref(), int_as_blobstring),
+    BorrowedFrame::Push { data, attributes } => gen_borrowed_push(x, data, attributes.as_ref(), int_as_blobstring),
+    BorrowedFrame::Hello { version, auth, setname } => gen_hello(x, version, auth.clone(), setname.clone()),
+    BorrowedFrame::BigNumber { data, attributes } => gen_bignumber(x, data, attributes.as_ref(), int_as_blobstring),
+    BorrowedFrame::ChunkedString(b) => gen_chunked_string(x, b),
   }
 }
 
@@ -499,32 +635,35 @@ fn gen_bytes_frame<'a>(
   buf: &'a mut [u8],
   offset: usize,
   frame: &BytesFrame,
+  int_as_blobstring: bool,
 ) -> Result<(&'a mut [u8], usize), GenError> {
   trace!("Encode {:?}, buf len: {}", frame.kind(), buf.len());
   let x = (buf, offset);
 
   match frame {
-    BytesFrame::Array { data, attributes } => gen_bytes_array(x, data, attributes.as_ref()),
-    BytesFrame::BlobString { data, attributes } => gen_blobstring(x, data, attributes.as_ref()),
-    BytesFrame::SimpleString { data, attributes } => gen_simplestring(x, data, attributes.as_ref()),
-    BytesFrame::SimpleError { data, attributes } => gen_simpleerror(x, data, attributes.as_ref()),
-    BytesFrame::Number { data, attributes } => gen_number(x, *data, attributes.as_ref()),
+    BytesFrame::Array { data, attributes } => gen_bytes_array(x, data, attributes.as_ref(), int_as_blobstring),
+    BytesFrame::BlobString { data, attributes } => gen_blobstring(x, data, attributes.as_ref(), int_as_blobstring),
+    BytesFrame::SimpleString { data, attributes } => {
+      gen_simplestring(x, data, attributes.as_ref(), int_as_blobstring)
+    },
+    BytesFrame::SimpleError { data, attributes } => gen_simpleerror(x, data, attributes.as_ref(), int_as_blobstring),
+    BytesFrame::Number { data, attributes } => gen_number(x, *data, attributes.as_ref(), int_as_blobstring),
     BytesFrame::Null => gen_null(x),
-    BytesFrame::Double { data, attributes } => gen_double(x, *data, attributes.as_ref()),
-    BytesFrame::BlobError { data, attributes } => gen_bloberror(x, data, attributes.as_ref()),
+    BytesFrame::Double { data, attributes } => gen_double(x, *data, attributes.as_ref(), int_as_blobstring),
+    BytesFrame::BlobError { data, attributes } => gen_bloberror(x, data, attributes.as_ref(), int_as_blobstring),
     BytesFrame::VerbatimString {
       data,
       format,
       attributes,
-    } => gen_verbatimstring(x, data, format, attributes.as_ref()),
-    BytesFrame::Boolean { data, attributes } => gen_boolean(x, *data, attributes.as_ref()),
-    BytesFrame::Map { data, attributes } => gen_bytes_map(x, data, attributes.as_ref()),
-    BytesFrame::Set { data, attributes } => gen_bytes_set(x, data, attributes.as_ref()),
-    BytesFrame::Push { data, attributes } => gen_bytes_push(x, data, attributes.as_ref()),
+    } => gen_verbatimstring(x, data, format, attributes.as_ref(), int_as_blobstring),
+    BytesFrame::Boolean { data, attributes } => gen_boolean(x, *data, attributes.as_ref(), int_as_blobstring),
+    BytesFrame::Map { data, attributes } => gen_bytes_map(x, data, attributes.as_ref(), int_as_blobstring),
+    BytesFrame::Set { data, attributes } => gen_bytes_set(x, data, attributes.as_ref(), int_as_blobstring),
+    BytesFrame::Push { data, attributes } => gen_bytes_push(x, data, attributes.as_ref(), int_as_blobstring),
     BytesFrame::Hello { version, auth, setname } => {
       gen_hello(x, version, map_bytes_auth(auth), setname.as_ref().map(|s| &**s))
     },
-    BytesFrame::BigNumber { data, attributes } => gen_bignumber(x, data, attributes.as_ref()),
+    BytesFrame::BigNumber { data, attributes } => gen_bignumber(x, data, attributes.as_ref(), int_as_blobstring),
     BytesFrame::ChunkedString(b) => gen_chunked_string(x, b),
   }
 }
@@ -551,8 +690,8 @@ fn gen_bytes_frame<'a>(
 ///     ],
 ///     attributes: None
 ///   };
-///   let mut buf = Vec::with_capacity(frame.encode_len());
-///   let amt = encode(&mut buf, &frame).expect("Failed to encode frame");
+///   let mut buf = Vec::with_capacity(frame.encode_len(false));
+///   let amt = encode(&mut buf, &frame, false).expect("Failed to encode frame");
 ///   debug_assert_eq!(buf.len(), amt);
 ///
 ///   socket.write_all(&buf).expect("Failed to write to socket");
@@ -578,7 +717,7 @@ fn gen_bytes_frame<'a>(
 ///     ],
 ///     attributes: None
 ///   };
-///   let amt = extend_encode(buf, &frame).expect("Failed to encode frame");
+///   let amt = extend_encode(buf, &frame, false).expect("Failed to encode frame");
 ///
 ///   socket.write_all(&buf).await.expect("Failed to write to socket");
 ///   let _ = buf.split_to(amt);
@@ -590,9 +729,25 @@ pub mod complete {
   /// Attempt to encode a frame into `buf`.
   ///
   /// The caller is responsible for extending `buf` if a `BufferTooSmall` error is returned.
-  pub fn encode(buf: &mut [u8], frame: &OwnedFrame) -> Result<usize, RedisProtocolError> {
-    encode_checks!(buf, 0, frame.encode_len());
-    gen_owned_frame(buf, 0, frame).map(|(_, amt)| amt).map_err(|e| e.into())
+  pub fn encode(buf: &mut [u8], frame: &OwnedFrame, int_as_blobstring: bool) -> Result<usize, RedisProtocolError> {
+    encode_checks!(buf, 0, frame.encode_len(int_as_blobstring));
+    gen_owned_frame(buf, 0, frame, int_as_blobstring)
+      .map(|(_, amt)| amt)
+      .map_err(|e| e.into())
+  }
+
+  /// Attempt to encode a borrowed frame into `buf`.
+  ///
+  /// The caller is responsible for extending `buf` if a `BufferTooSmall` error is returned.
+  pub fn encode_borrowed(
+    buf: &mut [u8],
+    frame: &BorrowedFrame,
+    int_as_blobstring: bool,
+  ) -> Result<usize, RedisProtocolError> {
+    encode_checks!(buf, 0, frame.encode_len(int_as_blobstring));
+    gen_borrowed_frame(buf, 0, frame, int_as_blobstring)
+      .map(|(_, amt)| amt)
+      .map_err(|e| e.into())
   }
 
   /// Attempt to encode a frame into `buf`.
@@ -602,9 +757,15 @@ pub mod complete {
   /// Returns the number of bytes encoded.
   #[cfg(feature = "bytes")]
   #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
-  pub fn encode_bytes(buf: &mut [u8], frame: &BytesFrame) -> Result<usize, RedisProtocolError> {
-    encode_checks!(buf, 0, frame.encode_len());
-    gen_bytes_frame(buf, 0, frame).map(|(_, amt)| amt).map_err(|e| e.into())
+  pub fn encode_bytes(
+    buf: &mut [u8],
+    frame: &BytesFrame,
+    int_as_blobstring: bool,
+  ) -> Result<usize, RedisProtocolError> {
+    encode_checks!(buf, 0, frame.encode_len(int_as_blobstring));
+    gen_bytes_frame(buf, 0, frame, int_as_blobstring)
+      .map(|(_, amt)| amt)
+      .map_err(|e| e.into())
   }
 
   /// Attempt to encode a frame at the end of `buf`, extending the buffer before encoding.
@@ -612,12 +773,35 @@ pub mod complete {
   /// Returns the number of bytes encoded.
   #[cfg(feature = "bytes")]
   #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
-  pub fn extend_encode(buf: &mut BytesMut, frame: &BytesFrame) -> Result<usize, RedisProtocolError> {
-    let amt = frame.encode_len();
+  pub fn extend_encode(
+    buf: &mut BytesMut,
+    frame: &BytesFrame,
+    int_as_blobstring: bool,
+  ) -> Result<usize, RedisProtocolError> {
+    let amt = frame.encode_len(int_as_blobstring);
     let offset = buf.len();
     utils::zero_extend(buf, amt);
 
-    gen_bytes_frame(buf, offset, frame)
+    gen_bytes_frame(buf, offset, frame, int_as_blobstring)
+      .map(|(_, amt)| amt)
+      .map_err(|e| e.into())
+  }
+
+  /// Attempt to encode a borrowed frame at the end of `buf`, extending the buffer before encoding.
+  ///
+  /// Returns the number of bytes encoded.
+  #[cfg(feature = "bytes")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
+  pub fn extend_encode_borrowed(
+    buf: &mut BytesMut,
+    frame: &BorrowedFrame,
+    int_as_blobstring: bool,
+  ) -> Result<usize, RedisProtocolError> {
+    let amt = frame.encode_len(int_as_blobstring);
+    let offset = buf.len();
+    utils::zero_extend(buf, amt);
+
+    gen_borrowed_frame(buf, offset, frame, int_as_blobstring)
       .map(|(_, amt)| amt)
       .map_err(|e| e.into())
   }
@@ -655,8 +839,8 @@ pub mod complete {
 ///   written += write_all(socket, &mut buf).await;
 ///
 ///   while let Some(frame) = rx.recv().await {
-///     zero_extend(&mut buf, frame.encode_len());
-///     encode_bytes_aggregate_type_inner_value(&mut buf, 0, &frame).unwrap();
+///     zero_extend(&mut buf, frame.encode_len(false));
+///     encode_bytes_aggregate_type_inner_value(&mut buf, 0, &frame, false).unwrap();
 ///     written += write_all(socket, &mut buf).await;
 ///   }
 ///
@@ -738,25 +922,46 @@ pub mod streaming {
   fn gen_owned_streaming_inner_value_frame<'a>(
     x: (&'a mut [u8], usize),
     data: &OwnedFrame,
+    int_as_blobstring: bool,
   ) -> Result<(&'a mut [u8], usize), GenError> {
-    gen_owned_frame(x.0, x.1, data)
+    gen_owned_frame(x.0, x.1, data, int_as_blobstring)
+  }
+
+  fn gen_borrowed_streaming_inner_value_frame<'a>(
+    x: (&'a mut [u8], usize),
+    data: &BorrowedFrame,
+    int_as_blobstring: bool,
+  ) -> Result<(&'a mut [u8], usize), GenError> {
+    gen_borrowed_frame(x.0, x.1, data, int_as_blobstring)
   }
 
   fn gen_owned_streaming_inner_kv_pair_frames<'a>(
     x: (&'a mut [u8], usize),
     key: &OwnedFrame,
     value: &OwnedFrame,
+    int_as_blobstring: bool,
   ) -> Result<(&'a mut [u8], usize), GenError> {
-    let x = gen_owned_frame(x.0, x.1, key)?;
-    gen_owned_frame(x.0, x.1, value)
+    let x = gen_owned_frame(x.0, x.1, key, int_as_blobstring)?;
+    gen_owned_frame(x.0, x.1, value, int_as_blobstring)
+  }
+
+  fn gen_borrowed_streaming_inner_kv_pair_frames<'a>(
+    x: (&'a mut [u8], usize),
+    key: &BorrowedFrame,
+    value: &BorrowedFrame,
+    int_as_blobstring: bool,
+  ) -> Result<(&'a mut [u8], usize), GenError> {
+    let x = gen_borrowed_frame(x.0, x.1, key, int_as_blobstring)?;
+    gen_borrowed_frame(x.0, x.1, value, int_as_blobstring)
   }
 
   #[cfg(feature = "bytes")]
   fn gen_bytes_streaming_inner_value_frame<'a>(
     x: (&'a mut [u8], usize),
     data: &BytesFrame,
+    int_as_blobstring: bool,
   ) -> Result<(&'a mut [u8], usize), GenError> {
-    gen_bytes_frame(x.0, x.1, data)
+    gen_bytes_frame(x.0, x.1, data, int_as_blobstring)
   }
 
   #[cfg(feature = "bytes")]
@@ -764,9 +969,10 @@ pub mod streaming {
     x: (&'a mut [u8], usize),
     key: &BytesFrame,
     value: &BytesFrame,
+    int_as_blobstring: bool,
   ) -> Result<(&'a mut [u8], usize), GenError> {
-    let x = gen_bytes_frame(x.0, x.1, key)?;
-    gen_bytes_frame(x.0, x.1, value)
+    let x = gen_bytes_frame(x.0, x.1, key, int_as_blobstring)?;
+    gen_bytes_frame(x.0, x.1, value, int_as_blobstring)
   }
 
   /// Encode the starting bytes in a streaming blob string.
@@ -832,10 +1038,29 @@ pub mod streaming {
     buf: &mut [u8],
     offset: usize,
     data: &OwnedFrame,
+    int_as_blobstring: bool,
   ) -> Result<usize, RedisProtocolError> {
-    encode_checks!(buf, offset, data.encode_len());
+    encode_checks!(buf, offset, data.encode_len(int_as_blobstring));
 
-    gen_owned_streaming_inner_value_frame((buf, offset), data)
+    gen_owned_streaming_inner_value_frame((buf, offset), data, int_as_blobstring)
+      .map(|(_, l)| l)
+      .map_err(|e| e.into())
+  }
+
+  /// Encode the inner borrowed frame inside a streamed array or set.
+  ///
+  /// Use [encode_borrowed_aggregate_type_inner_kv_pair] to encode a key-value pair inside a streaming map.
+  ///
+  /// Returns the new offset in `buf`.
+  pub fn encode_borrowed_aggregate_type_inner_value(
+    buf: &mut [u8],
+    offset: usize,
+    data: &BorrowedFrame,
+    int_as_blobstring: bool,
+  ) -> Result<usize, RedisProtocolError> {
+    encode_checks!(buf, offset, data.encode_len(int_as_blobstring));
+
+    gen_borrowed_streaming_inner_value_frame((buf, offset), data, int_as_blobstring)
       .map(|(_, l)| l)
       .map_err(|e| e.into())
   }
@@ -848,10 +1073,36 @@ pub mod streaming {
     offset: usize,
     key: &OwnedFrame,
     value: &OwnedFrame,
+    int_as_blobstring: bool,
   ) -> Result<usize, RedisProtocolError> {
-    encode_checks!(buf, offset, key.encode_len() + value.encode_len());
+    encode_checks!(
+      buf,
+      offset,
+      key.encode_len(int_as_blobstring) + value.encode_len(int_as_blobstring)
+    );
 
-    gen_owned_streaming_inner_kv_pair_frames((buf, offset), key, value)
+    gen_owned_streaming_inner_kv_pair_frames((buf, offset), key, value, int_as_blobstring)
+      .map(|(_, l)| l)
+      .map_err(|e| e.into())
+  }
+
+  /// Encode the inner borrowed frames that make up a key-value pair in a streamed map.
+  ///
+  /// Returns the new offset in `buf`.
+  pub fn encode_borrowed_aggregate_type_inner_kv_pair(
+    buf: &mut [u8],
+    offset: usize,
+    key: &BorrowedFrame,
+    value: &BorrowedFrame,
+    int_as_blobstring: bool,
+  ) -> Result<usize, RedisProtocolError> {
+    encode_checks!(
+      buf,
+      offset,
+      key.encode_len(int_as_blobstring) + value.encode_len(int_as_blobstring)
+    );
+
+    gen_borrowed_streaming_inner_kv_pair_frames((buf, offset), key, value, int_as_blobstring)
       .map(|(_, l)| l)
       .map_err(|e| e.into())
   }
@@ -867,10 +1118,11 @@ pub mod streaming {
     buf: &mut [u8],
     offset: usize,
     data: &BytesFrame,
+    int_as_blobstring: bool,
   ) -> Result<usize, RedisProtocolError> {
-    encode_checks!(buf, offset, data.encode_len());
+    encode_checks!(buf, offset, data.encode_len(int_as_blobstring));
 
-    gen_bytes_streaming_inner_value_frame((buf, offset), data)
+    gen_bytes_streaming_inner_value_frame((buf, offset), data, int_as_blobstring)
       .map(|(_, l)| l)
       .map_err(|e| e.into())
   }
@@ -885,10 +1137,15 @@ pub mod streaming {
     offset: usize,
     key: &BytesFrame,
     value: &BytesFrame,
+    int_as_blobstring: bool,
   ) -> Result<usize, RedisProtocolError> {
-    encode_checks!(buf, offset, key.encode_len() + value.encode_len());
+    encode_checks!(
+      buf,
+      offset,
+      key.encode_len(int_as_blobstring) + value.encode_len(int_as_blobstring)
+    );
 
-    gen_bytes_streaming_inner_kv_pair_frames((buf, offset), key, value)
+    gen_bytes_streaming_inner_kv_pair_frames((buf, offset), key, value, int_as_blobstring)
       .map(|(_, l)| l)
       .map_err(|e| e.into())
   }
@@ -968,7 +1225,7 @@ mod owned_tests {
 
   fn encode_and_verify_empty(input: &OwnedFrame, expected: &str) {
     let mut buf = vec![0; expected.len()];
-    let len = complete::encode(&mut buf, input).unwrap();
+    let len = complete::encode(&mut buf, input, false).unwrap();
 
     assert_eq!(
       buf,
@@ -981,8 +1238,8 @@ mod owned_tests {
   }
 
   fn encode_and_verify_empty_unordered(input: &OwnedFrame, expected_start: &str, expected_middle: &[&str]) {
-    let mut buf = vec![0; input.encode_len()];
-    let len = complete::encode(&mut buf, input).unwrap();
+    let mut buf = vec![0; input.encode_len(false)];
+    let len = complete::encode(&mut buf, input, false).unwrap();
 
     unordered_assert_eq(&buf, expected_start.as_bytes(), expected_middle);
     let expected_middle_len: usize = expected_middle.iter().map(|x| x.as_bytes().len()).sum();
@@ -998,7 +1255,7 @@ mod owned_tests {
     let mut frame = input.clone();
     frame.add_attributes(attributes).unwrap();
     let mut buf = vec![0; expected.len() + encoded_attributes.len()];
-    let len = complete::encode(&mut buf, &frame).unwrap();
+    let len = complete::encode(&mut buf, &frame, false).unwrap();
 
     let mut expected_bytes = Vec::new();
     expected_bytes.extend_from_slice(&encoded_attributes);
@@ -1020,8 +1277,8 @@ mod owned_tests {
     let (attributes, encoded_attributes) = create_attributes();
     let mut frame = input.clone();
     frame.add_attributes(attributes).unwrap();
-    let mut buf = vec![0; input.encode_len() + encoded_attributes.len()];
-    let len = complete::encode(&mut buf, &frame).unwrap();
+    let mut buf = vec![0; input.encode_len(false) + encoded_attributes.len()];
+    let len = complete::encode(&mut buf, &frame, false).unwrap();
 
     let mut expected_start_bytes = Vec::new();
     expected_start_bytes.extend_from_slice(&encoded_attributes);
@@ -1521,10 +1778,10 @@ mod owned_tests {
     let mut offset = 0;
 
     offset = streaming::encode_start_aggregate_type(&mut buf, offset, FrameKind::Array).unwrap();
-    offset = streaming::encode_owned_aggregate_type_inner_value(&mut buf, offset, &chunk1).unwrap();
-    offset = streaming::encode_owned_aggregate_type_inner_value(&mut buf, offset, &chunk2).unwrap();
-    offset = streaming::encode_owned_aggregate_type_inner_value(&mut buf, offset, &chunk3).unwrap();
-    offset = streaming::encode_owned_aggregate_type_inner_value(&mut buf, offset, &chunk4).unwrap();
+    offset = streaming::encode_owned_aggregate_type_inner_value(&mut buf, offset, &chunk1, false).unwrap();
+    offset = streaming::encode_owned_aggregate_type_inner_value(&mut buf, offset, &chunk2, false).unwrap();
+    offset = streaming::encode_owned_aggregate_type_inner_value(&mut buf, offset, &chunk3, false).unwrap();
+    offset = streaming::encode_owned_aggregate_type_inner_value(&mut buf, offset, &chunk4, false).unwrap();
     offset = streaming::encode_end_aggregate_type(&mut buf, offset).unwrap();
 
     assert_eq!(offset, expected.as_bytes().len());
@@ -1555,10 +1812,10 @@ mod owned_tests {
     let mut offset = 0;
 
     offset = streaming::encode_start_aggregate_type(&mut buf, offset, FrameKind::Set).unwrap();
-    offset = streaming::encode_owned_aggregate_type_inner_value(&mut buf, offset, &chunk1).unwrap();
-    offset = streaming::encode_owned_aggregate_type_inner_value(&mut buf, offset, &chunk2).unwrap();
-    offset = streaming::encode_owned_aggregate_type_inner_value(&mut buf, offset, &chunk3).unwrap();
-    offset = streaming::encode_owned_aggregate_type_inner_value(&mut buf, offset, &chunk4).unwrap();
+    offset = streaming::encode_owned_aggregate_type_inner_value(&mut buf, offset, &chunk1, false).unwrap();
+    offset = streaming::encode_owned_aggregate_type_inner_value(&mut buf, offset, &chunk2, false).unwrap();
+    offset = streaming::encode_owned_aggregate_type_inner_value(&mut buf, offset, &chunk3, false).unwrap();
+    offset = streaming::encode_owned_aggregate_type_inner_value(&mut buf, offset, &chunk4, false).unwrap();
     offset = streaming::encode_end_aggregate_type(&mut buf, offset).unwrap();
 
     assert_eq!(offset, expected.as_bytes().len());
@@ -1589,8 +1846,8 @@ mod owned_tests {
     let mut offset = 0;
 
     offset = streaming::encode_start_aggregate_type(&mut buf, offset, FrameKind::Map).unwrap();
-    offset = streaming::encode_owned_aggregate_type_inner_kv_pair(&mut buf, offset, &k1, &v1).unwrap();
-    offset = streaming::encode_owned_aggregate_type_inner_kv_pair(&mut buf, offset, &k2, &v2).unwrap();
+    offset = streaming::encode_owned_aggregate_type_inner_kv_pair(&mut buf, offset, &k1, &v1, false).unwrap();
+    offset = streaming::encode_owned_aggregate_type_inner_kv_pair(&mut buf, offset, &k2, &v2, false).unwrap();
     offset = streaming::encode_end_aggregate_type(&mut buf, offset).unwrap();
 
     assert_eq!(offset, expected.as_bytes().len());
@@ -1661,7 +1918,7 @@ mod bytes_tests {
 
   fn encode_and_verify_empty(input: &BytesFrame, expected: &str) {
     let mut buf = BytesMut::new();
-    let len = complete::extend_encode(&mut buf, input).unwrap();
+    let len = complete::extend_encode(&mut buf, input, false).unwrap();
 
     assert_eq!(
       buf,
@@ -1675,7 +1932,7 @@ mod bytes_tests {
 
   fn encode_and_verify_empty_unordered(input: &BytesFrame, expected_start: &str, expected_middle: &[&str]) {
     let mut buf = BytesMut::new();
-    let len = complete::extend_encode(&mut buf, input).unwrap();
+    let len = complete::extend_encode(&mut buf, input, false).unwrap();
 
     unordered_assert_eq(buf, BytesMut::from(expected_start.as_bytes()), expected_middle);
     let expected_middle_len: usize = expected_middle.iter().map(|x| x.as_bytes().len()).sum();
@@ -1690,7 +1947,7 @@ mod bytes_tests {
     let mut buf = BytesMut::new();
     buf.extend_from_slice(PADDING.as_bytes());
 
-    let len = complete::extend_encode(&mut buf, input).unwrap();
+    let len = complete::extend_encode(&mut buf, input, false).unwrap();
     let padded = [PADDING, expected].join("");
 
     assert_eq!(
@@ -1707,7 +1964,7 @@ mod bytes_tests {
     let mut buf = BytesMut::new();
     buf.extend_from_slice(PADDING.as_bytes());
 
-    let len = complete::extend_encode(&mut buf, input).unwrap();
+    let len = complete::extend_encode(&mut buf, input, false).unwrap();
     let expected_start_padded = [PADDING, expected_start].join("");
 
     unordered_assert_eq(buf, BytesMut::from(expected_start_padded.as_bytes()), expected_middle);
@@ -1721,7 +1978,7 @@ mod bytes_tests {
 
   fn encode_raw_and_verify_empty(input: &BytesFrame, expected: &str) {
     let mut buf = vec![0; expected.as_bytes().len()];
-    let len = complete::encode_bytes(&mut buf, input).unwrap();
+    let len = complete::encode_bytes(&mut buf, input, false).unwrap();
 
     assert_eq!(
       buf,
@@ -1738,7 +1995,7 @@ mod bytes_tests {
     let mut frame = input.clone();
     frame.add_attributes(attributes).unwrap();
     let mut buf = BytesMut::new();
-    let len = complete::extend_encode(&mut buf, &frame).unwrap();
+    let len = complete::extend_encode(&mut buf, &frame, false).unwrap();
 
     let mut expected_bytes = BytesMut::new();
     expected_bytes.extend_from_slice(&encoded_attributes);
@@ -1761,7 +2018,7 @@ mod bytes_tests {
     let mut frame = input.clone();
     frame.add_attributes(attributes).unwrap();
     let mut buf = BytesMut::new();
-    let len = complete::extend_encode(&mut buf, &frame).unwrap();
+    let len = complete::extend_encode(&mut buf, &frame, false).unwrap();
 
     let mut expected_start_bytes = BytesMut::new();
     expected_start_bytes.extend_from_slice(&encoded_attributes);
@@ -1784,7 +2041,7 @@ mod bytes_tests {
     let mut buf = BytesMut::new();
     buf.extend_from_slice(PADDING.as_bytes());
 
-    let len = complete::extend_encode(&mut buf, &frame).unwrap();
+    let len = complete::extend_encode(&mut buf, &frame, false).unwrap();
     let mut expected_bytes = BytesMut::new();
     expected_bytes.extend_from_slice(PADDING.as_bytes());
     expected_bytes.extend_from_slice(&encoded_attributes);
@@ -1810,7 +2067,7 @@ mod bytes_tests {
     let mut buf = BytesMut::new();
     buf.extend_from_slice(PADDING.as_bytes());
 
-    let len = complete::extend_encode(&mut buf, &frame).unwrap();
+    let len = complete::extend_encode(&mut buf, &frame, false).unwrap();
     let mut expected_start_bytes = BytesMut::new();
     expected_start_bytes.extend_from_slice(PADDING.as_bytes());
     expected_start_bytes.extend_from_slice(&encoded_attributes);
@@ -2372,10 +2629,10 @@ mod bytes_tests {
     let mut offset = 0;
 
     offset = streaming::encode_start_aggregate_type(&mut buf, offset, FrameKind::Array).unwrap();
-    offset = streaming::encode_bytes_aggregate_type_inner_value(&mut buf, offset, &chunk1).unwrap();
-    offset = streaming::encode_bytes_aggregate_type_inner_value(&mut buf, offset, &chunk2).unwrap();
-    offset = streaming::encode_bytes_aggregate_type_inner_value(&mut buf, offset, &chunk3).unwrap();
-    offset = streaming::encode_bytes_aggregate_type_inner_value(&mut buf, offset, &chunk4).unwrap();
+    offset = streaming::encode_bytes_aggregate_type_inner_value(&mut buf, offset, &chunk1, false).unwrap();
+    offset = streaming::encode_bytes_aggregate_type_inner_value(&mut buf, offset, &chunk2, false).unwrap();
+    offset = streaming::encode_bytes_aggregate_type_inner_value(&mut buf, offset, &chunk3, false).unwrap();
+    offset = streaming::encode_bytes_aggregate_type_inner_value(&mut buf, offset, &chunk4, false).unwrap();
     offset = streaming::encode_end_aggregate_type(&mut buf, offset).unwrap();
 
     assert_eq!(offset, expected.as_bytes().len());
@@ -2407,10 +2664,10 @@ mod bytes_tests {
     let mut offset = 0;
 
     offset = streaming::encode_start_aggregate_type(&mut buf, offset, FrameKind::Set).unwrap();
-    offset = streaming::encode_bytes_aggregate_type_inner_value(&mut buf, offset, &chunk1).unwrap();
-    offset = streaming::encode_bytes_aggregate_type_inner_value(&mut buf, offset, &chunk2).unwrap();
-    offset = streaming::encode_bytes_aggregate_type_inner_value(&mut buf, offset, &chunk3).unwrap();
-    offset = streaming::encode_bytes_aggregate_type_inner_value(&mut buf, offset, &chunk4).unwrap();
+    offset = streaming::encode_bytes_aggregate_type_inner_value(&mut buf, offset, &chunk1, false).unwrap();
+    offset = streaming::encode_bytes_aggregate_type_inner_value(&mut buf, offset, &chunk2, false).unwrap();
+    offset = streaming::encode_bytes_aggregate_type_inner_value(&mut buf, offset, &chunk3, false).unwrap();
+    offset = streaming::encode_bytes_aggregate_type_inner_value(&mut buf, offset, &chunk4, false).unwrap();
     offset = streaming::encode_end_aggregate_type(&mut buf, offset).unwrap();
 
     assert_eq!(offset, expected.as_bytes().len());
@@ -2442,8 +2699,8 @@ mod bytes_tests {
     let mut offset = 0;
 
     offset = streaming::encode_start_aggregate_type(&mut buf, offset, FrameKind::Map).unwrap();
-    offset = streaming::encode_bytes_aggregate_type_inner_kv_pair(&mut buf, offset, &k1, &v1).unwrap();
-    offset = streaming::encode_bytes_aggregate_type_inner_kv_pair(&mut buf, offset, &k2, &v2).unwrap();
+    offset = streaming::encode_bytes_aggregate_type_inner_kv_pair(&mut buf, offset, &k1, &v1, false).unwrap();
+    offset = streaming::encode_bytes_aggregate_type_inner_kv_pair(&mut buf, offset, &k2, &v2, false).unwrap();
     offset = streaming::encode_end_aggregate_type(&mut buf, offset).unwrap();
 
     assert_eq!(offset, expected.as_bytes().len());
