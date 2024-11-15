@@ -1,3 +1,4 @@
+#![allow(clippy::needless_doctest_main)]
 #![allow(clippy::unnecessary_fallible_conversions)]
 #![allow(clippy::mutable_key_type)]
 #![allow(clippy::derivable_impls)]

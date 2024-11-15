@@ -489,8 +489,8 @@ impl<'a> Clone for BorrowedFrame<'a> {
       },
       Hello { auth, setname, version } => Hello {
         version: version.clone(),
-        setname: setname.clone(),
-        auth:    auth.clone(),
+        setname: *setname,
+        auth:    *auth,
       },
     }
   }

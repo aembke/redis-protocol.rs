@@ -123,10 +123,10 @@ impl<'a> Clone for BorrowedFrame<'a> {
   fn clone(self: &BorrowedFrame<'a>) -> BorrowedFrame<'a> {
     match self {
       BorrowedFrame::Null => BorrowedFrame::Null,
-      BorrowedFrame::Array(a) => BorrowedFrame::Array(*a),
-      BorrowedFrame::BulkString(b) => BorrowedFrame::BulkString(*b),
-      BorrowedFrame::SimpleString(s) => BorrowedFrame::SimpleString(*s),
-      BorrowedFrame::Error(e) => BorrowedFrame::Error(*e),
+      BorrowedFrame::Array(a) => BorrowedFrame::Array(a),
+      BorrowedFrame::BulkString(b) => BorrowedFrame::BulkString(b),
+      BorrowedFrame::SimpleString(s) => BorrowedFrame::SimpleString(s),
+      BorrowedFrame::Error(e) => BorrowedFrame::Error(e),
       BorrowedFrame::Integer(i) => BorrowedFrame::Integer(*i),
     }
   }

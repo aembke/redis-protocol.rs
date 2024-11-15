@@ -10,7 +10,7 @@ use bytes::{BufMut, Bytes, BytesMut};
 
 #[cfg(feature = "bytes")]
 fn gen_bulkstring_bytes(len: usize, buf: Option<BytesMut>) -> BytesMut {
-  let digits = redis_protocol::digits_in_number(len);
+  let digits = redis_protocol::digits_in_usize(len);
   let mut v = buf.unwrap_or_else(|| BytesMut::with_capacity(1 + digits + 2 + len + 2));
 
   v.put_u8(b'$');
@@ -30,8 +30,8 @@ fn gen_null_bytes(buf: Option<BytesMut>) -> BytesMut {
 
 #[cfg(feature = "bytes")]
 fn gen_array_bytes(len: usize, null_every: usize, str_len: usize) -> BytesMut {
-  let arr_len_digits = redis_protocol::digits_in_number(len);
-  let str_len_digits = redis_protocol::digits_in_number(str_len);
+  let arr_len_digits = redis_protocol::digits_in_usize(len);
+  let str_len_digits = redis_protocol::digits_in_usize(str_len);
   let buf = BytesMut::with_capacity(1 + arr_len_digits + 2 + (len * (1 + str_len_digits + 2 + str_len + 2)));
 
   (0 .. len).fold(buf, |buf, i| {
@@ -44,7 +44,7 @@ fn gen_array_bytes(len: usize, null_every: usize, str_len: usize) -> BytesMut {
 }
 
 fn gen_bulkstring_owned(len: usize, buf: Option<Vec<u8>>) -> Vec<u8> {
-  let digits = redis_protocol::digits_in_number(len);
+  let digits = redis_protocol::digits_in_usize(len);
   let mut v = buf.unwrap_or_else(|| Vec::with_capacity(1 + digits + 2 + len + 2));
 
   v.push(b'$');
@@ -62,8 +62,8 @@ fn gen_null_owned(buf: Option<Vec<u8>>) -> Vec<u8> {
 }
 
 fn gen_array_owned(len: usize, null_every: usize, str_len: usize) -> Vec<u8> {
-  let arr_len_digits = redis_protocol::digits_in_number(len);
-  let str_len_digits = redis_protocol::digits_in_number(str_len);
+  let arr_len_digits = redis_protocol::digits_in_usize(len);
+  let str_len_digits = redis_protocol::digits_in_usize(str_len);
   let buf = Vec::with_capacity(1 + arr_len_digits + 2 + (len * (1 + str_len_digits + 2 + str_len + 2)));
 
   (0 .. len).fold(buf, |buf, i| {

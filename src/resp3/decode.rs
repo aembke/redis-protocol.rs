@@ -499,7 +499,7 @@ pub mod complete {
   pub fn decode_range(buf: &[u8]) -> Result<Option<(RangeFrame, usize)>, RedisProtocolError> {
     let (offset, _len) = (0, buf.len());
 
-    let (frame, amt) = match d_parse_frame_or_attribute((&buf, offset)) {
+    let (frame, amt) = match d_parse_frame_or_attribute((buf, offset)) {
       Ok(((_remaining, offset), frame)) => {
         #[cfg(feature = "std")]
         debug_assert_eq!(offset, _len - _remaining.len(), "returned offset doesn't match");
@@ -570,7 +570,7 @@ pub mod streaming {
   pub fn decode_range(buf: &[u8]) -> Result<Option<(DecodedRangeFrame, usize)>, RedisProtocolError> {
     let (offset, _len) = (0, buf.len());
 
-    match d_parse_frame_or_attribute((&buf, offset)) {
+    match d_parse_frame_or_attribute((buf, offset)) {
       Ok(((_remaining, offset), frame)) => {
         #[cfg(feature = "std")]
         debug_assert_eq!(offset, _len - _remaining.len(), "returned offset doesn't match");

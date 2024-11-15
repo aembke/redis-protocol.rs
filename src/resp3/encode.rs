@@ -624,7 +624,7 @@ fn gen_borrowed_frame<'a>(
     BorrowedFrame::Map { data, attributes } => gen_borrowed_map(x, data, attributes.as_ref(), int_as_blobstring),
     BorrowedFrame::Set { data, attributes } => gen_borrowed_set(x, data, attributes.as_ref(), int_as_blobstring),
     BorrowedFrame::Push { data, attributes } => gen_borrowed_push(x, data, attributes.as_ref(), int_as_blobstring),
-    BorrowedFrame::Hello { version, auth, setname } => gen_hello(x, version, auth.clone(), setname.clone()),
+    BorrowedFrame::Hello { version, auth, setname } => gen_hello(x, version, *auth, *setname),
     BorrowedFrame::BigNumber { data, attributes } => gen_bignumber(x, data, attributes.as_ref(), int_as_blobstring),
     BorrowedFrame::ChunkedString(b) => gen_chunked_string(x, b),
   }
