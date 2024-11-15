@@ -30,9 +30,9 @@ use redis_protocol::resp2::{
 
 fn main() {
   let frame = Frame::BulkString("foobar".into());
-  let mut buf = vec![0; frame.encode_len()];
+  let mut buf = vec![0; frame.encode_len(false)];
 
-  let len = encode(&mut buf, &frame).expect("Error encoding frame");
+  let len = encode(&mut buf, &frame, false).expect("Error encoding frame");
   println!("Encoded {} bytes into buffer with contents {:?}", len, buf);
 
   // ["Foo", nil, "Bar"]
@@ -166,4 +166,63 @@ fn decode_borrowed(buf: &[u8]) -> Option<MyBorrowedFrame> {
     _ => None,
   }
 }
+```
+
+## Encoding
+
+Similar to the decoding interface, there are 3 frame types available to callers for encoding use cases.
+
+* `OwnedFrame` - See above. Callers that use this interface often have to allocate additional containers on the heap,
+  and often have to move or copy the contents into these frame types from other types, such as `RedisValue` in `fred`.
+* `BytesFrame` - See above. This frame type often avoids the need to copy or move the contents from upstream types such
+  as `RedisValue`, but still requires callers to allocate containers on the heap (i.e. the `Vec` in the `Array`
+  variant).
+* `BorrowedFrame` - This frame type serves a similar purpose to the `RangeFrame` type in the decoding interface in that
+  it can be used when callers want to entirely avoid heap allocations. In practice this often requires the caller to
+  create some intermediate reference-based types, but significantly outperforms other approaches that require
+  allocations.
+
+### Options
+
+All encoding interfaces expose an additional parameter, `int_as_bulkstring` for RESP2 or `int_as_blobstring` for RESP3,
+that can be used to encode integers as `BulkString` or `BlobString` using a more optimized code path that avoids heap
+allocations.
+
+In practice Redis expects all incoming frames to be an array of blob or bulk strings. This option can be used to
+automatically convert integers to byte arrays without additional allocations.
+
+### Buffer Management
+
+In some cases this library can automatically extend buffers while encoding. The `extend_encode_*` family of functions
+operate on `BytesMut` types and can automatically resize buffers while encoding, whereas the `encode_*` family of
+functions require the caller to allocate the correct amount beforehand.
+
+```rust
+use redis_protocol::resp2::{
+  encode,
+  types::{OwnedFrame, BytesFrame, BorrowedFrame, Resp2Frame}
+};
+use bytes::BytesMut;
+
+fn main() {
+  // using OwnedFrame variants, manually allocating the buffer
+  let frame = OwnedFrame::BulkString("foobar".into());
+  let mut buf = vec![0; frame.encode_len(false)];
+  let len = encode::encode(&mut buf, &frame, false).expect("Error encoding frame");
+  println!("Encoded {} bytes into buffer with contents {:?}", len, buf);
+
+  // using BytesFrame variants
+  let frame = BytesFrame::BulkString("foobar".into());
+  let mut buf = BytesMut::new();
+  let len = encode::extend_encode(&mut buf, &frame, false).expect("Error encoding frame");
+  println!("Encoded {} bytes into buffer with contents {:?}", len, buf);
+
+  // using BorrowedFrame variants
+  let value: String = "foobar".into();
+  let frame = BorrowedFrame::BulkString(value.as_bytes());
+  let mut buf = BytesMut::new();
+  let len = encode::extend_encode_borrowed(&mut buf, &frame, false).expect("Error encoding frame");
+  println!("Encoded {} bytes into buffer with contents {:?}", len, buf);
+}
+
 ```

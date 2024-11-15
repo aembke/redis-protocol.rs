@@ -130,4 +130,12 @@ mod tests {
     assert_eq!(integer_encode_len(38473, false), 8);
     assert_eq!(integer_encode_len(-74834, false), 9);
   }
+
+  #[test]
+  fn should_get_encode_len_integer_as_bulkstring() {
+    // $5\r\n38473\r\n
+    assert_eq!(integer_encode_len(38473, true), 11);
+    // $6\r\n-74834\r\n
+    assert_eq!(integer_encode_len(-74834, true), 12);
+  }
 }

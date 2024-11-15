@@ -1880,6 +1880,22 @@ mod bytes_tests {
     (out, encoded)
   }
 
+  fn create_attributes_as_blobstring() -> (FrameMap<BytesFrame, BytesFrame>, Vec<u8>) {
+    let mut out = resp3_utils::new_map(0);
+    let key = BytesFrame::SimpleString {
+      data:       "foo".into(),
+      attributes: None,
+    };
+    let value = BytesFrame::Number {
+      data:       42,
+      attributes: None,
+    };
+    out.insert(key, value);
+    let encoded = "|1\r\n+foo\r\n$2\r\n42\r\n".to_owned().into_bytes();
+
+    (out, encoded)
+  }
+
   fn blobstring_array(data: Vec<&'static str>) -> BytesFrame {
     let inner: Vec<BytesFrame> = data
       .into_iter()
@@ -2250,6 +2266,108 @@ mod bytes_tests {
     encode_and_verify_non_empty(&input, expected);
     encode_and_verify_empty_with_attributes(&input, expected);
     encode_and_verify_non_empty_with_attributes(&input, expected);
+  }
+
+  #[test]
+  // TODO clean this up
+  fn should_encode_number_as_blobstring() {
+    let expected = "$4\r\n1000\r\n";
+    let input: BytesFrame = 1000.into();
+
+    let mut buf = BytesMut::new();
+    let len = complete::extend_encode(&mut buf, &input, true).unwrap();
+    assert_eq!(
+      buf,
+      expected.as_bytes(),
+      "empty buf contents match {:?} == {:?}",
+      str::from_utf8(&buf),
+      expected
+    );
+    assert_eq!(len, expected.as_bytes().len(), "empty expected len is correct");
+
+    let (attributes, encoded_attributes) = create_attributes_as_blobstring();
+    let mut frame = input.clone();
+    frame.add_attributes(attributes).unwrap();
+    let mut buf = BytesMut::new();
+    let len = complete::extend_encode(&mut buf, &frame, true).unwrap();
+
+    let mut expected_bytes = BytesMut::new();
+    expected_bytes.extend_from_slice(&encoded_attributes);
+    expected_bytes.extend_from_slice(expected.as_bytes());
+    assert_eq!(buf, expected_bytes, "non empty buf contents match with attrs");
+    assert_eq!(
+      len,
+      expected.as_bytes().len() + encoded_attributes.len(),
+      "non empty expected len is correct with attrs"
+    );
+  }
+
+  #[test]
+  // TODO clean this up
+  fn should_encode_negative_number_as_blobstring() {
+    let expected = "$5\r\n-1000\r\n";
+    let input: BytesFrame = (-1000).into();
+
+    let mut buf = BytesMut::new();
+    let len = complete::extend_encode(&mut buf, &input, true).unwrap();
+    assert_eq!(
+      buf,
+      expected.as_bytes(),
+      "empty buf contents match {:?} == {:?}",
+      str::from_utf8(&buf),
+      expected
+    );
+    assert_eq!(len, expected.as_bytes().len(), "empty expected len is correct");
+
+    let (attributes, encoded_attributes) = create_attributes_as_blobstring();
+    let mut frame = input.clone();
+    frame.add_attributes(attributes).unwrap();
+    let mut buf = BytesMut::new();
+    let len = complete::extend_encode(&mut buf, &frame, true).unwrap();
+
+    let mut expected_bytes = BytesMut::new();
+    expected_bytes.extend_from_slice(&encoded_attributes);
+    expected_bytes.extend_from_slice(expected.as_bytes());
+    assert_eq!(buf, expected_bytes, "non empty buf contents match with attrs");
+    assert_eq!(
+      len,
+      expected.as_bytes().len() + encoded_attributes.len(),
+      "non empty expected len is correct with attrs"
+    );
+  }
+
+  #[test]
+  // TODO clean this up
+  fn should_encode_negative_number_as_blobstring_overflow() {
+    let expected = "$10\r\n-999999999\r\n";
+    let input: BytesFrame = (-999999999).into();
+
+    let mut buf = BytesMut::new();
+    let len = complete::extend_encode(&mut buf, &input, true).unwrap();
+    assert_eq!(
+      buf,
+      expected.as_bytes(),
+      "empty buf contents match {:?} == {:?}",
+      str::from_utf8(&buf),
+      expected
+    );
+    assert_eq!(len, expected.as_bytes().len(), "empty expected len is correct");
+
+    let (attributes, encoded_attributes) = create_attributes_as_blobstring();
+    let mut frame = input.clone();
+    frame.add_attributes(attributes).unwrap();
+    let mut buf = BytesMut::new();
+    let len = complete::extend_encode(&mut buf, &frame, true).unwrap();
+
+    let mut expected_bytes = BytesMut::new();
+    expected_bytes.extend_from_slice(&encoded_attributes);
+    expected_bytes.extend_from_slice(expected.as_bytes());
+    assert_eq!(buf, expected_bytes, "non empty buf contents match with attrs");
+    assert_eq!(
+      len,
+      expected.as_bytes().len() + encoded_attributes.len(),
+      "non empty expected len is correct with attrs"
+    );
   }
 
   // ------------- end tests adapted from RESP2 --------------------------

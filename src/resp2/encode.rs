@@ -665,4 +665,35 @@ mod bytes_tests {
     encode_and_verify_empty(&i2_input, i2_expected);
     encode_and_verify_non_empty(&i2_input, i2_expected);
   }
+
+  #[test]
+  fn should_encode_integer_as_bulkstring() {
+    let i1_expected = "$4\r\n1000\r\n";
+    let i1_input = BytesFrame::Integer(1000);
+
+    let mut buf = BytesMut::new();
+    let len = extend_encode(&mut buf, &i1_input, true).unwrap();
+    assert_eq!(buf, i1_expected.as_bytes(), "empty buf contents match");
+    assert_eq!(len, i1_expected.as_bytes().len(), "empty expected len is correct");
+  }
+
+  #[test]
+  fn should_encode_negative_integer_as_bulkstring() {
+    let i2_expected = "$5\r\n-1000\r\n";
+    let i2_input = BytesFrame::Integer(-1000);
+
+    let mut buf = BytesMut::new();
+    let len = extend_encode(&mut buf, &i2_input, true).unwrap();
+    assert_eq!(buf, i2_expected.as_bytes(), "empty buf contents match");
+    assert_eq!(len, i2_expected.as_bytes().len(), "empty expected len is correct");
+
+    // test base10 overflow with `-` prefixes in the length prefix calculation
+    let i2_expected = "$10\r\n-999999999\r\n";
+    let i2_input = BytesFrame::Integer(-999999999);
+
+    let mut buf = BytesMut::new();
+    let len = extend_encode(&mut buf, &i2_input, true).unwrap();
+    assert_eq!(buf, i2_expected.as_bytes(), "empty buf contents match");
+    assert_eq!(len, i2_expected.as_bytes().len(), "empty expected len is correct");
+  }
 }

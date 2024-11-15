@@ -1,4 +1,5 @@
-// Adapted from https://github.com/lifthrasiir/rust-strconv/blob/master/src/int2dec/strategy/bcd_earlyexit.rs, but modified to return the amount of padding that should be removed.
+// Adapted from https://github.com/lifthrasiir/rust-strconv/blob/master/src/int2dec/strategy/bcd_earlyexit.rs,
+// but modified to return the amount of padding that should be removed.
 
 use core::{
   marker::Copy,

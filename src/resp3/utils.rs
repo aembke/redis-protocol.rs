@@ -963,6 +963,22 @@ mod tests {
     (out, 1 + 1 + 2 + 6 + 5)
   }
 
+  fn create_attributes_int_as_blobstring() -> (FrameMap<BytesFrame, BytesFrame>, usize) {
+    let mut out = new_map(0);
+    // |1\r\n +foo\r\n $2\r\n42\r\n
+    let key = BytesFrame::SimpleString {
+      data:       "foo".into(),
+      attributes: None,
+    };
+    let value = BytesFrame::Number {
+      data:       42,
+      attributes: None,
+    };
+    out.insert(key, value);
+
+    (out, 4 + 6 + 8)
+  }
+
   #[test]
   fn should_reconstruct_blobstring() {
     let mut streamed_frame = StreamedFrame::new(FrameKind::BlobString);
@@ -1448,6 +1464,47 @@ mod tests {
     let (attributes, attributes_len) = create_attributes();
     frame.add_attributes(attributes.clone()).unwrap();
     assert_eq!(bytes_encode_len(&frame, false), expected_len + attributes_len);
+  }
+
+  #[test]
+  fn should_get_encode_len_number_as_blobstring() {
+    // $3\r\n500\r\n
+    let mut frame = BytesFrame::Number {
+      data:       500,
+      attributes: None,
+    };
+    let expected_len = 1 + 1 + 2 + 3 + 2;
+    assert_eq!(bytes_encode_len(&frame, true), expected_len);
+
+    let (attributes, attributes_len) = create_attributes_int_as_blobstring();
+    frame.add_attributes(attributes.clone()).unwrap();
+    assert_eq!(bytes_encode_len(&frame, true), expected_len + attributes_len);
+  }
+
+  #[test]
+  fn should_get_encode_len_negative_number_as_blobstring() {
+    // $4\r\n-500\r\n
+    let mut frame = BytesFrame::Number {
+      data:       -500,
+      attributes: None,
+    };
+    let expected_len = 1 + 1 + 2 + 4 + 2;
+    assert_eq!(bytes_encode_len(&frame, true), expected_len);
+
+    let (attributes, attributes_len) = create_attributes_int_as_blobstring();
+    frame.add_attributes(attributes.clone()).unwrap();
+    assert_eq!(bytes_encode_len(&frame, true), expected_len + attributes_len);
+
+    let mut frame = BytesFrame::Number {
+      data:       -999999999,
+      attributes: None,
+    };
+    let expected_len = 1 + 2 + 2 + 10 + 2;
+    assert_eq!(bytes_encode_len(&frame, true), expected_len);
+
+    let (attributes, attributes_len) = create_attributes_int_as_blobstring();
+    frame.add_attributes(attributes.clone()).unwrap();
+    assert_eq!(bytes_encode_len(&frame, true), expected_len + attributes_len);
   }
 
   #[test]
