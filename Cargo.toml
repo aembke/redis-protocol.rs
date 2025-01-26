@@ -33,6 +33,7 @@ nom = { version = "7.1", default-features = false }
 libm = { version = "0.2", optional = true }
 hashbrown = { version = "0.14", optional = true }
 tokio-util = { version = "0.7", features = ["codec"], optional = true }
+memchr = "2.7.4"
 
 [dev-dependencies]
 rand = "0.8"
@@ -60,9 +61,9 @@ doctest = true
 name = "redis_protocol"
 test = true
 
-#[[bench]]
-#name = "resp2_decode"
-#harness = false
+[[bench]]
+name = "resp2_decode"
+harness = false
 
 #[[bench]]
 #name = "resp2_encode"

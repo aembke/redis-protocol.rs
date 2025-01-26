@@ -9,7 +9,8 @@ use crate::{
   utils,
 };
 use alloc::vec::Vec;
-use core::str;
+use memchr::memchr;
+use core::{num::NonZero, str};
 use nom::{
   bytes::streaming::{take as nom_take, take_until as nom_take_until},
   multi::count as nom_count,
@@ -39,13 +40,20 @@ fn to_i64(s: &[u8]) -> Result<i64, RedisParseError<&[u8]>> {
 
 fn d_read_to_crlf(input: (&[u8], usize)) -> DResult<usize> {
   decode_log_str!(input.0, _input, "Parsing to CRLF. Remaining: {:?}", _input);
-  let (input_bytes, data) = nom_terminated(nom_take_until(CRLF.as_bytes()), nom_take(2_usize))(input.0)?;
+  // let (input_bytes, data) = nom_terminated(nom_take_until(CRLF.as_bytes()), nom_take(2_usize))(input.0)?;
+  let position = memchr(b'\r', input.0).ok_or_else(|| NomErr::Error(RedisParseError::Nom(input.0, nom::error::ErrorKind::CrLf)))?;
+  let (data, input_bytes) = input.0.split_at(position);
+  let (_, input_bytes) = input_bytes.split_at_checked(2).ok_or_else(|| NomErr::Error(RedisParseError::Nom(input.0, nom::error::ErrorKind::Eof)))?;
   Ok(((input_bytes, input.1 + data.len() + 2), data.len()))
 }
 
+#[inline]
 fn d_read_to_crlf_take(input: (&[u8], usize)) -> DResult<&[u8]> {
   decode_log_str!(input.0, _input, "Parsing to CRLF. Remaining: {:?}", _input);
-  let (input_bytes, data) = nom_terminated(nom_take_until(CRLF.as_bytes()), nom_take(2_usize))(input.0)?;
+  // let (input_bytes, data) = nom_terminated(nom_take_until(CRLF.as_bytes()), nom_take(2_usize))(input.0)?;
+  let position = memchr(b'\r', input.0).ok_or_else(|| NomErr::Error(RedisParseError::Nom(input.0, nom::error::ErrorKind::CrLf)))?;
+  let (data, input_bytes) = input.0.split_at(position);
+  let (_, input_bytes) = input_bytes.split_at_checked(2).ok_or_else(|| NomErr::Error(RedisParseError::Nom(input.0, nom::error::ErrorKind::Eof)))?;
   Ok(((input_bytes, input.1 + data.len() + 2), data))
 }
 
@@ -100,6 +108,7 @@ fn d_parse_error(input: (&[u8], usize)) -> DResult<RangeFrame> {
   Ok(((input, next_offset), RangeFrame::Error((offset, offset + len))))
 }
 
+#[inline]
 fn d_parse_bulkstring(input: (&[u8], usize), len: usize) -> DResult<RangeFrame> {
   let offset = input.1;
   let (input, data) = nom_terminated(nom_take(len), nom_take(2_usize))(input.0)?;
