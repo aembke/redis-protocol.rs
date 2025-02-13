@@ -7,7 +7,7 @@ license = "MIT"
 name = "redis-protocol"
 readme = "README.md"
 repository = "https://github.com/aembke/redis-protocol.rs"
-version = "6.0.0"
+version = "6.1.0"
 edition = "2021"
 exclude = ["fuzz", ".circleci", "benches"]
 
@@ -25,13 +25,13 @@ rustdoc-args = ["--cfg", "docsrs"]
 [dependencies]
 bytes = { version = "1.1", default-features = false, optional = true }
 bytes-utils = { version = "0.1", default-features = false, optional = true }
-cookie-factory = { version = "=0.3.2", default-features = false }
+cookie-factory = { version = "0.3", default-features = false }
 crc16 = { version = "0.4" }
 indexmap = { version = "2.2", optional = true }
 log = "0.4"
-nom = { version = "7.1", default-features = false }
+nom = { version = "8.0", default-features = false }
 libm = { version = "0.2", optional = true }
-hashbrown = { version = "0.14", optional = true }
+hashbrown = { version = "0.15", optional = true }
 tokio-util = { version = "0.7", features = ["codec"], optional = true }
 
 [dev-dependencies]

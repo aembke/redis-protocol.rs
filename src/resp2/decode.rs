@@ -16,6 +16,7 @@ use nom::{
   number::streaming::be_u8,
   sequence::terminated as nom_terminated,
   Err as NomErr,
+  Parser,
 };
 
 #[cfg(feature = "bytes")]
@@ -39,13 +40,13 @@ fn to_i64(s: &[u8]) -> Result<i64, RedisParseError<&[u8]>> {
 
 fn d_read_to_crlf(input: (&[u8], usize)) -> DResult<usize> {
   decode_log_str!(input.0, _input, "Parsing to CRLF. Remaining: {:?}", _input);
-  let (input_bytes, data) = nom_terminated(nom_take_until(CRLF.as_bytes()), nom_take(2_usize))(input.0)?;
+  let (input_bytes, data) = nom_terminated(nom_take_until(CRLF.as_bytes()), nom_take(2_usize)).parse(input.0)?;
   Ok(((input_bytes, input.1 + data.len() + 2), data.len()))
 }
 
 fn d_read_to_crlf_take(input: (&[u8], usize)) -> DResult<&[u8]> {
   decode_log_str!(input.0, _input, "Parsing to CRLF. Remaining: {:?}", _input);
-  let (input_bytes, data) = nom_terminated(nom_take_until(CRLF.as_bytes()), nom_take(2_usize))(input.0)?;
+  let (input_bytes, data) = nom_terminated(nom_take_until(CRLF.as_bytes()), nom_take(2_usize)).parse(input.0)?;
   Ok(((input_bytes, input.1 + data.len() + 2), data))
 }
 
@@ -102,7 +103,7 @@ fn d_parse_error(input: (&[u8], usize)) -> DResult<RangeFrame> {
 
 fn d_parse_bulkstring(input: (&[u8], usize), len: usize) -> DResult<RangeFrame> {
   let offset = input.1;
-  let (input, data) = nom_terminated(nom_take(len), nom_take(2_usize))(input.0)?;
+  let (input, data) = nom_terminated(nom_take(len), nom_take(2_usize)).parse(input.0)?;
   Ok((
     (input, offset + len + 2),
     RangeFrame::BulkString((offset, offset + data.len())),
@@ -134,7 +135,7 @@ fn d_parse_array_frames(input: (&[u8], usize), len: usize) -> DResult<Vec<RangeF
     len,
     _input
   );
-  nom_count(d_parse_frame, len)(input)
+  nom_count(d_parse_frame, len).parse(input)
 }
 
 fn d_parse_array(input: (&[u8], usize)) -> DResult<RangeFrame> {

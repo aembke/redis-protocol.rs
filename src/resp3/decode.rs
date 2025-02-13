@@ -13,6 +13,7 @@ use nom::{
   number::streaming::be_u8 as nom_be_u8,
   sequence::terminated as nom_terminated,
   Err as NomErr,
+  Parser,
 };
 
 #[cfg(feature = "bytes")]
@@ -113,13 +114,13 @@ fn attach_attributes<T>(
 
 fn d_read_to_crlf(input: (&[u8], usize)) -> DResult<usize> {
   decode_log_str!(input.0, _input, "Parsing to CRLF. Remaining: {:?}", input);
-  let (input_bytes, data) = nom_terminated(nom_take_until(CRLF.as_bytes()), nom_take(2_usize))(input.0)?;
+  let (input_bytes, data) = nom_terminated(nom_take_until(CRLF.as_bytes()), nom_take(2_usize)).parse(input.0)?;
   Ok(((input_bytes, input.1 + data.len() + 2), data.len()))
 }
 
 fn d_read_to_crlf_take(input: (&[u8], usize)) -> DResult<&[u8]> {
   decode_log_str!(input.0, _input, "Parsing to CRLF. Remaining: {:?}", _input);
-  let (input_bytes, data) = nom_terminated(nom_take_until(CRLF.as_bytes()), nom_take(2_usize))(input.0)?;
+  let (input_bytes, data) = nom_terminated(nom_take_until(CRLF.as_bytes()), nom_take(2_usize)).parse(input.0)?;
   Ok(((input_bytes, input.1 + data.len() + 2), data))
 }
 
@@ -213,7 +214,7 @@ fn d_parse_null(input: (&[u8], usize)) -> DResult<RangeFrame> {
 
 fn d_parse_blobstring(input: (&[u8], usize), len: usize) -> DResult<RangeFrame> {
   let offset = input.1;
-  let (input, data) = nom_terminated(nom_take(len), nom_take(2_usize))(input.0)?;
+  let (input, data) = nom_terminated(nom_take(len), nom_take(2_usize)).parse(input.0)?;
 
   Ok(((input, offset + len + 2), RangeFrame::BlobString {
     data:       (offset, offset + data.len()),
@@ -223,7 +224,7 @@ fn d_parse_blobstring(input: (&[u8], usize), len: usize) -> DResult<RangeFrame> 
 
 fn d_parse_bloberror(input: (&[u8], usize)) -> DResult<RangeFrame> {
   let ((input, offset), len) = d_read_prefix_len(input)?;
-  let (input, data) = nom_terminated(nom_take(len), nom_take(2_usize))(input)?;
+  let (input, data) = nom_terminated(nom_take(len), nom_take(2_usize)).parse(input)?;
 
   Ok(((input, offset + len + 2), RangeFrame::BlobError {
     data:       (offset, offset + data.len()),
@@ -233,14 +234,14 @@ fn d_parse_bloberror(input: (&[u8], usize)) -> DResult<RangeFrame> {
 
 fn d_parse_verbatimstring(input: (&[u8], usize)) -> DResult<RangeFrame> {
   let ((input, prefix_offset), len) = d_read_prefix_len(input)?;
-  let (input, format_bytes) = nom_terminated(nom_take(3_usize), nom_take(1_usize))(input)?;
+  let (input, format_bytes) = nom_terminated(nom_take(3_usize), nom_take(1_usize)).parse(input)?;
   if len < 4 {
     e!(RedisParseError::new_custom(
       "parse_verbatimstring",
       "Invalid prefix length."
     ));
   }
-  let (input, _) = nom_terminated(nom_take(len - 4), nom_take(2_usize))(input)?;
+  let (input, _) = nom_terminated(nom_take(len - 4), nom_take(2_usize)).parse(input)?;
 
   Ok((
     (input, prefix_offset.saturating_add(len).saturating_add(2)),
@@ -266,7 +267,8 @@ fn d_parse_array_frames(input: (&[u8], usize), len: usize) -> DResult<Vec<RangeF
   nom_count(
     nom_map_res(d_parse_frame_or_attribute, expect_complete_index_frame::<&[u8]>),
     len,
-  )(input)
+  )
+  .parse(input)
 }
 
 fn d_parse_kv_pairs(input: (&[u8], usize), len: usize) -> DResult<FrameMap<RangeFrame, RangeFrame>> {
@@ -276,7 +278,8 @@ fn d_parse_kv_pairs(input: (&[u8], usize), len: usize) -> DResult<FrameMap<Range
       len.saturating_mul(2),
     ),
     to_map::<&[u8]>,
-  )(input)
+  )
+  .parse(input)
 }
 
 fn d_parse_array(input: (&[u8], usize), len: usize) -> DResult<RangeFrame> {
@@ -422,7 +425,7 @@ fn d_parse_chunked_string(input: (&[u8], usize)) -> DResult<DecodedRangeFrame> {
     (input, RangeFrame::new_end_stream())
   } else {
     let offset = input.1;
-    let (input, contents) = nom_terminated(nom_take(len), nom_take(2_usize))(input.0)?;
+    let (input, contents) = nom_terminated(nom_take(len), nom_take(2_usize)).parse(input.0)?;
 
     (
       (input, offset + contents.len() + 2),
@@ -444,17 +447,17 @@ fn d_parse_non_attribute_frame(input: (&[u8], usize), kind: FrameKind) -> DResul
     FrameKind::BlobString => d_check_streaming(input, kind)?,
     FrameKind::Map => d_check_streaming(input, kind)?,
     FrameKind::Set => d_check_streaming(input, kind)?,
-    FrameKind::SimpleString => nom_map(d_parse_simplestring, map_complete_frame)(input)?,
-    FrameKind::SimpleError => nom_map(d_parse_simpleerror, map_complete_frame)(input)?,
-    FrameKind::Number => nom_map(d_parse_number, map_complete_frame)(input)?,
-    FrameKind::Null => nom_map(d_parse_null, map_complete_frame)(input)?,
-    FrameKind::Double => nom_map(d_parse_double, map_complete_frame)(input)?,
-    FrameKind::Boolean => nom_map(d_parse_boolean, map_complete_frame)(input)?,
-    FrameKind::BlobError => nom_map(d_parse_bloberror, map_complete_frame)(input)?,
-    FrameKind::VerbatimString => nom_map(d_parse_verbatimstring, map_complete_frame)(input)?,
-    FrameKind::Push => nom_map(d_parse_push, map_complete_frame)(input)?,
-    FrameKind::BigNumber => nom_map(d_parse_bignumber, map_complete_frame)(input)?,
-    FrameKind::Hello => nom_map(d_parse_hello, map_complete_frame)(input)?,
+    FrameKind::SimpleString => nom_map(d_parse_simplestring, map_complete_frame).parse(input)?,
+    FrameKind::SimpleError => nom_map(d_parse_simpleerror, map_complete_frame).parse(input)?,
+    FrameKind::Number => nom_map(d_parse_number, map_complete_frame).parse(input)?,
+    FrameKind::Null => nom_map(d_parse_null, map_complete_frame).parse(input)?,
+    FrameKind::Double => nom_map(d_parse_double, map_complete_frame).parse(input)?,
+    FrameKind::Boolean => nom_map(d_parse_boolean, map_complete_frame).parse(input)?,
+    FrameKind::BlobError => nom_map(d_parse_bloberror, map_complete_frame).parse(input)?,
+    FrameKind::VerbatimString => nom_map(d_parse_verbatimstring, map_complete_frame).parse(input)?,
+    FrameKind::Push => nom_map(d_parse_push, map_complete_frame).parse(input)?,
+    FrameKind::BigNumber => nom_map(d_parse_bignumber, map_complete_frame).parse(input)?,
+    FrameKind::Hello => nom_map(d_parse_hello, map_complete_frame).parse(input)?,
     FrameKind::ChunkedString => d_parse_chunked_string(input)?,
     FrameKind::EndStream => d_return_end_stream(input)?,
     FrameKind::Attribute => {
