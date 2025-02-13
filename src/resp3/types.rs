@@ -498,7 +498,7 @@ impl<'a> Clone for BorrowedFrame<'a> {
 
 impl Eq for BorrowedFrame<'_> {}
 
-impl<'a> Hash for BorrowedFrame<'a> {
+impl Hash for BorrowedFrame<'_> {
   fn hash<H: Hasher>(&self, state: &mut H) {
     use self::BorrowedFrame::*;
     self.kind().hash_prefix().hash(state);
@@ -523,7 +523,7 @@ impl<'a> Hash for BorrowedFrame<'a> {
   }
 }
 
-impl<'a> BorrowedFrame<'a> {
+impl BorrowedFrame<'_> {
   /// Read the `FrameKind` value for this frame.
   pub fn kind(&self) -> FrameKind {
     match self {
