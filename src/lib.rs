@@ -13,14 +13,15 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(docsrs, allow(unused_attributes))]
 #![cfg_attr(all(not(test), not(feature = "std")), no_std)]
+#![cfg_attr(feature = "strict", deny(warnings))]
 #![doc = include_str!("../README.md")]
 
 extern crate alloc;
 extern crate core;
 
-#[macro_use]
+#[cfg_attr(any(feature="resp3", all(feature = "convert", feature="decode-logs", feature="std", any(feature="resp2", feature = "resp3"))), macro_use)]
 extern crate log;
-#[macro_use]
+#[cfg_attr(any(feature = "resp2", feature = "resp3"), macro_use)]
 extern crate cookie_factory;
 
 #[cfg(feature = "bytes")]
@@ -37,6 +38,7 @@ pub extern crate tokio_util;
 mod macros;
 /// Error types.
 pub mod error;
+#[cfg(any(feature="resp2", feature="resp3"))]
 mod int2dec;
 mod utils;
 
@@ -63,8 +65,11 @@ pub mod convert;
 
 #[cfg(feature = "bytes")]
 pub use utils::zero_extend;
-pub use utils::{digits_in_i64, digits_in_usize, redis_keyslot, str_to_f64};
+#[cfg(any(feature = "std", feature="libm"))]
+pub use utils::{digits_in_i64, digits_in_usize};
+pub use utils::{redis_keyslot, str_to_f64};
 
+#[cfg(any(feature = "std", feature="libm"))]
 #[deprecated(since = "5.1.0", note = "Use `digits_in_usize` instead.")]
 pub fn digits_in_number(d: usize) -> usize {
   digits_in_usize(d)

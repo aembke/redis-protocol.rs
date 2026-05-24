@@ -1,9 +1,12 @@
+#[cfg(any(feature="resp2", feature="resp3"))]
 use crate::error::RedisParseError;
+#[cfg(any(feature="resp2", feature="resp3"))]
 use nom::IResult;
 
 /// Alternative alias for `std::ops::Range`.
 pub(crate) type _Range = (usize, usize);
 /// A wrapper type for the nom result type that stores range offsets alongside the buffer.
+#[cfg(any(feature="resp2", feature="resp3"))]
 pub(crate) type DResult<'a, T> = IResult<(&'a [u8], usize), T, RedisParseError<&'a [u8]>>;
 
 /// Terminating bytes between frames.

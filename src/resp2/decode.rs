@@ -37,25 +37,25 @@ fn to_i64(s: &[u8]) -> Result<i64, RedisParseError<&[u8]>> {
     .map_err(|_| RedisParseError::new_custom("to_i64", "Failed to parse as integer."))
 }
 
-fn d_read_to_crlf(input: (&[u8], usize)) -> DResult<usize> {
+fn d_read_to_crlf(input: (&[u8], usize)) -> DResult<'_, usize> {
   decode_log_str!(input.0, _input, "Parsing to CRLF. Remaining: {:?}", _input);
   let (input_bytes, data) = nom_terminated(nom_take_until(CRLF.as_bytes()), nom_take(2_usize))(input.0)?;
   Ok(((input_bytes, input.1 + data.len() + 2), data.len()))
 }
 
-fn d_read_to_crlf_take(input: (&[u8], usize)) -> DResult<&[u8]> {
+fn d_read_to_crlf_take(input: (&[u8], usize)) -> DResult<'_, &[u8]> {
   decode_log_str!(input.0, _input, "Parsing to CRLF. Remaining: {:?}", _input);
   let (input_bytes, data) = nom_terminated(nom_take_until(CRLF.as_bytes()), nom_take(2_usize))(input.0)?;
   Ok(((input_bytes, input.1 + data.len() + 2), data))
 }
 
-fn d_read_prefix_len(input: (&[u8], usize)) -> DResult<isize> {
+fn d_read_prefix_len(input: (&[u8], usize)) -> DResult<'_, isize> {
   let (input, data) = d_read_to_crlf_take(input)?;
   decode_log!("Reading prefix len. Data: {:?}", str::from_utf8(data));
   Ok((input, etry!(to_isize(data))))
 }
 
-fn d_frame_type(input: (&[u8], usize)) -> DResult<FrameKind> {
+fn d_frame_type(input: (&[u8], usize)) -> DResult<'_, FrameKind> {
   let (input_bytes, byte) = be_u8(input.0)?;
   decode_log_str!(
     input_bytes,
@@ -76,13 +76,13 @@ fn d_frame_type(input: (&[u8], usize)) -> DResult<FrameKind> {
   Ok(((input_bytes, input.1 + 1), kind))
 }
 
-fn d_parse_simplestring(input: (&[u8], usize)) -> DResult<RangeFrame> {
+fn d_parse_simplestring(input: (&[u8], usize)) -> DResult<'_, RangeFrame> {
   let offset = input.1;
   let ((input, next_offset), len) = d_read_to_crlf(input)?;
   Ok(((input, next_offset), RangeFrame::SimpleString((offset, offset + len))))
 }
 
-fn d_parse_integer(input: (&[u8], usize)) -> DResult<RangeFrame> {
+fn d_parse_integer(input: (&[u8], usize)) -> DResult<'_, RangeFrame> {
   let ((input, next_offset), data) = d_read_to_crlf_take(input)?;
   let parsed = etry!(to_i64(data));
   Ok(((input, next_offset), RangeFrame::Integer(parsed)))
@@ -90,17 +90,17 @@ fn d_parse_integer(input: (&[u8], usize)) -> DResult<RangeFrame> {
 
 // assumes the '$-1\r\n' has been consumed already, since nulls look like bulk strings until the length prefix is
 // parsed, and parsing the length prefix consumes the trailing \r\n in the underlying `terminated!` call
-fn d_parse_null(input: (&[u8], usize)) -> DResult<RangeFrame> {
+fn d_parse_null(input: (&[u8], usize)) -> DResult<'_, RangeFrame> {
   Ok((input, RangeFrame::Null))
 }
 
-fn d_parse_error(input: (&[u8], usize)) -> DResult<RangeFrame> {
+fn d_parse_error(input: (&[u8], usize)) -> DResult<'_, RangeFrame> {
   let offset = input.1;
   let ((input, next_offset), len) = d_read_to_crlf(input)?;
   Ok(((input, next_offset), RangeFrame::Error((offset, offset + len))))
 }
 
-fn d_parse_bulkstring(input: (&[u8], usize), len: usize) -> DResult<RangeFrame> {
+fn d_parse_bulkstring(input: (&[u8], usize), len: usize) -> DResult<'_, RangeFrame> {
   let offset = input.1;
   let (input, data) = nom_terminated(nom_take(len), nom_take(2_usize))(input.0)?;
   Ok((
@@ -109,7 +109,7 @@ fn d_parse_bulkstring(input: (&[u8], usize), len: usize) -> DResult<RangeFrame> 
   ))
 }
 
-fn d_parse_bulkstring_or_null(input: (&[u8], usize)) -> DResult<RangeFrame> {
+fn d_parse_bulkstring_or_null(input: (&[u8], usize)) -> DResult<'_, RangeFrame> {
   let ((input, offset), len) = d_read_prefix_len(input)?;
   decode_log_str!(
     input,
@@ -126,7 +126,7 @@ fn d_parse_bulkstring_or_null(input: (&[u8], usize)) -> DResult<RangeFrame> {
   }
 }
 
-fn d_parse_array_frames(input: (&[u8], usize), len: usize) -> DResult<Vec<RangeFrame>> {
+fn d_parse_array_frames(input: (&[u8], usize), len: usize) -> DResult<'_, Vec<RangeFrame>> {
   decode_log_str!(
     input.0,
     _input,
@@ -137,7 +137,7 @@ fn d_parse_array_frames(input: (&[u8], usize), len: usize) -> DResult<Vec<RangeF
   nom_count(d_parse_frame, len)(input)
 }
 
-fn d_parse_array(input: (&[u8], usize)) -> DResult<RangeFrame> {
+fn d_parse_array(input: (&[u8], usize)) -> DResult<'_, RangeFrame> {
   let ((input, offset), len) = d_read_prefix_len(input)?;
   decode_log_str!(
     input,
@@ -156,7 +156,7 @@ fn d_parse_array(input: (&[u8], usize)) -> DResult<RangeFrame> {
   }
 }
 
-fn d_parse_frame(input: (&[u8], usize)) -> DResult<RangeFrame> {
+fn d_parse_frame(input: (&[u8], usize)) -> DResult<'_, RangeFrame> {
   let ((input, offset), kind) = d_frame_type(input)?;
   decode_log_str!(input, _input, "Parsed kind: {:?}, remaining: {:?}", kind, _input);
 

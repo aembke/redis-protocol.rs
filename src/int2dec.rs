@@ -104,6 +104,7 @@ pub fn u64_to_digits(n: u64) -> (Digits64, usize) {
   (buf, padding(&buf[0 ..], 0))
 }
 
+#[cfg(any(feature="resp2", feature="resp3"))]
 #[inline]
 pub fn i64_to_digits(n: i64) -> (Digits64, usize) {
   // padding will always be >= 1 in this context

@@ -18,12 +18,18 @@ use bytes::{Bytes, BytesMut};
 #[cfg(feature = "bytes")]
 use bytes_utils::Str;
 
-#[cfg(feature = "hashbrown")]
-use hashbrown::{HashMap, HashSet};
-#[cfg(feature = "index-map")]
-use indexmap::{IndexMap, IndexSet};
-#[cfg(feature = "std")]
-use std::collections::{HashMap, HashSet};
+#[cfg(all(feature = "resp3", test, feature="hashbrown"))]
+use hashbrown::HashSet;
+#[cfg(all(feature = "resp3", feature="hashbrown"))]
+use hashbrown::HashMap;
+#[cfg(all(feature = "resp3", test, feature = "index-map"))]
+use indexmap::IndexSet;
+#[cfg(all(feature = "resp3", feature = "index-map"))]
+use indexmap::IndexMap;
+#[cfg(all(feature = "resp3", test, feature="std"))]
+use std::collections::HashSet;
+#[cfg(all(feature = "resp3", feature="std"))]
+use std::collections::HashMap;
 
 pub const BOOLEAN_ENCODE_LEN: usize = 4;
 
@@ -32,23 +38,22 @@ pub fn hash_tuple<H: Hasher>(state: &mut H, range: &(usize, usize)) {
   range.1.hash(state);
 }
 
-#[cfg(not(feature = "index-map"))]
-#[allow(dead_code)]
+#[cfg(all(feature = "resp3", test, any(feature = "hashbrown", feature="std")))]
 pub fn new_set<K: Hash + Eq>(capacity: usize) -> HashSet<K> {
   HashSet::with_capacity(capacity)
 }
 
-#[cfg(feature = "index-map")]
+#[cfg(all(feature = "resp3", test, feature = "index-map"))]
 pub fn new_set<K: Hash + Eq>(capacity: usize) -> IndexSet<K> {
   IndexSet::with_capacity(capacity)
 }
 
-#[cfg(not(feature = "index-map"))]
+#[cfg(all(feature = "resp3", any(feature = "hashbrown", feature="std")))]
 pub fn new_map<K: Hash + Eq, V>(capacity: usize) -> HashMap<K, V> {
   HashMap::with_capacity(capacity)
 }
 
-#[cfg(feature = "index-map")]
+#[cfg(all(feature = "resp3", feature = "index-map"))]
 pub fn new_map<K: Hash + Eq, V>(capacity: usize) -> IndexMap<K, V> {
   IndexMap::with_capacity(capacity)
 }
