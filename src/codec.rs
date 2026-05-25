@@ -1,14 +1,22 @@
 #[cfg(feature = "resp3")]
 mod resp3 {
+  #[cfg(feature = "std")]
   use crate::{
     error::{RedisProtocolError, RedisProtocolErrorKind},
     resp3::{
       decode::streaming::decode_bytes_mut as resp3_decode,
       encode::complete::{extend_encode as resp3_encode, extend_encode_borrowed as resp3_encode_borrowed},
-      types::{BorrowedFrame, BytesFrame as Resp3Frame, StreamedFrame},
+      types::{BorrowedFrame},
+    },
+  };  
+  use crate::{
+    resp3::{
+      types::{BytesFrame as Resp3Frame, StreamedFrame},
     },
   };
+  #[cfg(feature = "std")]
   use bytes::BytesMut;
+  #[cfg(feature = "std")]
   use tokio_util::codec::{Decoder, Encoder};
   /// Encode a redis command string (`SET foo bar NX`, etc) into a RESP3 blob string array.
   pub fn resp3_encode_command(cmd: &str) -> Resp3Frame {
@@ -60,7 +68,9 @@ mod resp3 {
   /// ```
   #[derive(Debug, Default)]
   pub struct Resp3 {
+    #[cfg_attr(not(feature = "std"), allow(dead_code))]
     streaming:         Option<StreamedFrame<Resp3Frame>>,
+    #[cfg_attr(not(feature = "std"), allow(dead_code))]
     int_as_blobstring: bool,
   }
 
@@ -75,6 +85,7 @@ mod resp3 {
     }
   }
 
+  #[cfg(feature = "std")]
   impl Encoder<Resp3Frame> for Resp3 {
     type Error = RedisProtocolError;
 
@@ -85,6 +96,7 @@ mod resp3 {
     }
   }
 
+  #[cfg(feature = "std")]
   impl Encoder<BorrowedFrame<'_>> for Resp3 {
     type Error = RedisProtocolError;
 
@@ -95,6 +107,7 @@ mod resp3 {
     }
   }
 
+  #[cfg(feature = "std")]
   impl Decoder for Resp3 {
     type Error = RedisProtocolError;
     type Item = Resp3Frame;
@@ -145,15 +158,23 @@ mod resp3 {
 
 #[cfg(feature = "resp2")]
 mod resp2 {
+  #[cfg(feature = "std")]
   use crate::{
     error::RedisProtocolError,
     resp2::{
       decode::decode_bytes_mut as resp2_decode,
       encode::{extend_encode as resp2_encode, extend_encode_borrowed as resp2_encode_borrowed},
-      types::{BorrowedFrame, BytesFrame as Resp2Frame},
+      types::BorrowedFrame,
     },
   };
+  use crate::{
+    resp2::{
+      types::BytesFrame as Resp2Frame,
+    },
+  };
+  #[cfg(feature = "std")]
   use bytes::BytesMut;
+  #[cfg(feature = "std")]
   use tokio_util::codec::{Decoder, Encoder};
   /// Encode a redis command string (`SET foo bar NX`, etc) into a RESP2 bulk string array.
   pub fn resp2_encode_command(cmd: &str) -> Resp2Frame {
@@ -194,6 +215,7 @@ mod resp2 {
   /// ```
   #[derive(Clone, Debug, Default)]
   pub struct Resp2 {
+    #[cfg_attr(not(feature = "std"), allow(dead_code))]
     int_as_bulkstring: bool,
   }
 
@@ -205,6 +227,7 @@ mod resp2 {
     }
   }
 
+  #[cfg(feature = "std")]
   impl Encoder<Resp2Frame> for Resp2 {
     type Error = RedisProtocolError;
 
@@ -215,6 +238,7 @@ mod resp2 {
     }
   }
 
+  #[cfg(feature = "std")]
   impl Encoder<BorrowedFrame<'_>> for Resp2 {
     type Error = RedisProtocolError;
 
@@ -225,6 +249,7 @@ mod resp2 {
     }
   }
 
+  #[cfg(feature = "std")]
   impl Decoder for Resp2 {
     type Error = RedisProtocolError;
     type Item = Resp2Frame;

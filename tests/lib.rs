@@ -11,6 +11,7 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::disallowed_names)]
 #![allow(unused_imports)]
+#![cfg_attr(feature = "strict", deny(warnings))]
 
 #[macro_use]
 extern crate log;

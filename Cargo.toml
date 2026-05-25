@@ -50,7 +50,7 @@ resp2 = [
 ]
 resp3 = ["nom/alloc"]
 index-map = ["dep:indexmap"]
-bytes = ["dep:bytes", "bytes-utils"]
+bytes = ["dep:bytes", "dep:bytes-utils"]
 decode-logs = []
 alloc = ["nom/alloc"]
 std = ["cookie-factory/default", "nom/default"]
