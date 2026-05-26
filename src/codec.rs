@@ -6,14 +6,10 @@ mod resp3 {
     resp3::{
       decode::streaming::decode_bytes_mut as resp3_decode,
       encode::complete::{extend_encode as resp3_encode, extend_encode_borrowed as resp3_encode_borrowed},
-      types::{BorrowedFrame},
+      types::{BorrowedFrame, StreamedFrame},
     },
   };  
-  use crate::{
-    resp3::{
-      types::{BytesFrame as Resp3Frame, StreamedFrame},
-    },
-  };
+  use crate::resp3::types::BytesFrame as Resp3Frame;
   #[cfg(feature = "std")]
   use bytes::BytesMut;
   #[cfg(feature = "std")]
@@ -68,20 +64,26 @@ mod resp3 {
   /// ```
   #[derive(Debug, Default)]
   pub struct Resp3 {
-    #[cfg_attr(not(feature = "std"), allow(dead_code))]
+    #[cfg(feature = "std")]
     streaming:         Option<StreamedFrame<Resp3Frame>>,
-    #[cfg_attr(not(feature = "std"), allow(dead_code))]
+    #[cfg(feature = "std")]
     int_as_blobstring: bool,
   }
 
   impl Resp3 {
     /// Create a new codec with the provided flag describing whether the encoder logic should send integers as blob
     /// strings.
+    #[cfg(feature = "std")]
     pub fn new(int_as_blobstring: bool) -> Resp3 {
-      Resp3 {
+      Self {
         int_as_blobstring,
         streaming: None,
       }
+    }
+
+    #[cfg(not(feature = "std"))]
+    pub fn new() -> Resp3 {      
+      Self {}
     }
   }
 
@@ -215,15 +217,20 @@ mod resp2 {
   /// ```
   #[derive(Clone, Debug, Default)]
   pub struct Resp2 {
-    #[cfg_attr(not(feature = "std"), allow(dead_code))]
+    #[cfg(feature = "std")]
     int_as_bulkstring: bool,
   }
 
   impl Resp2 {
     /// Create a new codec with the provided flag describing whether the encoder logic should send integers as blob
     /// strings.
-    pub fn new(int_as_bulkstring: bool) -> Resp2 {
-      Resp2 { int_as_bulkstring }
+    #[cfg(feature = "std")]
+    pub fn new(int_as_bulkstring: bool) -> Self {
+      Self { int_as_bulkstring }
+    }
+    #[cfg(not(feature = "std"))]
+    pub fn new() -> Self {
+      Self {}
     }
   }
 
