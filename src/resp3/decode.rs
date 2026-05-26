@@ -111,31 +111,31 @@ fn attach_attributes<T>(
   }
 }
 
-fn d_read_to_crlf(input: (&[u8], usize)) -> DResult<usize> {
+fn d_read_to_crlf(input: (&[u8], usize)) -> DResult<'_, usize> {
   decode_log_str!(input.0, _input, "Parsing to CRLF. Remaining: {:?}", input);
   let (input_bytes, data) = nom_terminated(nom_take_until(CRLF.as_bytes()), nom_take(2_usize))(input.0)?;
   Ok(((input_bytes, input.1 + data.len() + 2), data.len()))
 }
 
-fn d_read_to_crlf_take(input: (&[u8], usize)) -> DResult<&[u8]> {
+fn d_read_to_crlf_take(input: (&[u8], usize)) -> DResult<'_, &[u8]> {
   decode_log_str!(input.0, _input, "Parsing to CRLF. Remaining: {:?}", _input);
   let (input_bytes, data) = nom_terminated(nom_take_until(CRLF.as_bytes()), nom_take(2_usize))(input.0)?;
   Ok(((input_bytes, input.1 + data.len() + 2), data))
 }
 
-fn d_read_prefix_len(input: (&[u8], usize)) -> DResult<usize> {
+fn d_read_prefix_len(input: (&[u8], usize)) -> DResult<'_, usize> {
   let ((input, offset), data) = d_read_to_crlf_take(input)?;
   decode_log!("Reading prefix len. Data: {:?}", str::from_utf8(data));
   Ok(((input, offset), etry!(parse_as::<usize, _>(data))))
 }
 
-fn d_read_prefix_len_signed(input: (&[u8], usize)) -> DResult<isize> {
+fn d_read_prefix_len_signed(input: (&[u8], usize)) -> DResult<'_, isize> {
   let ((input, offset), data) = d_read_to_crlf_take(input)?;
   decode_log!("Reading prefix len. Data: {:?}", str::from_utf8(data));
   Ok(((input, offset), etry!(to_isize(data))))
 }
 
-fn d_frame_type(input: (&[u8], usize)) -> DResult<FrameKind> {
+fn d_frame_type(input: (&[u8], usize)) -> DResult<'_, FrameKind> {
   let (input_bytes, byte) = nom_be_u8(input.0)?;
 
   match FrameKind::from_byte(byte) {
@@ -161,7 +161,7 @@ fn d_frame_type(input: (&[u8], usize)) -> DResult<FrameKind> {
   }
 }
 
-fn d_parse_simplestring(input: (&[u8], usize)) -> DResult<RangeFrame> {
+fn d_parse_simplestring(input: (&[u8], usize)) -> DResult<'_, RangeFrame> {
   let offset = input.1;
   let ((input, next_offset), len) = d_read_to_crlf(input)?;
   Ok(((input, next_offset), RangeFrame::SimpleString {
@@ -170,7 +170,7 @@ fn d_parse_simplestring(input: (&[u8], usize)) -> DResult<RangeFrame> {
   }))
 }
 
-fn d_parse_simpleerror(input: (&[u8], usize)) -> DResult<RangeFrame> {
+fn d_parse_simpleerror(input: (&[u8], usize)) -> DResult<'_, RangeFrame> {
   let offset = input.1;
   let ((input, next_offset), len) = d_read_to_crlf(input)?;
   Ok(((input, next_offset), RangeFrame::SimpleError {
@@ -179,7 +179,7 @@ fn d_parse_simpleerror(input: (&[u8], usize)) -> DResult<RangeFrame> {
   }))
 }
 
-fn d_parse_number(input: (&[u8], usize)) -> DResult<RangeFrame> {
+fn d_parse_number(input: (&[u8], usize)) -> DResult<'_, RangeFrame> {
   let ((input, next_offset), data) = d_read_to_crlf_take(input)?;
   let parsed = etry!(parse_as::<i64, _>(data));
   Ok(((input, next_offset), RangeFrame::Number {
@@ -188,7 +188,7 @@ fn d_parse_number(input: (&[u8], usize)) -> DResult<RangeFrame> {
   }))
 }
 
-fn d_parse_double(input: (&[u8], usize)) -> DResult<RangeFrame> {
+fn d_parse_double(input: (&[u8], usize)) -> DResult<'_, RangeFrame> {
   let ((input, next_offset), data) = d_read_to_crlf_take(input)?;
   let parsed = etry!(parse_as::<f64, _>(data));
   Ok(((input, next_offset), RangeFrame::Double {
@@ -197,7 +197,7 @@ fn d_parse_double(input: (&[u8], usize)) -> DResult<RangeFrame> {
   }))
 }
 
-fn d_parse_boolean(input: (&[u8], usize)) -> DResult<RangeFrame> {
+fn d_parse_boolean(input: (&[u8], usize)) -> DResult<'_, RangeFrame> {
   let ((input, next_offset), data) = d_read_to_crlf_take(input)?;
   let parsed = etry!(to_bool(data));
   Ok(((input, next_offset), RangeFrame::Boolean {
@@ -206,12 +206,12 @@ fn d_parse_boolean(input: (&[u8], usize)) -> DResult<RangeFrame> {
   }))
 }
 
-fn d_parse_null(input: (&[u8], usize)) -> DResult<RangeFrame> {
+fn d_parse_null(input: (&[u8], usize)) -> DResult<'_, RangeFrame> {
   let ((input, next_offset), _) = d_read_to_crlf(input)?;
   Ok(((input, next_offset), RangeFrame::Null))
 }
 
-fn d_parse_blobstring(input: (&[u8], usize), len: usize) -> DResult<RangeFrame> {
+fn d_parse_blobstring(input: (&[u8], usize), len: usize) -> DResult<'_, RangeFrame> {
   let offset = input.1;
   let (input, data) = nom_terminated(nom_take(len), nom_take(2_usize))(input.0)?;
 
@@ -221,7 +221,7 @@ fn d_parse_blobstring(input: (&[u8], usize), len: usize) -> DResult<RangeFrame> 
   }))
 }
 
-fn d_parse_bloberror(input: (&[u8], usize)) -> DResult<RangeFrame> {
+fn d_parse_bloberror(input: (&[u8], usize)) -> DResult<'_, RangeFrame> {
   let ((input, offset), len) = d_read_prefix_len(input)?;
   let (input, data) = nom_terminated(nom_take(len), nom_take(2_usize))(input)?;
 
@@ -231,7 +231,7 @@ fn d_parse_bloberror(input: (&[u8], usize)) -> DResult<RangeFrame> {
   }))
 }
 
-fn d_parse_verbatimstring(input: (&[u8], usize)) -> DResult<RangeFrame> {
+fn d_parse_verbatimstring(input: (&[u8], usize)) -> DResult<'_, RangeFrame> {
   let ((input, prefix_offset), len) = d_read_prefix_len(input)?;
   let (input, format_bytes) = nom_terminated(nom_take(3_usize), nom_take(1_usize))(input)?;
   if len < 4 {
@@ -252,7 +252,7 @@ fn d_parse_verbatimstring(input: (&[u8], usize)) -> DResult<RangeFrame> {
   ))
 }
 
-fn d_parse_bignumber(input: (&[u8], usize)) -> DResult<RangeFrame> {
+fn d_parse_bignumber(input: (&[u8], usize)) -> DResult<'_, RangeFrame> {
   let offset = input.1;
   let ((input, next_offset), len) = d_read_to_crlf(input)?;
 
@@ -262,14 +262,14 @@ fn d_parse_bignumber(input: (&[u8], usize)) -> DResult<RangeFrame> {
   }))
 }
 
-fn d_parse_array_frames(input: (&[u8], usize), len: usize) -> DResult<Vec<RangeFrame>> {
+fn d_parse_array_frames(input: (&[u8], usize), len: usize) -> DResult<'_, Vec<RangeFrame>> {
   nom_count(
     nom_map_res(d_parse_frame_or_attribute, expect_complete_index_frame::<&[u8]>),
     len,
   )(input)
 }
 
-fn d_parse_kv_pairs(input: (&[u8], usize), len: usize) -> DResult<FrameMap<RangeFrame, RangeFrame>> {
+fn d_parse_kv_pairs(input: (&[u8], usize), len: usize) -> DResult<'_, FrameMap<RangeFrame, RangeFrame>> {
   nom_map_res(
     nom_count(
       nom_map_res(d_parse_frame_or_attribute, expect_complete_index_frame::<&[u8]>),
@@ -279,18 +279,18 @@ fn d_parse_kv_pairs(input: (&[u8], usize), len: usize) -> DResult<FrameMap<Range
   )(input)
 }
 
-fn d_parse_array(input: (&[u8], usize), len: usize) -> DResult<RangeFrame> {
+fn d_parse_array(input: (&[u8], usize), len: usize) -> DResult<'_, RangeFrame> {
   let (input, data) = d_parse_array_frames(input, len)?;
   Ok((input, RangeFrame::Array { data, attributes: None }))
 }
 
-fn d_parse_push(input: (&[u8], usize)) -> DResult<RangeFrame> {
+fn d_parse_push(input: (&[u8], usize)) -> DResult<'_, RangeFrame> {
   let (input, len) = d_read_prefix_len(input)?;
   let (input, data) = d_parse_array_frames(input, len)?;
   Ok((input, RangeFrame::Push { data, attributes: None }))
 }
 
-fn d_parse_set(input: (&[u8], usize), len: usize) -> DResult<RangeFrame> {
+fn d_parse_set(input: (&[u8], usize), len: usize) -> DResult<'_, RangeFrame> {
   let (input, frames) = d_parse_array_frames(input, len)?;
 
   Ok((input, RangeFrame::Set {
@@ -299,7 +299,7 @@ fn d_parse_set(input: (&[u8], usize), len: usize) -> DResult<RangeFrame> {
   }))
 }
 
-fn d_parse_map(input: (&[u8], usize), len: usize) -> DResult<RangeFrame> {
+fn d_parse_map(input: (&[u8], usize), len: usize) -> DResult<'_, RangeFrame> {
   let (input, frames) = d_parse_kv_pairs(input, len)?;
 
   Ok((input, RangeFrame::Map {
@@ -308,13 +308,13 @@ fn d_parse_map(input: (&[u8], usize), len: usize) -> DResult<RangeFrame> {
   }))
 }
 
-fn d_parse_attribute(input: (&[u8], usize)) -> DResult<RangeAttributes> {
+fn d_parse_attribute(input: (&[u8], usize)) -> DResult<'_, RangeAttributes> {
   let (input, len) = d_read_prefix_len(input)?;
   let (input, attributes) = d_parse_kv_pairs(input, len)?;
   Ok((input, attributes))
 }
 
-fn d_parse_hello(input: (&[u8], usize)) -> DResult<RangeFrame> {
+fn d_parse_hello(input: (&[u8], usize)) -> DResult<'_, RangeFrame> {
   // HELLO [protover [AUTH username password] [SETNAME clientname]]\r\n
   // The HELLO definition seems somewhat undefined, nor does it use length prefixes or CRLF delimiters, so most of the
   // above logic isn't useful here. this is hacky and should be improved
@@ -393,7 +393,7 @@ fn d_parse_hello(input: (&[u8], usize)) -> DResult<RangeFrame> {
 /// complete frame.
 ///
 /// Only supported for arrays, sets, maps, and blob strings.
-fn d_check_streaming(input: (&[u8], usize), kind: FrameKind) -> DResult<DecodedRangeFrame> {
+fn d_check_streaming(input: (&[u8], usize), kind: FrameKind) -> DResult<'_, DecodedRangeFrame> {
   let (input, len) = d_read_prefix_len_signed(input)?;
   let (input, frame) = if len == -1 {
     (input, DecodedRangeFrame::Streaming(StreamedRangeFrame::new(kind)))
@@ -416,7 +416,7 @@ fn d_check_streaming(input: (&[u8], usize), kind: FrameKind) -> DResult<DecodedR
   Ok((input, frame))
 }
 
-fn d_parse_chunked_string(input: (&[u8], usize)) -> DResult<DecodedRangeFrame> {
+fn d_parse_chunked_string(input: (&[u8], usize)) -> DResult<'_, DecodedRangeFrame> {
   let (input, len) = d_read_prefix_len(input)?;
   let (input, frame) = if len == 0 {
     (input, RangeFrame::new_end_stream())
@@ -433,12 +433,12 @@ fn d_parse_chunked_string(input: (&[u8], usize)) -> DResult<DecodedRangeFrame> {
   Ok((input, DecodedRangeFrame::Complete(frame)))
 }
 
-fn d_return_end_stream(input: (&[u8], usize)) -> DResult<DecodedRangeFrame> {
+fn d_return_end_stream(input: (&[u8], usize)) -> DResult<'_, DecodedRangeFrame> {
   let (input, _) = d_read_to_crlf(input)?;
   Ok((input, DecodedRangeFrame::Complete(RangeFrame::new_end_stream())))
 }
 
-fn d_parse_non_attribute_frame(input: (&[u8], usize), kind: FrameKind) -> DResult<DecodedRangeFrame> {
+fn d_parse_non_attribute_frame(input: (&[u8], usize), kind: FrameKind) -> DResult<'_, DecodedRangeFrame> {
   let (input, frame) = match kind {
     FrameKind::Array => d_check_streaming(input, kind)?,
     FrameKind::BlobString => d_check_streaming(input, kind)?,
@@ -468,7 +468,7 @@ fn d_parse_non_attribute_frame(input: (&[u8], usize), kind: FrameKind) -> DResul
   Ok((input, frame))
 }
 
-fn d_parse_attribute_and_frame(input: (&[u8], usize)) -> DResult<DecodedRangeFrame> {
+fn d_parse_attribute_and_frame(input: (&[u8], usize)) -> DResult<'_, DecodedRangeFrame> {
   let (input, attributes) = d_parse_attribute(input)?;
   let (input, kind) = d_frame_type(input)?;
   let (input, next_frame) = d_parse_non_attribute_frame(input, kind)?;
@@ -477,7 +477,7 @@ fn d_parse_attribute_and_frame(input: (&[u8], usize)) -> DResult<DecodedRangeFra
   Ok((input, frame))
 }
 
-fn d_parse_frame_or_attribute(input: (&[u8], usize)) -> DResult<DecodedRangeFrame> {
+fn d_parse_frame_or_attribute(input: (&[u8], usize)) -> DResult<'_, DecodedRangeFrame> {
   let (input, kind) = d_frame_type(input)?;
   let (input, frame) = if kind == FrameKind::Attribute {
     d_parse_attribute_and_frame(input)?

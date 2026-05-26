@@ -1,3 +1,4 @@
+#[cfg(any(feature="resp2", feature="resp3"))]
 macro_rules! encode_checks(
   ($buf:ident, $offset:expr, $required:expr) => {
     let required = $required;
@@ -9,7 +10,7 @@ macro_rules! encode_checks(
   }
 );
 
-#[cfg(feature = "convert")]
+#[cfg(all(feature = "convert", any(feature="resp2", feature = "resp3")))]
 macro_rules! debug_type(
   ($($arg:tt)*) => {
     #[cfg(all(feature="decode-logs", feature = "std"))]
@@ -17,12 +18,14 @@ macro_rules! debug_type(
   }
 );
 
+#[cfg(any(feature="resp2", feature="resp3"))]
 macro_rules! e (
   ($err:expr) => {
     return Err(RedisParseError::from($err).into_nom_error())
   }
 );
 
+#[cfg(any(feature="resp2", feature="resp3"))]
 macro_rules! etry (
   ($expr:expr) => {
     match $expr {
@@ -32,6 +35,7 @@ macro_rules! etry (
   }
 );
 
+#[cfg(any(feature="resp2", feature="resp3"))]
 macro_rules! decode_log(
   ($($arg:tt)*) => (
     #[cfg(feature = "decode-logs")]
@@ -43,6 +47,7 @@ macro_rules! decode_log(
   );
 );
 
+#[cfg(any(feature="resp2", feature="resp3"))]
 macro_rules! decode_log_str(
   ($buf:expr, $name:ident, $($arg:tt)*) => (
     #[cfg(feature = "decode-logs")]
@@ -60,7 +65,7 @@ macro_rules! decode_log_str(
   )
 );
 
-#[cfg(feature = "convert")]
+#[cfg(all(feature = "convert", any(feature="resp2", feature="resp3")))]
 macro_rules! check_single_vec_reply(
   ($v:expr) => {
     if $v.is_single_element_vec() {

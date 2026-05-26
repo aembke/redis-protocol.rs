@@ -44,21 +44,37 @@ criterion = { version = "0.4", features = ["html_reports"] }
 
 [features]
 default = ["std", "resp2", "resp3"]
-resp2 = []
-resp3 = []
-index-map = ["indexmap"]
-bytes = ["dep:bytes", "bytes-utils"]
+resp2 = [
+    "nom/alloc",
+    "resp3" # For some types
+]
+resp3 = ["nom/alloc"]
+index-map = ["dep:indexmap"]
+bytes = ["dep:bytes", "dep:bytes-utils"]
 decode-logs = []
 alloc = ["nom/alloc"]
 std = ["cookie-factory/default", "nom/default"]
-codec = ["tokio-util", "bytes"]
+codec = ["dep:tokio-util", "bytes"]
 convert = []
+strict = []
 
 [lib]
 doc = true
 doctest = true
 name = "redis_protocol"
 test = true
+
+[package.metadata.cargo-all-features]
+# Note this requires https://github.com/frewsxcv/cargo-all-features/pull/50
+rules = [
+    "resp3 => (std|libm)",
+    "resp3 => ('index-map'|hashbrown|std)", # because otherwise types break
+    "convert => (hashbrown|std)", # convert doesn't support index-map
+    "std + hashbrown + 'index-map' <= 1",
+    "!(std & libm)",
+    "!('tokio-util'|'bytes-utils'|indexmap)"
+]
+always_include_features = ["strict"] # So warnings fail
 
 #[[bench]]
 #name = "resp2_decode"

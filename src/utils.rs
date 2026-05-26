@@ -1,4 +1,6 @@
-use crate::error::{RedisParseError, RedisProtocolError, RedisProtocolErrorKind};
+#[cfg(any(feature="resp2", feature="resp3"))]
+use crate::error::RedisParseError;
+use crate::error::{RedisProtocolError, RedisProtocolErrorKind};
 use core::str;
 use crc16::{State, XMODEM};
 
@@ -48,6 +50,7 @@ pub fn digits_in_i64(d: i64) -> usize {
   prefix + libm::floor(libm::log10(d.unsigned_abs() as f64)) as usize + 1
 }
 
+#[cfg(any(feature="resp2", feature="resp3"))]
 pub fn isize_to_usize<T>(val: isize) -> Result<usize, RedisParseError<T>> {
   if val >= 0 {
     Ok(val as usize)
@@ -64,6 +67,7 @@ pub fn zero_extend(buf: &mut BytesMut, amt: usize) {
 }
 
 /// Whether an error payload is a `MOVED` or `ASK` redirection.
+#[cfg(any(feature="resp2", feature="resp3"))]
 pub(crate) fn is_redirection(payload: &str) -> bool {
   if payload.starts_with("MOVED") || payload.starts_with("ASK") {
     payload.split(' ').count() == 3
@@ -139,6 +143,7 @@ pub fn str_to_f64(s: &str) -> Result<f64, RedisProtocolError> {
 }
 
 /// Convert bytes to a boolean.
+#[cfg(any(feature="resp2", feature="resp3"))]
 pub(crate) fn bytes_to_bool(b: &[u8]) -> Option<bool> {
   match b {
     b"true" | b"TRUE" | b"t" | b"T" | b"1" => Some(true),
