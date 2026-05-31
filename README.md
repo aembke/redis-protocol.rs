@@ -226,3 +226,11 @@ fn main() {
 }
 
 ```
+
+## Benches
+To run the benchmarks:
+
+```
+cargo install cargo-criterion
+cargo criterion
+```

@@ -1,4 +1,8 @@
-use criterion::{black_box, criterion_group, criterion_main, BatchSize, Bencher, Criterion};
+use std::hint::black_box;
+
+use criterion::{criterion_group, criterion_main, Criterion};
+#[cfg(feature = "bytes")]
+use criterion::{BatchSize, Bencher};
 use rand::{distributions::Alphanumeric, Rng};
 use redis_protocol::{
   resp2::{decode, types::NULL},
