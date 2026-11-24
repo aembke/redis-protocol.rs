@@ -43,6 +43,8 @@ pub const ARRAY_BYTE: u8 = b'*';
 
 /// The binary representation of NULL in RESP2.
 pub const NULL: &str = "$-1\r\n";
+/// The binary representation of a null array in RESP2.
+pub const NULL_ARRAY: &str = "*-1\r\n";
 
 /// An enum representing the type of RESP frame.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -53,6 +55,7 @@ pub enum FrameKind {
   BulkString,
   Array,
   Null,
+  NullArray,
 }
 
 impl FrameKind {
@@ -84,7 +87,7 @@ impl FrameKind {
       Error => ERROR_BYTE,
       Integer => INTEGER_BYTE,
       BulkString | Null => BULKSTRING_BYTE,
-      Array => ARRAY_BYTE,
+      Array | NullArray => ARRAY_BYTE,
     }
   }
 
@@ -99,6 +102,7 @@ impl FrameKind {
       Error => "e",
       Integer => "i",
       Null => "N",
+      NullArray => "NA",
     }
   }
 }
@@ -118,12 +122,15 @@ pub enum BorrowedFrame<'a> {
   Array(&'a [BorrowedFrame<'a>]),
   /// A null value.
   Null,
+  /// A null array value (`*-1\r\n`).
+  NullArray,
 }
 
 impl<'a> Clone for BorrowedFrame<'a> {
   fn clone(self: &BorrowedFrame<'a>) -> BorrowedFrame<'a> {
     match self {
       BorrowedFrame::Null => BorrowedFrame::Null,
+      BorrowedFrame::NullArray => BorrowedFrame::NullArray,
       BorrowedFrame::Array(a) => BorrowedFrame::Array(a),
       BorrowedFrame::BulkString(b) => BorrowedFrame::BulkString(b),
       BorrowedFrame::SimpleString(s) => BorrowedFrame::SimpleString(s),
@@ -143,6 +150,7 @@ impl Hash for BorrowedFrame<'_> {
       BorrowedFrame::Integer(i) => i.hash(state),
       BorrowedFrame::Array(f) => f.iter().for_each(|f| f.hash(state)),
       BorrowedFrame::Null => NULL.hash(state),
+      BorrowedFrame::NullArray => NULL_ARRAY.hash(state),
     }
   }
 }
@@ -157,6 +165,7 @@ impl BorrowedFrame<'_> {
       BorrowedFrame::BulkString(_) => FrameKind::BulkString,
       BorrowedFrame::Array(_) => FrameKind::Array,
       BorrowedFrame::Null => FrameKind::Null,
+      BorrowedFrame::NullArray => FrameKind::NullArray,
     }
   }
 
@@ -171,6 +180,7 @@ impl BorrowedFrame<'_> {
         m + f.encode_len(int_as_bulkstring)
       }),
       BorrowedFrame::Null => NULL.as_bytes().len(),
+      BorrowedFrame::NullArray => NULL_ARRAY.as_bytes().len(),
       BorrowedFrame::SimpleString(s) => simplestring_encode_len(s),
       BorrowedFrame::Error(s) => error_encode_len(s),
       BorrowedFrame::Integer(i) => integer_encode_len(*i, int_as_bulkstring),
@@ -194,6 +204,8 @@ pub enum RangeFrame {
   Array(Vec<RangeFrame>),
   /// A null value.
   Null,
+  /// A null array value (`*-1\r\n`).
+  NullArray,
 }
 
 /// Generic operations on a RESP2 frame.
@@ -277,6 +289,8 @@ pub enum OwnedFrame {
   Array(Vec<OwnedFrame>),
   /// A null value.
   Null,
+  /// A null array value (`*-1\r\n`).
+  NullArray,
 }
 
 impl OwnedFrame {
@@ -293,6 +307,7 @@ impl OwnedFrame {
         BytesFrame::Array(frames.into_iter().map(|frame| frame.into_bytes_frame()).collect())
       },
       OwnedFrame::Null => BytesFrame::Null,
+      OwnedFrame::NullArray => BytesFrame::NullArray,
     }
   }
 
@@ -336,6 +351,7 @@ impl OwnedFrame {
           attributes: None,
         },
         OwnedFrame::Null => Resp3OwnedFrame::Null,
+        OwnedFrame::NullArray => Resp3OwnedFrame::Null,
       }
     }
   }
@@ -351,6 +367,7 @@ impl Hash for OwnedFrame {
       OwnedFrame::Integer(i) => i.hash(state),
       OwnedFrame::Array(f) => f.iter().for_each(|f| f.hash(state)),
       OwnedFrame::Null => NULL.hash(state),
+      OwnedFrame::NullArray => NULL_ARRAY.hash(state),
     }
   }
 }
@@ -363,6 +380,7 @@ impl Resp2Frame for OwnedFrame {
         m + f.encode_len(int_as_bulkstring)
       }),
       OwnedFrame::Null => NULL.as_bytes().len(),
+      OwnedFrame::NullArray => NULL_ARRAY.as_bytes().len(),
       OwnedFrame::SimpleString(s) => simplestring_encode_len(s),
       OwnedFrame::Error(s) => error_encode_len(s),
       OwnedFrame::Integer(i) => integer_encode_len(*i, int_as_bulkstring),
@@ -381,6 +399,7 @@ impl Resp2Frame for OwnedFrame {
       OwnedFrame::BulkString(_) => FrameKind::BulkString,
       OwnedFrame::Array(_) => FrameKind::Array,
       OwnedFrame::Null => FrameKind::Null,
+      OwnedFrame::NullArray => FrameKind::NullArray,
     }
   }
 
@@ -399,6 +418,7 @@ impl Resp2Frame for OwnedFrame {
       OwnedFrame::Integer(0) => Some(false),
       OwnedFrame::Integer(1) => Some(true),
       OwnedFrame::Null => Some(false),
+      OwnedFrame::NullArray => Some(false),
       _ => None,
     }
   }
@@ -495,6 +515,8 @@ pub enum BytesFrame {
   Array(Vec<BytesFrame>),
   /// A null value.
   Null,
+  /// A null array value (`*-1\r\n`).
+  NullArray,
 }
 
 #[cfg(feature = "bytes")]
@@ -508,6 +530,7 @@ impl Hash for BytesFrame {
       BytesFrame::Integer(i) => i.hash(state),
       BytesFrame::Array(f) => f.iter().for_each(|f| f.hash(state)),
       BytesFrame::Null => NULL.hash(state),
+      BytesFrame::NullArray => NULL_ARRAY.hash(state),
     }
   }
 }
@@ -521,6 +544,7 @@ impl Resp2Frame for BytesFrame {
         m + f.encode_len(int_as_bulkstring)
       }),
       BytesFrame::Null => NULL.as_bytes().len(),
+      BytesFrame::NullArray => NULL_ARRAY.as_bytes().len(),
       BytesFrame::SimpleString(s) => simplestring_encode_len(s),
       BytesFrame::Error(s) => error_encode_len(s),
       BytesFrame::Integer(i) => integer_encode_len(*i, int_as_bulkstring),
@@ -539,6 +563,7 @@ impl Resp2Frame for BytesFrame {
       BytesFrame::BulkString(_) => FrameKind::BulkString,
       BytesFrame::Array(_) => FrameKind::Array,
       BytesFrame::Null => FrameKind::Null,
+      BytesFrame::NullArray => FrameKind::NullArray,
     }
   }
 
@@ -557,6 +582,7 @@ impl Resp2Frame for BytesFrame {
       BytesFrame::Integer(0) => Some(false),
       BytesFrame::Integer(1) => Some(true),
       BytesFrame::Null => Some(false),
+      BytesFrame::NullArray => Some(false),
       _ => None,
     }
   }
@@ -647,6 +673,7 @@ impl BytesFrame {
       BytesFrame::BulkString(b) => OwnedFrame::BulkString(b.to_vec()),
       BytesFrame::Array(frames) => OwnedFrame::Array(frames.iter().map(|f| f.to_owned_frame()).collect()),
       BytesFrame::Null => OwnedFrame::Null,
+      BytesFrame::NullArray => OwnedFrame::NullArray,
     }
   }
 
@@ -690,6 +717,7 @@ impl BytesFrame {
           attributes: None,
         },
         BytesFrame::Null => Resp3BytesFrame::Null,
+        BytesFrame::NullArray => Resp3BytesFrame::Null,
       }
     }
   }
@@ -705,6 +733,7 @@ impl<B: Into<Bytes>> TryFrom<(FrameKind, B)> for BytesFrame {
       FrameKind::Error => BytesFrame::Error(Str::from_inner(buf.into())?),
       FrameKind::BulkString => BytesFrame::BulkString(buf.into()),
       FrameKind::Null => BytesFrame::Null,
+      FrameKind::NullArray => BytesFrame::NullArray,
       _ => {
         return Err(RedisProtocolError::new(
           RedisProtocolErrorKind::Unknown,

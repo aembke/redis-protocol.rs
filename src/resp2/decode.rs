@@ -158,7 +158,7 @@ fn d_parse_array(input: (&[u8], usize), depth: usize) -> DResult<'_, RangeFrame>
   );
 
   if len == NULL_LEN {
-    d_parse_null((input, offset))
+    Ok(((input, offset), RangeFrame::NullArray))
   } else {
     let len = etry!(utils::isize_to_usize(len));
     let ((input, offset), frames) = d_parse_array_frames((input, offset), len, depth)?;
@@ -644,5 +644,64 @@ mod depth_tests {
       .unwrap()
       .join()
       .unwrap();
+  }
+}
+
+#[cfg(test)]
+mod null_array_tests {
+  use super::*;
+
+  #[test]
+  fn should_decode_null_array() {
+    // https://github.com/aembke/redis-protocol.rs/issues/44
+    let (frame, amt) = decode(b"*-1\r\n").unwrap().unwrap();
+    assert_eq!(frame, OwnedFrame::NullArray);
+    assert_eq!(amt, 5);
+    assert_eq!(frame.kind(), FrameKind::NullArray);
+  }
+
+  #[test]
+  fn should_decode_null_bulkstring_as_null() {
+    let (frame, _) = decode(b"$-1\r\n").unwrap().unwrap();
+    assert_eq!(frame, OwnedFrame::Null);
+  }
+
+  #[test]
+  fn should_decode_nested_null_array() {
+    let (frame, amt) = decode(b"*2\r\n*-1\r\n$-1\r\n").unwrap().unwrap();
+    assert_eq!(frame, OwnedFrame::Array(vec![OwnedFrame::NullArray, OwnedFrame::Null]));
+    assert_eq!(amt, 14);
+  }
+
+  #[test]
+  #[cfg(feature = "bytes")]
+  fn should_decode_bytes_null_array() {
+    let mut buf: BytesMut = "*-1\r\n".into();
+    let (frame, amt, _) = decode_bytes_mut(&mut buf).unwrap().unwrap();
+    assert_eq!(frame, BytesFrame::NullArray);
+    assert_eq!(amt, 5);
+    assert!(buf.is_empty());
+  }
+
+  #[test]
+  #[cfg(feature = "resp3")]
+  fn should_convert_null_array_to_resp3_null() {
+    assert_eq!(
+      OwnedFrame::NullArray.into_resp3(),
+      crate::resp3::types::OwnedFrame::Null
+    );
+  }
+
+  #[test]
+  #[cfg(feature = "convert")]
+  fn should_convert_null_array_to_none_or_empty() {
+    use crate::convert::FromResp2;
+    assert_eq!(
+      Option::<alloc::string::String>::from_frame(OwnedFrame::NullArray).unwrap(),
+      None
+    );
+    assert!(Vec::<alloc::string::String>::from_frame(OwnedFrame::NullArray)
+      .unwrap()
+      .is_empty());
   }
 }

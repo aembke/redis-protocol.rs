@@ -65,6 +65,10 @@ fn gen_null(x: (&mut [u8], usize)) -> Result<(&mut [u8], usize), GenError> {
   do_gen!(x, gen_slice!(NULL.as_bytes()))
 }
 
+fn gen_null_array(x: (&mut [u8], usize)) -> Result<(&mut [u8], usize), GenError> {
+  do_gen!(x, gen_slice!(NULL_ARRAY.as_bytes()))
+}
+
 // The array encoding logic requires using one of the public frame types, but they each potentially require some
 // overhead to convert between. Converting from owned to bytes requires moving and adding a small ref counting layer
 // whereas converting the other direction most likely requires copying the contents. We could introduce a layer in the
@@ -87,6 +91,7 @@ fn gen_owned_array<'a>(
       OwnedFrame::SimpleString(s) => gen_simplestring(x, s)?,
       OwnedFrame::BulkString(b) => gen_bulkstring(x, b)?,
       OwnedFrame::Null => gen_null(x)?,
+      OwnedFrame::NullArray => gen_null_array(x)?,
       OwnedFrame::Error(s) => gen_error(x, s)?,
       OwnedFrame::Array(frames) => gen_owned_array(x, frames, int_as_bulkstring)?,
       OwnedFrame::Integer(i) => gen_integer(x, *i, int_as_bulkstring)?,
@@ -113,6 +118,7 @@ fn gen_borrowed_array<'a>(
       BorrowedFrame::SimpleString(s) => gen_simplestring(x, s)?,
       BorrowedFrame::BulkString(b) => gen_bulkstring(x, b)?,
       BorrowedFrame::Null => gen_null(x)?,
+      BorrowedFrame::NullArray => gen_null_array(x)?,
       BorrowedFrame::Error(s) => gen_error(x, s)?,
       BorrowedFrame::Array(frames) => gen_borrowed_array(x, frames, int_as_bulkstring)?,
       BorrowedFrame::Integer(i) => gen_integer(x, *i, int_as_bulkstring)?,
@@ -140,6 +146,7 @@ fn gen_bytes_array<'a>(
       BytesFrame::SimpleString(ref s) => gen_simplestring(x, s)?,
       BytesFrame::BulkString(ref b) => gen_bulkstring(x, b)?,
       BytesFrame::Null => gen_null(x)?,
+      BytesFrame::NullArray => gen_null_array(x)?,
       BytesFrame::Error(ref s) => gen_error(x, s)?,
       BytesFrame::Array(ref frames) => gen_bytes_array(x, frames, int_as_bulkstring)?,
       BytesFrame::Integer(ref i) => gen_integer(x, *i, int_as_bulkstring)?,
@@ -159,6 +166,7 @@ fn gen_owned_frame(
   match frame {
     OwnedFrame::BulkString(b) => gen_bulkstring((buf, offset), b).map(|(_, l)| l),
     OwnedFrame::Null => gen_null((buf, offset)).map(|(_, l)| l),
+    OwnedFrame::NullArray => gen_null_array((buf, offset)).map(|(_, l)| l),
     OwnedFrame::Array(frames) => gen_owned_array((buf, offset), frames, int_as_bulkstring).map(|(_, l)| l),
     OwnedFrame::Error(s) => gen_error((buf, offset), s).map(|(_, l)| l),
     OwnedFrame::SimpleString(s) => gen_simplestring((buf, offset), s).map(|(_, l)| l),
@@ -175,6 +183,7 @@ fn gen_borrowed_frame(
   match frame {
     BorrowedFrame::BulkString(b) => gen_bulkstring((buf, offset), b).map(|(_, l)| l),
     BorrowedFrame::Null => gen_null((buf, offset)).map(|(_, l)| l),
+    BorrowedFrame::NullArray => gen_null_array((buf, offset)).map(|(_, l)| l),
     BorrowedFrame::Array(frames) => gen_borrowed_array((buf, offset), frames, int_as_bulkstring).map(|(_, l)| l),
     BorrowedFrame::Error(s) => gen_error((buf, offset), s).map(|(_, l)| l),
     BorrowedFrame::SimpleString(s) => gen_simplestring((buf, offset), s).map(|(_, l)| l),
@@ -192,6 +201,7 @@ fn gen_bytes_frame(
   match frame {
     BytesFrame::BulkString(b) => gen_bulkstring((buf, offset), b).map(|(_, l)| l),
     BytesFrame::Null => gen_null((buf, offset)).map(|(_, l)| l),
+    BytesFrame::NullArray => gen_null_array((buf, offset)).map(|(_, l)| l),
     BytesFrame::Array(frames) => gen_bytes_array((buf, offset), frames, int_as_bulkstring).map(|(_, l)| l),
     BytesFrame::Error(s) => gen_error((buf, offset), s).map(|(_, l)| l),
     BytesFrame::SimpleString(s) => gen_simplestring((buf, offset), s).map(|(_, l)| l),
@@ -694,5 +704,39 @@ mod bytes_tests {
     let len = extend_encode(&mut buf, &i2_input, true).unwrap();
     assert_eq!(buf, i2_expected.as_bytes(), "empty buf contents match");
     assert_eq!(len, i2_expected.as_bytes().len(), "empty expected len is correct");
+  }
+}
+
+#[cfg(test)]
+mod null_array_tests {
+  use super::*;
+  use alloc::vec;
+
+  #[test]
+  fn should_encode_null_array() {
+    let mut buf = vec![0; NULL_ARRAY.len()];
+    let len = encode(&mut buf, &OwnedFrame::NullArray, false).unwrap();
+    assert_eq!(&buf[.. len], b"*-1\r\n");
+    assert_eq!(OwnedFrame::NullArray.encode_len(false), NULL_ARRAY.len());
+
+    let mut buf = vec![0; NULL_ARRAY.len()];
+    let len = encode_borrowed(&mut buf, &BorrowedFrame::NullArray, false).unwrap();
+    assert_eq!(&buf[.. len], b"*-1\r\n");
+  }
+
+  #[test]
+  fn should_encode_null_array_inside_array() {
+    let frame = OwnedFrame::Array(vec![OwnedFrame::NullArray, OwnedFrame::Null]);
+    let mut buf = vec![0; frame.encode_len(false)];
+    let len = encode(&mut buf, &frame, false).unwrap();
+    assert_eq!(&buf[.. len], b"*2\r\n*-1\r\n$-1\r\n");
+  }
+
+  #[test]
+  #[cfg(feature = "bytes")]
+  fn should_encode_bytes_null_array() {
+    let mut buf = BytesMut::new();
+    extend_encode(&mut buf, &BytesFrame::NullArray, false).unwrap();
+    assert_eq!(&buf[..], b"*-1\r\n");
   }
 }

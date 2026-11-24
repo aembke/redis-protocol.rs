@@ -36,12 +36,14 @@ macro_rules! to_signed_number(
             .map_err(RedisProtocolError::from)
             .and_then(|s| s.parse::<$t>().map_err(RedisProtocolError::from)),
           $f::Null => Err(RedisProtocolError::new_parse("Cannot convert nil to number.")),
+          $f::NullArray => Err(RedisProtocolError::new_parse("Cannot convert nil to number.")),
           _ => Err(RedisProtocolError::new_parse("Cannot convert to number."))
         }
       }else{
         Err(RedisProtocolError::new_parse("Cannot convert array to number."))
       }
       $f::Null => Err(RedisProtocolError::new_parse("Cannot convert nil to number.")),
+      $f::NullArray => Err(RedisProtocolError::new_parse("Cannot convert nil to number.")),
     }
   }
 );
@@ -70,12 +72,14 @@ macro_rules! to_unsigned_number(
             .map_err(RedisProtocolError::from)
             .and_then(|s| s.parse::<$t>().map_err(RedisProtocolError::from)),
           $f::Null => Err(RedisProtocolError::new_parse("Cannot convert nil to number.")),
+          $f::NullArray => Err(RedisProtocolError::new_parse("Cannot convert nil to number.")),
           _ => Err(RedisProtocolError::new_parse("Cannot convert to number."))
         }
       }else{
         Err(RedisProtocolError::new_parse("Cannot convert array to number."))
       }
       $f::Null => Err(RedisProtocolError::new_parse("Cannot convert nil to number.")),
+      $f::NullArray => Err(RedisProtocolError::new_parse("Cannot convert nil to number.")),
     }
   }
 );
@@ -348,6 +352,7 @@ where
         }
       },
       OwnedFrame::Null => Ok(None),
+      OwnedFrame::NullArray => Ok(None),
       _ => T::from_frame(frame).map(Some),
     }
   }
@@ -370,6 +375,7 @@ where
         }
       },
       BytesFrame::Null => Ok(None),
+      BytesFrame::NullArray => Ok(None),
       _ => T::from_frame(frame).map(Some),
     }
   }
@@ -418,6 +424,7 @@ where
       },
       OwnedFrame::Integer(i) => Ok(vec![T::from_frame(OwnedFrame::Integer(i))?]),
       OwnedFrame::Null => Ok(Vec::new()),
+      OwnedFrame::NullArray => Ok(Vec::new()),
     }
   }
 }
@@ -467,6 +474,7 @@ where
       },
       BytesFrame::Integer(i) => Ok(vec![T::from_frame(BytesFrame::Integer(i))?]),
       BytesFrame::Null => Ok(Vec::new()),
+      BytesFrame::NullArray => Ok(Vec::new()),
     }
   }
 }

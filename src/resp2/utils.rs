@@ -43,6 +43,7 @@ pub fn build_owned_frame(buf: &[u8], frame: &RangeFrame) -> Result<OwnedFrame, R
     RangeFrame::BulkString((start, end)) => OwnedFrame::BulkString(buf[*start .. *end].to_owned()),
     RangeFrame::Integer(i) => OwnedFrame::Integer(*i),
     RangeFrame::Null => OwnedFrame::Null,
+    RangeFrame::NullArray => OwnedFrame::NullArray,
     RangeFrame::Array(frames) => {
       // FIXME is there a cleaner way to do this with results?
       let mut out = Vec::with_capacity(frames.len());
@@ -72,6 +73,7 @@ pub fn build_bytes_frame(buf: &Bytes, frame: &RangeFrame) -> Result<BytesFrame, 
     },
     RangeFrame::Integer(i) => BytesFrame::Integer(*i),
     RangeFrame::Null => BytesFrame::Null,
+    RangeFrame::NullArray => BytesFrame::NullArray,
     RangeFrame::Array(frames) => {
       // FIXME is there a cleaner way to do this with results?
       let mut out = Vec::with_capacity(frames.len());
