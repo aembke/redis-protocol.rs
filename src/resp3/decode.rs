@@ -72,17 +72,18 @@ fn to_verbatimstring_format<T>(s: &[u8]) -> Result<VerbatimStringFormat, RedisPa
   }
 }
 
-fn to_map<T>(data: Vec<RangeFrame>) -> Result<FrameMap<RangeFrame, RangeFrame>, RedisParseError<T>> {
+fn to_map<T>(data: Vec<RangeFrame>) -> Result<Vec<(RangeFrame, RangeFrame)>, RedisParseError<T>> {
   if data.len() % 2 != 0 {
     return Err(RedisParseError::new_custom("to_map", "Invalid hashmap frame length."));
   }
 
-  let mut out = resp3_utils::new_map(data.len() / 2);
-  // insert in wire order, which `index-map` preserves
+  // pairs stay in wire order. hashing the ranges wouldn't deduplicate anything, so that happens when building the
+  // final frame.
+  let mut out = Vec::with_capacity(data.len() / 2);
   let mut data = data.into_iter();
   while let (Some(key), Some(value)) = (data.next(), data.next()) {
     if key.kind().can_hash() {
-      out.insert(key, value);
+      out.push((key, value));
     } else {
       return Err(RedisParseError::new_custom("to_map", "Invalid map key."));
     }
@@ -91,17 +92,12 @@ fn to_map<T>(data: Vec<RangeFrame>) -> Result<FrameMap<RangeFrame, RangeFrame>, 
   Ok(out)
 }
 
-fn to_set<T>(data: Vec<RangeFrame>) -> Result<FrameSet<RangeFrame>, RedisParseError<T>> {
-  data
-    .into_iter()
-    .map(|value| {
-      if value.kind().can_hash() {
-        Ok(value)
-      } else {
-        Err(RedisParseError::new_custom("to_set", "Invalid hash key."))
-      }
-    })
-    .collect()
+fn to_set<T>(data: Vec<RangeFrame>) -> Result<Vec<RangeFrame>, RedisParseError<T>> {
+  if data.iter().all(|value| value.kind().can_hash()) {
+    Ok(data)
+  } else {
+    Err(RedisParseError::new_custom("to_set", "Invalid hash key."))
+  }
 }
 
 fn attach_attributes<T>(
@@ -283,11 +279,7 @@ fn d_parse_array_frames(input: (&[u8], usize), len: usize, depth: usize) -> DRes
   Ok((input, frames))
 }
 
-fn d_parse_kv_pairs(
-  input: (&[u8], usize),
-  len: usize,
-  depth: usize,
-) -> DResult<'_, FrameMap<RangeFrame, RangeFrame>> {
+fn d_parse_kv_pairs(input: (&[u8], usize), len: usize, depth: usize) -> DResult<'_, Vec<(RangeFrame, RangeFrame)>> {
   let (input, frames) = d_parse_array_frames(input, len.saturating_mul(2), depth)?;
   Ok((input, etry!(to_map::<&[u8]>(frames))))
 }
@@ -916,7 +908,7 @@ impl FrameScanner {
           Err(NomErr::Incomplete(_)) => return Scan::Incomplete,
           Err(_) => return self.finish(Scan::Invalid),
         };
-        if after_attribute && frame.add_attributes(resp3_utils::new_map(0)).is_err() {
+        if after_attribute && frame.add_attributes(Vec::new()).is_err() {
           return self.finish(Scan::Invalid);
         }
 
@@ -983,6 +975,44 @@ pub mod owned_tests {
       },
       _ => panic!("expected a map with attributes: {frame:?}"),
     }
+  }
+
+  #[test]
+  fn should_resolve_duplicate_keys_when_building_frames() {
+    let map = b"%3\r\n+a\r\n:1\r\n+b\r\n:2\r\n+a\r\n:3\r\n";
+    let set = b"~3\r\n+x\r\n+y\r\n+x\r\n";
+
+    // the range frames keep every pair and value as received
+    let (range, _) = complete::decode_range(map).unwrap().unwrap();
+    match range {
+      RangeFrame::Map { ref data, .. } => assert_eq!(data.len(), 3),
+      _ => panic!("expected a map: {range:?}"),
+    }
+    let (range, _) = complete::decode_range(set).unwrap().unwrap();
+    match range {
+      RangeFrame::Set { ref data, .. } => assert_eq!(data.len(), 3),
+      _ => panic!("expected a set: {range:?}"),
+    }
+
+    // the last value wins for a duplicate map key, and duplicate set values are removed
+    let (frame, _) = complete::decode(map).unwrap().unwrap();
+    let data = match frame {
+      OwnedFrame::Map { data, .. } => data,
+      _ => panic!("expected a map: {frame:?}"),
+    };
+    assert_eq!(data.len(), 2);
+    assert_eq!(
+      data.get(&OwnedFrame::SimpleString {
+        data:       b"a".to_vec(),
+        attributes: None,
+      }),
+      Some(&OwnedFrame::Number {
+        data:       3,
+        attributes: None,
+      })
+    );
+    let (frame, _) = complete::decode(set).unwrap().unwrap();
+    assert_eq!(frame.len(), 2);
   }
 
   fn decode_and_verify_some(bytes: &[u8], expected: &(Option<OwnedFrame>, usize)) {

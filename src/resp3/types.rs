@@ -129,8 +129,11 @@ pub type FrameSet<T> = IndexSet<T>;
 pub type BytesAttributes = FrameMap<BytesFrame, BytesFrame>;
 /// Additional information returned alongside an [OwnedFrame].
 pub type OwnedAttributes = FrameMap<OwnedFrame, OwnedFrame>;
-/// Additional information returned alongside an [RangeFrame].
-pub type RangeAttributes = FrameMap<RangeFrame, RangeFrame>;
+/// Additional information returned alongside a [RangeFrame], as key-value pairs in the order they were received.
+///
+/// Duplicate keys are kept here and resolved when building a [BytesFrame] or [OwnedFrame], where the last value
+/// wins.
+pub type RangeAttributes = Vec<(RangeFrame, RangeFrame)>;
 
 /// The RESP version used in the `HELLO` request.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -623,14 +626,19 @@ pub enum RangeFrame {
     data:       Vec<RangeFrame>,
     attributes: Option<RangeAttributes>,
   },
-  /// An unordered map of key-value pairs.
+  /// A map of key-value pairs, in the order they were received.
+  ///
+  /// Duplicate keys are kept here and resolved when building a [BytesFrame] or [OwnedFrame], where the last value
+  /// wins.
   Map {
-    data:       FrameMap<RangeFrame, RangeFrame>,
+    data:       Vec<(RangeFrame, RangeFrame)>,
     attributes: Option<RangeAttributes>,
   },
-  /// An unordered collection of other frames with a uniqueness constraint.
+  /// A collection of frames, in the order they were received.
+  ///
+  /// Duplicate values are kept here and removed when building a [BytesFrame] or [OwnedFrame].
   Set {
-    data:       FrameSet<RangeFrame>,
+    data:       Vec<RangeFrame>,
     attributes: Option<RangeAttributes>,
   },
   /// Out-of-band data.
