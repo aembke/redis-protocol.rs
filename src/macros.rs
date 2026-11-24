@@ -36,8 +36,8 @@ macro_rules! decode_log(
   ($($arg:tt)*) => (
     #[cfg(feature = "decode-logs")]
     {
-      if log_enabled!(log::Level::Trace) {
-        trace!($($arg)*)
+      if log::log_enabled!(log::Level::Trace) {
+        log::trace!($($arg)*)
       }
     }
   );
@@ -47,13 +47,13 @@ macro_rules! decode_log_str(
   ($buf:expr, $name:ident, $($arg:tt)*) => (
     #[cfg(feature = "decode-logs")]
     {
-      if log_enabled!(log::Level::Trace) {
-        if let Some(s) = core::str::from_utf8(&$buf).ok() {
+      if log::log_enabled!(log::Level::Trace) {
+        if let Ok(s) = core::str::from_utf8(&$buf) {
           let $name = s;
-          trace!($($arg)*)
+          log::trace!($($arg)*)
         }else{
           let $name = $buf;
-          trace!($($arg)*)
+          log::trace!($($arg)*)
         }
       }
     }

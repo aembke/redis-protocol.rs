@@ -28,7 +28,6 @@ crc16 = { version = "0.4" }
 indexmap = { version = "2.2", optional = true }
 log = "0.4"
 nom = { version = "8.0", default-features = false }
-libm = { version = "0.2", optional = true }
 hashbrown = { version = "0.15", optional = true }
 tokio-util = { version = "0.7", features = ["codec"], optional = true }
 
@@ -51,6 +50,8 @@ alloc = ["nom/alloc"]
 std = ["nom/default"]
 codec = ["tokio-util", "bytes"]
 convert = []
+# Deprecated: no longer used. Retained for backwards compatibility.
+libm = []
 
 [lib]
 doc = true

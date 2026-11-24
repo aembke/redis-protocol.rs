@@ -24,11 +24,11 @@ use bytes::{Bytes, BytesMut};
 #[cfg(feature = "bytes")]
 use bytes_utils::Str;
 
-#[cfg(feature = "hashbrown")]
+#[cfg(all(feature = "hashbrown", not(feature = "index-map")))]
 use hashbrown::{HashMap, HashSet};
 #[cfg(feature = "index-map")]
 use indexmap::{IndexMap, IndexSet};
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", not(feature = "hashbrown"), not(feature = "index-map")))]
 use std::collections::{HashMap, HashSet};
 
 /// Byte prefix before a simple string type.
@@ -98,20 +98,28 @@ pub const AUTH: &str = "AUTH";
 /// Byte representation of `SETNAME`.
 pub const SETNAME: &str = "SETNAME";
 
-/// A map struct for frames that uses either `indexmap::IndexMap`, `hashbrown::HashMap`, or
-/// `std::collections::HashMap` depending on the enabled feature flags.
+/// The map type used by frames.
+///
+/// This is `indexmap::IndexMap` if the `index-map` feature is enabled, otherwise `hashbrown::HashMap` if the
+/// `hashbrown` feature is enabled, otherwise `std::collections::HashMap`.
 #[cfg(not(feature = "index-map"))]
 pub type FrameMap<K, V> = HashMap<K, V>;
-/// A map struct for frames that uses either `indexmap::IndexSet`, `hashbrown::HashSet`, or
-/// `std::collections::HashSet` depending on the enabled feature flags.
+/// The set type used by frames.
+///
+/// This is `indexmap::IndexSet` if the `index-map` feature is enabled, otherwise `hashbrown::HashSet` if the
+/// `hashbrown` feature is enabled, otherwise `std::collections::HashSet`.
 #[cfg(not(feature = "index-map"))]
 pub type FrameSet<T> = HashSet<T>;
-/// A map struct for frames that uses either `indexmap::IndexMap`, `hashbrown::HashMap`, or
-/// `std::collections::HashMap` depending on the enabled feature flags.
+/// The map type used by frames.
+///
+/// This is `indexmap::IndexMap` if the `index-map` feature is enabled, otherwise `hashbrown::HashMap` if the
+/// `hashbrown` feature is enabled, otherwise `std::collections::HashMap`.
 #[cfg(feature = "index-map")]
 pub type FrameMap<K, V> = IndexMap<K, V>;
-/// A map struct for frames that uses either `indexmap::IndexSet`, `hashbrown::HashSet`, or
-/// `std::collections::HashSet` depending on the enabled feature flags.
+/// The set type used by frames.
+///
+/// This is `indexmap::IndexSet` if the `index-map` feature is enabled, otherwise `hashbrown::HashSet` if the
+/// `hashbrown` feature is enabled, otherwise `std::collections::HashSet`.
 #[cfg(feature = "index-map")]
 pub type FrameSet<T> = IndexSet<T>;
 

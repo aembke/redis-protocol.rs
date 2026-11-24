@@ -18,11 +18,11 @@ use bytes::{Bytes, BytesMut};
 #[cfg(feature = "bytes")]
 use bytes_utils::Str;
 
-#[cfg(feature = "hashbrown")]
+#[cfg(all(feature = "hashbrown", not(feature = "index-map")))]
 use hashbrown::{HashMap, HashSet};
 #[cfg(feature = "index-map")]
 use indexmap::{IndexMap, IndexSet};
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", not(feature = "hashbrown"), not(feature = "index-map")))]
 use std::collections::{HashMap, HashSet};
 
 pub const BOOLEAN_ENCODE_LEN: usize = 4;
@@ -39,6 +39,7 @@ pub fn new_set<K: Hash + Eq>(capacity: usize) -> HashSet<K> {
 }
 
 #[cfg(feature = "index-map")]
+#[allow(dead_code)]
 pub fn new_set<K: Hash + Eq>(capacity: usize) -> IndexSet<K> {
   IndexSet::with_capacity(capacity)
 }

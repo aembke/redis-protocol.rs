@@ -562,7 +562,7 @@ fn gen_owned_frame<'a>(
   frame: &OwnedFrame,
   int_as_blobstring: bool,
 ) -> Result<(&'a mut [u8], usize), GenError> {
-  trace!("Encode {:?}, buf len: {}", frame.kind(), buf.len());
+  log::trace!("Encode {:?}, buf len: {}", frame.kind(), buf.len());
   let x = (buf, offset);
 
   match frame {
@@ -599,7 +599,7 @@ fn gen_borrowed_frame<'a>(
   frame: &BorrowedFrame,
   int_as_blobstring: bool,
 ) -> Result<(&'a mut [u8], usize), GenError> {
-  trace!("Encode {:?}, buf len: {}", frame.kind(), buf.len());
+  log::trace!("Encode {:?}, buf len: {}", frame.kind(), buf.len());
   let x = (buf, offset);
 
   match frame {
@@ -637,7 +637,7 @@ fn gen_bytes_frame<'a>(
   frame: &BytesFrame,
   int_as_blobstring: bool,
 ) -> Result<(&'a mut [u8], usize), GenError> {
-  trace!("Encode {:?}, buf len: {}", frame.kind(), buf.len());
+  log::trace!("Encode {:?}, buf len: {}", frame.kind(), buf.len());
   let x = (buf, offset);
 
   match frame {

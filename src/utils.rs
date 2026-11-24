@@ -7,45 +7,14 @@ use crate::types::REDIS_CLUSTER_SLOTS;
 use bytes::BytesMut;
 
 /// Returns the number of bytes necessary to encode a string representation of `d`.
-#[cfg(feature = "std")]
 pub fn digits_in_usize(d: usize) -> usize {
-  if d == 0 {
-    return 1;
-  }
-
-  ((d as f64).log10()).floor() as usize + 1
+  d.checked_ilog10().map_or(1, |n| n as usize + 1)
 }
 
 /// Returns the number of bytes necessary to encode a string representation of `d`.
-#[cfg(feature = "libm")]
-pub fn digits_in_usize(d: usize) -> usize {
-  if d == 0 {
-    return 1;
-  }
-
-  libm::floor(libm::log10(d as f64)) as usize + 1
-}
-
-/// Returns the number of bytes necessary to encode a string representation of `d`.
-#[cfg(feature = "std")]
 pub fn digits_in_i64(d: i64) -> usize {
-  if d == 0 {
-    return 1;
-  }
   let prefix = if d.is_negative() { 1 } else { 0 };
-
-  prefix + ((d.unsigned_abs() as f64).log10()).floor() as usize + 1
-}
-
-/// Returns the number of bytes necessary to encode a string representation of `d`.
-#[cfg(feature = "libm")]
-pub fn digits_in_i64(d: i64) -> usize {
-  if d == 0 {
-    return 1;
-  }
-  let prefix = if d.is_negative() { 1 } else { 0 };
-
-  prefix + libm::floor(libm::log10(d.unsigned_abs() as f64)) as usize + 1
+  prefix + d.unsigned_abs().checked_ilog10().map_or(1, |n| n as usize + 1)
 }
 
 pub fn isize_to_usize<T>(val: isize) -> Result<usize, RedisParseError<T>> {
@@ -258,5 +227,19 @@ mod tests {
     let expected: u16 = 12739;
     let actual = redis_keyslot(&key);
     assert_eq!(actual, expected)
+  }
+
+  #[test]
+  fn should_count_digits_in_usize() {
+    for d in [0, 1, 9, 10, 99, 100, 12345, 999_999_999_999_999_999, usize::MAX] {
+      assert_eq!(digits_in_usize(d), d.to_string().len(), "{d}");
+    }
+  }
+
+  #[test]
+  fn should_count_digits_in_i64() {
+    for d in [0, 1, -1, 9, -9, 10, -10, 999_999_999_999_999_999, i64::MAX, i64::MIN] {
+      assert_eq!(digits_in_i64(d), d.to_string().len(), "{d}");
+    }
   }
 }

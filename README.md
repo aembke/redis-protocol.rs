@@ -56,6 +56,12 @@ fn main() {
 | `codec`       |         | Enable a RESP2 and RESP3 [Tokio codec](https://docs.rs/tokio-util/latest/tokio_util/codec/index.html) interface.                             |
 | `convert`     |         | Enable the `FromResp2` and `FromResp3` trait interfaces.                                                                                     |
 | `index-map`   |         | Use [IndexMap](https://crates.io/crates/indexmap) types instead of `HashMap`. This is useful for testing and may also be useful for callers. |
+| `hashbrown`   |         | Use [hashbrown](https://crates.io/crates/hashbrown) types instead of `std::collections` types. Takes precedence over `std`.                 |
+| `alloc`       |         | Enable `alloc` support in dependencies. Used with `no_std` builds.                                                                           |
+| `libm`        |         | Deprecated. This feature no longer has any effect.                                                                                           |
+
+The `resp3` feature requires one of `std`, `hashbrown`, or `index-map` to provide the map and set types used by RESP3
+frames.
 
 ## Untrusted Input
 
@@ -65,11 +71,11 @@ deep, returning an error rather than risking a stack overflow.
 
 ## no_std
 
-`no_std` builds are supported by disabling the `std` feature. However, a few optional dependencies must be activated as
-a substitute.
+`no_std` builds are supported by disabling the `std` feature. RESP3 frames require a map implementation, so the
+`hashbrown` feature should be enabled as a substitute for `std::collections`.
 
 ```TOML
-redis-protocol = { version = "X.X.X", default-features = false, features = ["libm", "hashbrown", "alloc"] }
+redis-protocol = { version = "X.X.X", default-features = false, features = ["resp2", "resp3", "hashbrown", "alloc"] }
 ```
 
 ## Decoding

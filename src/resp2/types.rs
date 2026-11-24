@@ -1,8 +1,7 @@
 use crate::{
   digits_in_usize,
   resp2::utils::{bulkstring_encode_len, error_encode_len, integer_encode_len, simplestring_encode_len},
-  resp3::types::OwnedFrame as Resp3OwnedFrame,
-  types::{_Range, PATTERN_PUBSUB_PREFIX, PUBSUB_PREFIX, PUBSUB_PUSH_PREFIX, SHARD_PUBSUB_PREFIX},
+  types::{_Range, PATTERN_PUBSUB_PREFIX, PUBSUB_PREFIX, SHARD_PUBSUB_PREFIX},
   utils,
 };
 use alloc::{
@@ -22,8 +21,10 @@ use crate::convert::FromResp2;
 use crate::error::RedisProtocolError;
 #[cfg(feature = "bytes")]
 use crate::error::RedisProtocolErrorKind;
-#[cfg(feature = "bytes")]
+#[cfg(all(feature = "bytes", feature = "resp3"))]
 use crate::resp3::types::BytesFrame as Resp3BytesFrame;
+#[cfg(feature = "resp3")]
+use crate::{resp3::types::OwnedFrame as Resp3OwnedFrame, types::PUBSUB_PUSH_PREFIX};
 #[cfg(feature = "bytes")]
 use bytes::Bytes;
 #[cfg(feature = "bytes")]
@@ -295,6 +296,8 @@ impl OwnedFrame {
     }
   }
 
+  #[cfg(feature = "resp3")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "resp3")))]
   /// Convert the frame to RESP3.
   ///
   /// For the most part RESP3 is a superset of RESP2, but there is one notable difference with publish-subscribe
@@ -647,6 +650,8 @@ impl BytesFrame {
     }
   }
 
+  #[cfg(feature = "resp3")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "resp3")))]
   /// Convert the frame to RESP3.
   ///
   /// For the most part RESP3 is a superset of RESP2, but there is one notable difference with publish-subscribe

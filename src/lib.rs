@@ -18,13 +18,21 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(docsrs, allow(unused_attributes))]
 #![cfg_attr(all(not(test), not(feature = "std")), no_std)]
+// most of the internal utilities are only used by the protocol implementations
+#![cfg_attr(
+  not(any(feature = "resp2", feature = "resp3")),
+  allow(dead_code, unused_macros, unused_imports)
+)]
 #![doc = include_str!("../README.md")]
 
 extern crate alloc;
 extern crate core;
 
-#[macro_use]
-extern crate log;
+#[cfg(all(
+  feature = "resp3",
+  not(any(feature = "std", feature = "hashbrown", feature = "index-map"))
+))]
+compile_error!("The `resp3` feature requires one of the `std`, `hashbrown`, or `index-map` features.");
 
 #[cfg(feature = "bytes")]
 #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
