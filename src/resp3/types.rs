@@ -517,7 +517,7 @@ impl Hash for BorrowedFrame<'_> {
       SimpleError { data, .. } => data.hash(state),
       Number { data, .. } => data.hash(state),
       Null => NULL.hash(state),
-      Double { data, .. } => data.to_string().hash(state),
+      Double { data, .. } => resp3_utils::hash_f64(state, *data),
       Boolean { data, .. } => data.hash(state),
       BlobError { data, .. } => data.hash(state),
       VerbatimString { data, format, .. } => {
@@ -754,7 +754,7 @@ impl Hash for RangeFrame {
       SimpleError { data, .. } => resp3_utils::hash_tuple(state, data),
       Number { data, .. } => data.hash(state),
       Null => NULL.hash(state),
-      Double { data, .. } => data.to_string().hash(state),
+      Double { data, .. } => resp3_utils::hash_f64(state, *data),
       Boolean { data, .. } => data.hash(state),
       BlobError { data, .. } => resp3_utils::hash_tuple(state, data),
       VerbatimString { data, format, .. } => {
@@ -1039,7 +1039,7 @@ impl Hash for OwnedFrame {
       SimpleError { data, .. } => data.hash(state),
       Number { data, .. } => data.hash(state),
       Null => NULL.hash(state),
-      Double { data, .. } => data.to_string().hash(state),
+      Double { data, .. } => resp3_utils::hash_f64(state, *data),
       Boolean { data, .. } => data.hash(state),
       BlobError { data, .. } => data.hash(state),
       VerbatimString { data, format, .. } => {
@@ -1642,7 +1642,7 @@ impl Hash for BytesFrame {
       SimpleError { data, .. } => data.hash(state),
       Number { data, .. } => data.hash(state),
       Null => NULL.hash(state),
-      Double { data, .. } => data.to_string().hash(state),
+      Double { data, .. } => resp3_utils::hash_f64(state, *data),
       Boolean { data, .. } => data.hash(state),
       BlobError { data, .. } => data.hash(state),
       VerbatimString { data, format, .. } => {

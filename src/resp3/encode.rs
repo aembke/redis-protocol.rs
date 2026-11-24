@@ -113,11 +113,12 @@ fn gen_double<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
 ) -> Result<(&'a mut [u8], usize), GenError> {
   encode_attributes!(x, attributes, int_as_blobstring);
 
-  let as_string = resp3_utils::f64_to_redis_string(data);
-  do_gen!(
-    x,
-    gen_be_u8!(FrameKind::Double.to_byte()) >> gen_slice!(as_string.as_bytes()) >> gen_slice!(CRLF.as_bytes())
-  )
+  resp3_utils::with_f64_str(data, |s| {
+    do_gen!(
+      x,
+      gen_be_u8!(FrameKind::Double.to_byte()) >> gen_slice!(s) >> gen_slice!(CRLF.as_bytes())
+    )
+  })
 }
 
 fn gen_boolean<'a, 'b, A: Into<BorrowedAttrs<'b>>>(

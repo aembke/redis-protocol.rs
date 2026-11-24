@@ -4,11 +4,11 @@ use crate::{
   utils::digits_in_usize,
 };
 use alloc::{
-  borrow::Cow,
   string::{String, ToString},
   vec::Vec,
 };
 use core::{
+  fmt,
   hash::{Hash, Hasher},
   str,
 };
@@ -92,19 +92,8 @@ pub fn number_encode_len(i: i64, int_as_blobstring: bool) -> usize {
 }
 
 pub fn double_encode_len(f: f64) -> usize {
-  if f.is_infinite() {
-    let inf_len = if f.is_sign_negative() {
-      NEG_INFINITY.as_bytes().len()
-    } else {
-      INFINITY.as_bytes().len()
-    };
-
-    // comma, inf|-inf, CRLF
-    1 + inf_len + 2
-  } else {
-    // TODO there's gotta be a better way to do this
-    1 + f.to_string().as_bytes().len() + 2
-  }
+  // comma, value, CRLF
+  1 + with_f64_str(f, |s| s.len()) + 2
 }
 
 pub fn auth_encode_len(username: Option<&str>, password: Option<&str>) -> usize {
@@ -592,19 +581,59 @@ pub fn owned_to_bytes_attrs(attributes: OwnedAttributes) -> BytesAttributes {
     .collect()
 }
 
-/// Return the string representation of a double, accounting for `inf` and `-inf`.
-pub fn f64_to_redis_string(data: f64) -> Cow<'static, str> {
+/// An upper bound on the length of an `f64` formatted with `Display`, which never uses exponent notation. The longest
+/// values are small negative numbers with 17 significant digits, such as `-2.2250738585072014e-308`, at 327 bytes.
+const MAX_F64_LEN: usize = 400;
+
+/// A fixed size string buffer used to format doubles without allocating.
+struct F64Buf {
+  buf: [u8; MAX_F64_LEN],
+  len: usize,
+}
+
+impl fmt::Write for F64Buf {
+  fn write_str(&mut self, s: &str) -> fmt::Result {
+    let end = self.len + s.len();
+    if end > self.buf.len() {
+      return Err(fmt::Error);
+    }
+
+    self.buf[self.len .. end].copy_from_slice(s.as_bytes());
+    self.len = end;
+    Ok(())
+  }
+}
+
+/// Call `func` with the string representation of a double, accounting for `nan`, `inf`, and `-inf`.
+pub fn with_f64_str<R>(data: f64, func: impl FnOnce(&[u8]) -> R) -> R {
   if data.is_nan() {
-    Cow::Borrowed(NAN)
+    func(NAN.as_bytes())
   } else if data.is_infinite() {
     if data.is_sign_negative() {
-      Cow::Borrowed(NEG_INFINITY)
+      func(NEG_INFINITY.as_bytes())
     } else {
-      Cow::Borrowed(INFINITY)
+      func(INFINITY.as_bytes())
     }
   } else {
-    Cow::Owned(data.to_string())
+    let mut out = F64Buf {
+      buf: [0; MAX_F64_LEN],
+      len: 0,
+    };
+
+    if fmt::write(&mut out, format_args!("{data}")).is_ok() {
+      func(&out.buf[.. out.len])
+    } else {
+      // not reachable given the bound above, but formatting into a `String` is always correct
+      func(data.to_string().as_bytes())
+    }
   }
+}
+
+/// Hash a double without formatting it, such that doubles that compare equal have the same hash.
+pub fn hash_f64<H: Hasher>(state: &mut H, data: f64) {
+  // `0.0 == -0.0`, so both hash as positive zero
+  let data = if data == 0.0 { 0.0 } else { data };
+  data.to_bits().hash(state);
 }
 
 fn build_owned_attributes(
@@ -938,6 +967,78 @@ pub fn build_bytes_streaming_frame(
     streamed.add_attributes(attributes)?;
   }
   Ok(streamed)
+}
+
+#[cfg(test)]
+mod f64_tests {
+  use super::*;
+  use alloc::vec::Vec;
+  use core::hash::BuildHasher;
+  use std::collections::hash_map::RandomState;
+
+  fn expected(data: f64) -> String {
+    if data.is_nan() {
+      NAN.to_string()
+    } else if data == f64::INFINITY {
+      INFINITY.to_string()
+    } else if data == f64::NEG_INFINITY {
+      NEG_INFINITY.to_string()
+    } else {
+      data.to_string()
+    }
+  }
+
+  fn check(data: f64) {
+    let formatted = with_f64_str(data, |s| String::from_utf8(s.to_vec()).unwrap());
+    assert_eq!(formatted, expected(data), "{data:?}");
+    assert!(formatted.len() <= MAX_F64_LEN, "{data:?}");
+    assert_eq!(double_encode_len(data), formatted.len() + 3, "{data:?}");
+  }
+
+  #[test]
+  fn should_format_doubles_like_display() {
+    let mut extremes = Vec::from([
+      0.0,
+      1.0,
+      0.1,
+      1.5e300,
+      f64::MAX,
+      f64::MIN_POSITIVE,
+      f64::EPSILON,
+      2.2250738585072014e-308,
+      2.225073858507201e-308,
+      5e-324,
+      1.2345678901234567e-300,
+      f64::NAN,
+      f64::INFINITY,
+    ]);
+    extremes.extend(extremes.clone().into_iter().map(|f| -f));
+    for data in extremes {
+      check(data);
+    }
+
+    let mut state = 0x9e37_79b9_7f4a_7c15_u64;
+    for _ in 0 .. 200_000 {
+      state ^= state << 13;
+      state ^= state >> 7;
+      state ^= state << 17;
+      check(f64::from_bits(state));
+    }
+  }
+
+  #[test]
+  fn should_hash_equal_doubles_equally() {
+    let hasher = RandomState::new();
+    let hash = |data: f64| {
+      let mut state = hasher.build_hasher();
+      hash_f64(&mut state, data);
+      state.finish()
+    };
+
+    assert_eq!(hash(0.0), hash(-0.0));
+    assert_eq!(hash(1.5), hash(1.5));
+    assert_ne!(hash(1.5), hash(-1.5));
+  }
 }
 
 #[cfg(test)]
