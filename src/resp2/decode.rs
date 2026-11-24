@@ -9,7 +9,7 @@ use crate::{
   utils,
 };
 use alloc::vec::Vec;
-use core::{mem::size_of, str};
+use core::mem::size_of;
 use nom::{
   bytes::streaming::take as nom_take,
   number::streaming::be_u8,
@@ -26,15 +26,11 @@ use bytes::{Bytes, BytesMut};
 pub(crate) const NULL_LEN: isize = -1;
 
 fn to_isize(s: &[u8]) -> Result<isize, RedisParseError<&[u8]>> {
-  str::from_utf8(s)?
-    .parse::<isize>()
-    .map_err(|_| RedisParseError::new_custom("to_isize", "Failed to parse as integer."))
+  utils::parse_isize(s).ok_or_else(|| RedisParseError::new_custom("to_isize", "Failed to parse as integer."))
 }
 
 fn to_i64(s: &[u8]) -> Result<i64, RedisParseError<&[u8]>> {
-  str::from_utf8(s)?
-    .parse::<i64>()
-    .map_err(|_| RedisParseError::new_custom("to_i64", "Failed to parse as integer."))
+  utils::parse_i64(s).ok_or_else(|| RedisParseError::new_custom("to_i64", "Failed to parse as integer."))
 }
 
 fn d_read_to_crlf(input: (&[u8], usize)) -> DResult<'_, usize> {
@@ -51,7 +47,7 @@ fn d_read_to_crlf_take(input: (&[u8], usize)) -> DResult<'_, &[u8]> {
 
 fn d_read_prefix_len(input: (&[u8], usize)) -> DResult<'_, isize> {
   let (input, data) = d_read_to_crlf_take(input)?;
-  decode_log!("Reading prefix len. Data: {:?}", str::from_utf8(data));
+  decode_log!("Reading prefix len. Data: {:?}", core::str::from_utf8(data));
   Ok((input, etry!(to_isize(data))))
 }
 

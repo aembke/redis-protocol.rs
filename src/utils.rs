@@ -50,6 +50,68 @@ pub(crate) fn line_is_buffered(buf: &[u8], start: usize, searched: &mut usize) -
   }
 }
 
+/// Split an optional sign from the digits of an integer, following the rules of `str::parse`.
+#[cfg(any(feature = "resp2", feature = "resp3"))]
+#[inline]
+fn split_sign(s: &[u8]) -> Option<(bool, &[u8])> {
+  match s {
+    [] | [b'+' | b'-'] => None,
+    [b'-', digits @ ..] => Some((true, digits)),
+    [b'+', digits @ ..] => Some((false, digits)),
+    digits => Some((false, digits)),
+  }
+}
+
+/// Parse a decimal `i64` from bytes, accepting exactly what `str::parse::<i64>` accepts.
+///
+/// This avoids validating the input as UTF-8 before parsing it, since any byte that isn't an ASCII digit is rejected.
+#[cfg(any(feature = "resp2", feature = "resp3"))]
+pub(crate) fn parse_i64(s: &[u8]) -> Option<i64> {
+  let (negative, digits) = split_sign(s)?;
+  let mut out: i64 = 0;
+  for &b in digits {
+    let digit = b.wrapping_sub(b'0');
+    if digit > 9 {
+      return None;
+    }
+    // accumulate negative values separately, since `i64::MIN` has no positive counterpart
+    out = out.checked_mul(10)?;
+    out = if negative {
+      out.checked_sub(digit as i64)?
+    } else {
+      out.checked_add(digit as i64)?
+    };
+  }
+
+  Some(out)
+}
+
+/// Parse a decimal `isize` from bytes, accepting exactly what `str::parse::<isize>` accepts.
+#[cfg(any(feature = "resp2", feature = "resp3"))]
+pub(crate) fn parse_isize(s: &[u8]) -> Option<isize> {
+  parse_i64(s).and_then(|v| isize::try_from(v).ok())
+}
+
+/// Parse a decimal `usize` from bytes, accepting exactly what `str::parse::<usize>` accepts.
+#[cfg(feature = "resp3")]
+pub(crate) fn parse_usize(s: &[u8]) -> Option<usize> {
+  let (negative, digits) = split_sign(s)?;
+  if negative {
+    return None;
+  }
+
+  let mut out: usize = 0;
+  for &b in digits {
+    let digit = b.wrapping_sub(b'0');
+    if digit > 9 {
+      return None;
+    }
+    out = out.checked_mul(10)?.checked_add(digit as usize)?;
+  }
+
+  Some(out)
+}
+
 pub fn isize_to_usize<T>(val: isize) -> Result<usize, RedisParseError<T>> {
   if val >= 0 {
     Ok(val as usize)
@@ -152,7 +214,7 @@ pub(crate) fn bytes_to_bool(b: &[u8]) -> Option<bool> {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use alloc::vec::Vec;
+  use alloc::{vec, vec::Vec};
 
   fn read_kitten_file() -> Vec<u8> {
     include_bytes!("../tests/kitten.jpeg").to_vec()
@@ -273,6 +335,87 @@ mod tests {
   fn should_count_digits_in_i64() {
     for d in [0, 1, -1, 9, -9, 10, -10, 999_999_999_999_999_999, i64::MAX, i64::MIN] {
       assert_eq!(digits_in_i64(d), d.to_string().len(), "{d}");
+    }
+  }
+
+  /// Inputs around the edges of the integer grammar: signs, empty digits, overflow, and non-digit bytes.
+  #[cfg(any(feature = "resp2", feature = "resp3"))]
+  fn integer_cases() -> Vec<Vec<u8>> {
+    let mut cases: Vec<Vec<u8>> = [
+      "",
+      "+",
+      "-",
+      "0",
+      "-0",
+      "+0",
+      "00",
+      "007",
+      "-007",
+      "1",
+      "-1",
+      "+1",
+      "++1",
+      "--1",
+      "+-1",
+      "-+1",
+      "1-",
+      "1+",
+      " 1",
+      "1 ",
+      "1.0",
+      "1e3",
+      "0x1",
+      "?",
+      "-?",
+      "9223372036854775807",
+      "9223372036854775808",
+      "-9223372036854775808",
+      "-9223372036854775809",
+      "18446744073709551615",
+      "18446744073709551616",
+      "+18446744073709551615",
+      "-18446744073709551615",
+      "99999999999999999999999",
+      "0000000000000000000000001",
+    ]
+    .iter()
+    .map(|s| s.as_bytes().to_vec())
+    .collect();
+    cases.push(vec![b'1', 0xff]);
+    cases.push(vec![0xc3, 0xa9]);
+    cases.push(vec![b'1', b'/']);
+    cases.push(vec![b'1', b':']);
+
+    // random strings drawn from the bytes that matter most
+    let alphabet = b"0123456789+- \xff9";
+    let mut state = 0x2545_f491_4f6c_dd1d_u64;
+    for _ in 0 .. 100_000 {
+      state ^= state << 13;
+      state ^= state >> 7;
+      state ^= state << 17;
+      let len = (state % 24) as usize;
+      let case = (0 .. len)
+        .map(|i| alphabet[((state >> (i % 8 * 8)) as usize + i) % alphabet.len()])
+        .collect();
+      cases.push(case);
+    }
+
+    cases
+  }
+
+  #[test]
+  #[cfg(any(feature = "resp2", feature = "resp3"))]
+  fn should_parse_integers_like_str_parse() {
+    for case in integer_cases() {
+      let expected_i64 = str::from_utf8(&case).ok().and_then(|s| s.parse::<i64>().ok());
+      let expected_isize = str::from_utf8(&case).ok().and_then(|s| s.parse::<isize>().ok());
+      assert_eq!(parse_i64(&case), expected_i64, "{case:?}");
+      assert_eq!(parse_isize(&case), expected_isize, "{case:?}");
+      #[cfg(feature = "resp3")]
+      {
+        let expected_usize = str::from_utf8(&case).ok().and_then(|s| s.parse::<usize>().ok());
+        assert_eq!(parse_usize(&case), expected_usize, "{case:?}");
+      }
     }
   }
 

@@ -39,14 +39,19 @@ where
 }
 
 fn to_isize<T>(s: &[u8]) -> Result<isize, RedisParseError<T>> {
-  let s = str::from_utf8(s)?;
-
-  if s == "?" {
+  if s == b"?" {
     Ok(-1)
   } else {
-    s.parse::<isize>()
-      .map_err(|e| RedisParseError::new_custom("to_isize", format!("{e:?}")))
+    utils::parse_isize(s).ok_or_else(|| RedisParseError::new_custom("to_isize", "Invalid integer."))
   }
+}
+
+fn to_usize<T>(s: &[u8]) -> Result<usize, RedisParseError<T>> {
+  utils::parse_usize(s).ok_or_else(|| RedisParseError::new_custom("to_usize", "Invalid length."))
+}
+
+fn to_i64<T>(s: &[u8]) -> Result<i64, RedisParseError<T>> {
+  utils::parse_i64(s).ok_or_else(|| RedisParseError::new_custom("to_i64", "Invalid integer."))
 }
 fn to_bool<T>(s: &[u8]) -> Result<bool, RedisParseError<T>> {
   match str::from_utf8(s)? {
@@ -125,7 +130,7 @@ fn d_read_to_crlf_take(input: (&[u8], usize)) -> DResult<'_, &[u8]> {
 fn d_read_prefix_len(input: (&[u8], usize)) -> DResult<'_, usize> {
   let ((input, offset), data) = d_read_to_crlf_take(input)?;
   decode_log!("Reading prefix len. Data: {:?}", str::from_utf8(data));
-  Ok(((input, offset), etry!(parse_as::<usize, _>(data))))
+  Ok(((input, offset), etry!(to_usize(data))))
 }
 
 fn d_read_prefix_len_signed(input: (&[u8], usize)) -> DResult<'_, isize> {
@@ -180,7 +185,7 @@ fn d_parse_simpleerror(input: (&[u8], usize)) -> DResult<'_, RangeFrame> {
 
 fn d_parse_number(input: (&[u8], usize)) -> DResult<'_, RangeFrame> {
   let ((input, next_offset), data) = d_read_to_crlf_take(input)?;
-  let parsed = etry!(parse_as::<i64, _>(data));
+  let parsed = etry!(to_i64(data));
   Ok(((input, next_offset), RangeFrame::Number {
     data:       parsed,
     attributes: None,
