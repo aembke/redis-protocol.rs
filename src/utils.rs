@@ -17,6 +17,25 @@ pub fn digits_in_i64(d: i64) -> usize {
   prefix + d.unsigned_abs().checked_ilog10().map_or(1, |n| n as usize + 1)
 }
 
+/// Split `buf` around the first CRLF, returning the bytes before the CRLF and the bytes after it.
+///
+/// Returns `Incomplete` if the buffer does not contain a CRLF.
+#[cfg(any(feature = "resp2", feature = "resp3"))]
+#[inline]
+pub(crate) fn find_crlf(buf: &[u8]) -> Result<(&[u8], &[u8]), nom::Err<RedisParseError<&[u8]>>> {
+  let mut offset = 0;
+  while let Some(idx) = memchr::memchr(b'\r', &buf[offset ..]) {
+    let pos = offset + idx;
+    match buf.get(pos + 1) {
+      Some(b'\n') => return Ok((&buf[.. pos], &buf[pos + 2 ..])),
+      Some(_) => offset = pos + 1,
+      None => break,
+    }
+  }
+
+  Err(nom::Err::Incomplete(nom::Needed::Unknown))
+}
+
 pub fn isize_to_usize<T>(val: isize) -> Result<usize, RedisParseError<T>> {
   if val >= 0 {
     Ok(val as usize)
@@ -240,6 +259,23 @@ mod tests {
   fn should_count_digits_in_i64() {
     for d in [0, 1, -1, 9, -9, 10, -10, 999_999_999_999_999_999, i64::MAX, i64::MIN] {
       assert_eq!(digits_in_i64(d), d.to_string().len(), "{d}");
+    }
+  }
+
+  #[test]
+  #[cfg(any(feature = "resp2", feature = "resp3"))]
+  fn should_find_crlf() {
+    assert_eq!(find_crlf(b"foo\r\nbar").unwrap(), (&b"foo"[..], &b"bar"[..]));
+    assert_eq!(find_crlf(b"\r\n").unwrap(), (&b""[..], &b""[..]));
+    assert_eq!(find_crlf(b"a\rb\r\n").unwrap(), (&b"a\rb"[..], &b""[..]));
+    assert_eq!(find_crlf(b"a\r\r\nb").unwrap(), (&b"a\r"[..], &b"b"[..]));
+  }
+
+  #[test]
+  #[cfg(any(feature = "resp2", feature = "resp3"))]
+  fn should_return_incomplete_without_crlf() {
+    for buf in [&b""[..], b"foo", b"foo\r", b"foo\nbar", b"\r"] {
+      assert!(matches!(find_crlf(buf), Err(nom::Err::Incomplete(_))), "{buf:?}");
     }
   }
 }

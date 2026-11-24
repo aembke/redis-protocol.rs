@@ -1,13 +1,13 @@
 use crate::{
   error::*,
   resp3::{types::*, utils as resp3_utils},
-  types::{DResult, CRLF, MAX_DECODE_DEPTH, MAX_INITIAL_CAPACITY_BYTES},
+  types::{DResult, MAX_DECODE_DEPTH, MAX_INITIAL_CAPACITY_BYTES},
   utils,
 };
 use alloc::{format, vec::Vec};
 use core::{fmt::Debug, mem::size_of, str, str::FromStr};
 use nom::{
-  bytes::streaming::{take as nom_take, take_until as nom_take_until},
+  bytes::streaming::take as nom_take,
   combinator::map as nom_map,
   number::streaming::be_u8 as nom_be_u8,
   sequence::terminated as nom_terminated,
@@ -113,13 +113,13 @@ fn attach_attributes<T>(
 
 fn d_read_to_crlf(input: (&[u8], usize)) -> DResult<'_, usize> {
   decode_log_str!(input.0, _input, "Parsing to CRLF. Remaining: {:?}", input);
-  let (input_bytes, data) = nom_terminated(nom_take_until(CRLF.as_bytes()), nom_take(2_usize)).parse(input.0)?;
+  let (data, input_bytes) = utils::find_crlf(input.0)?;
   Ok(((input_bytes, input.1 + data.len() + 2), data.len()))
 }
 
 fn d_read_to_crlf_take(input: (&[u8], usize)) -> DResult<'_, &[u8]> {
   decode_log_str!(input.0, _input, "Parsing to CRLF. Remaining: {:?}", _input);
-  let (input_bytes, data) = nom_terminated(nom_take_until(CRLF.as_bytes()), nom_take(2_usize)).parse(input.0)?;
+  let (data, input_bytes) = utils::find_crlf(input.0)?;
   Ok(((input_bytes, input.1 + data.len() + 2), data))
 }
 

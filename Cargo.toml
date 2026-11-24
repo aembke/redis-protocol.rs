@@ -25,6 +25,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 bytes = { version = "1.1", default-features = false, optional = true }
 bytes-utils = { version = "0.1", default-features = false, optional = true }
 crc16 = { version = "0.4" }
+memchr = { version = "2", default-features = false }
 indexmap = { version = "2.2", optional = true }
 log = "0.4"
 nom = { version = "8.0", default-features = false }

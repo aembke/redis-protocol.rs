@@ -11,7 +11,7 @@ use crate::{
 use alloc::vec::Vec;
 use core::{mem::size_of, str};
 use nom::{
-  bytes::streaming::{take as nom_take, take_until as nom_take_until},
+  bytes::streaming::take as nom_take,
   number::streaming::be_u8,
   sequence::terminated as nom_terminated,
   Err as NomErr,
@@ -39,13 +39,13 @@ fn to_i64(s: &[u8]) -> Result<i64, RedisParseError<&[u8]>> {
 
 fn d_read_to_crlf(input: (&[u8], usize)) -> DResult<'_, usize> {
   decode_log_str!(input.0, _input, "Parsing to CRLF. Remaining: {:?}", _input);
-  let (input_bytes, data) = nom_terminated(nom_take_until(CRLF.as_bytes()), nom_take(2_usize)).parse(input.0)?;
+  let (data, input_bytes) = utils::find_crlf(input.0)?;
   Ok(((input_bytes, input.1 + data.len() + 2), data.len()))
 }
 
 fn d_read_to_crlf_take(input: (&[u8], usize)) -> DResult<'_, &[u8]> {
   decode_log_str!(input.0, _input, "Parsing to CRLF. Remaining: {:?}", _input);
-  let (input_bytes, data) = nom_terminated(nom_take_until(CRLF.as_bytes()), nom_take(2_usize)).parse(input.0)?;
+  let (data, input_bytes) = utils::find_crlf(input.0)?;
   Ok(((input_bytes, input.1 + data.len() + 2), data))
 }
 
