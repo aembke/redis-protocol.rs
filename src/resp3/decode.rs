@@ -67,16 +67,15 @@ fn to_verbatimstring_format<T>(s: &[u8]) -> Result<VerbatimStringFormat, RedisPa
   }
 }
 
-fn to_map<T>(mut data: Vec<RangeFrame>) -> Result<FrameMap<RangeFrame, RangeFrame>, RedisParseError<T>> {
+fn to_map<T>(data: Vec<RangeFrame>) -> Result<FrameMap<RangeFrame, RangeFrame>, RedisParseError<T>> {
   if data.len() % 2 != 0 {
     return Err(RedisParseError::new_custom("to_map", "Invalid hashmap frame length."));
   }
 
   let mut out = resp3_utils::new_map(data.len() / 2);
-  while data.len() >= 2 {
-    let value = data.pop().unwrap();
-    let key = data.pop().unwrap();
-
+  // insert in wire order, which `index-map` preserves
+  let mut data = data.into_iter();
+  while let (Some(key), Some(value)) = (data.next(), data.next()) {
     if key.kind().can_hash() {
       out.insert(key, value);
     } else {
@@ -959,6 +958,27 @@ pub mod owned_tests {
   use std::str;
 
   pub const PADDING: &str = "FOOBARBAZ";
+
+  #[test]
+  #[cfg(feature = "index-map")]
+  fn should_keep_map_and_attribute_order() {
+    let keys = |map: &FrameMap<OwnedFrame, OwnedFrame>| -> Vec<String> {
+      map.keys().map(|k| k.as_str().unwrap().to_owned()).collect()
+    };
+
+    let buf = b"|3\r\n+x\r\n:1\r\n+y\r\n:2\r\n+z\r\n:3\r\n%3\r\n+a\r\n:1\r\n+b\r\n:2\r\n+c\r\n:3\r\n";
+    let (frame, _) = complete::decode(buf).unwrap().unwrap();
+    match frame {
+      OwnedFrame::Map {
+        data,
+        attributes: Some(attributes),
+      } => {
+        assert_eq!(keys(&data), ["a", "b", "c"]);
+        assert_eq!(keys(&attributes), ["x", "y", "z"]);
+      },
+      _ => panic!("expected a map with attributes: {frame:?}"),
+    }
+  }
 
   fn decode_and_verify_some(bytes: &[u8], expected: &(Option<OwnedFrame>, usize)) {
     let (frame, len) = match complete::decode(bytes) {
