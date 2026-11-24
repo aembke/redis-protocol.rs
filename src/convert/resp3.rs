@@ -645,9 +645,9 @@ where
     let value: Vec<T> = value.convert()?;
     let len = value.len();
 
-    value.try_into().map_err(|_| {
-      RedisProtocolError::new_parse(format!("Failed to convert to array. Expected {}, found {}.", N, len))
-    })
+    value
+      .try_into()
+      .map_err(|_| RedisProtocolError::new_parse(format!("Failed to convert to array. Expected {N}, found {len}.")))
   }
 }
 
@@ -663,9 +663,9 @@ where
     let value: Vec<T> = value.convert()?;
     let len = value.len();
 
-    value.try_into().map_err(|_| {
-      RedisProtocolError::new_parse(format!("Failed to convert to array. Expected {}, found {}.", N, len))
-    })
+    value
+      .try_into()
+      .map_err(|_| RedisProtocolError::new_parse(format!("Failed to convert to array. Expected {N}, found {len}.")))
   }
 }
 

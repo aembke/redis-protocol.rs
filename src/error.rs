@@ -146,7 +146,7 @@ impl From<NomError<nom::error::Error<&[u8]>>> for RedisProtocolError {
       let desc = match e {
         NomError::Failure(inner) => format!("Failure: {:?}", inner.code),
         NomError::Error(inner) => format!("Error: {:?}", inner.code),
-        _ => format!("{:?}", e),
+        _ => format!("{e:?}"),
       };
 
       RedisProtocolError {
@@ -167,7 +167,7 @@ impl From<NomError<&[u8]>> for RedisProtocolError {
     } else {
       RedisProtocolError {
         kind:    RedisProtocolErrorKind::DecodeError,
-        details: Cow::Owned(format!("{:?}", e)),
+        details: Cow::Owned(format!("{e:?}")),
       }
     }
   }
@@ -185,13 +185,13 @@ where
   I: Debug,
 {
   fn from(e: RedisParseError<I>) -> Self {
-    RedisProtocolError::new(RedisProtocolErrorKind::DecodeError, format!("{:?}", e))
+    RedisProtocolError::new(RedisProtocolErrorKind::DecodeError, format!("{e:?}"))
   }
 }
 
 impl From<FromUtf8Error> for RedisProtocolError {
   fn from(e: FromUtf8Error) -> Self {
-    RedisProtocolError::new(RedisProtocolErrorKind::Unknown, format!("{:?}", e))
+    RedisProtocolError::new(RedisProtocolErrorKind::Unknown, format!("{e:?}"))
   }
 }
 
@@ -204,7 +204,7 @@ impl<B> From<BytesUtf8Error<B>> for RedisProtocolError {
 
 impl From<Utf8Error> for RedisProtocolError {
   fn from(e: Utf8Error) -> Self {
-    RedisProtocolError::new(RedisProtocolErrorKind::DecodeError, format!("{}", e))
+    RedisProtocolError::new(RedisProtocolErrorKind::DecodeError, format!("{e}"))
   }
 }
 
@@ -224,9 +224,9 @@ where
 {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
-      RedisParseError::Custom { context, message } => write!(f, "{}: {}", context, message),
-      RedisParseError::Nom(input, kind) => write!(f, "{:?} at {:?}", kind, input),
-      RedisParseError::Incomplete(needed) => write!(f, "Incomplete({:?})", needed),
+      RedisParseError::Custom { context, message } => write!(f, "{context}: {message}"),
+      RedisParseError::Nom(input, kind) => write!(f, "{kind:?} at {input:?}"),
+      RedisParseError::Incomplete(needed) => write!(f, "Incomplete({needed:?})"),
     }
   }
 }
@@ -297,7 +297,7 @@ impl<B, I> From<BytesUtf8Error<B>> for RedisParseError<I> {
 
 impl<I> From<Utf8Error> for RedisParseError<I> {
   fn from(e: Utf8Error) -> Self {
-    RedisParseError::new_custom("parse_utf8", format!("{}", e))
+    RedisParseError::new_custom("parse_utf8", format!("{e}"))
   }
 }
 
@@ -318,13 +318,13 @@ impl std::error::Error for RedisProtocolError {
 #[cfg(feature = "convert")]
 impl From<core::num::ParseIntError> for RedisProtocolError {
   fn from(value: core::num::ParseIntError) -> Self {
-    RedisProtocolError::new_parse(format!("{:?}", value))
+    RedisProtocolError::new_parse(format!("{value:?}"))
   }
 }
 
 #[cfg(feature = "convert")]
 impl From<core::num::ParseFloatError> for RedisProtocolError {
   fn from(value: core::num::ParseFloatError) -> Self {
-    RedisProtocolError::new_parse(format!("{:?}", value))
+    RedisProtocolError::new_parse(format!("{value:?}"))
   }
 }

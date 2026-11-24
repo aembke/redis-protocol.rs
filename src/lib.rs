@@ -10,6 +10,10 @@
 #![allow(clippy::type_complexity)]
 #![allow(clippy::new_without_default)]
 #![allow(clippy::needless_as_bytes)]
+// these suggest APIs that are newer than the minimum supported Rust version
+#![allow(unknown_lints)]
+#![allow(clippy::manual_is_multiple_of)]
+#![allow(clippy::chunks_exact_to_as_chunks)]
 #![cfg_attr(docsrs, deny(rustdoc::broken_intra_doc_links))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(docsrs, allow(unused_attributes))]

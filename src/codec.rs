@@ -79,9 +79,7 @@ mod resp3 {
     type Error = RedisProtocolError;
 
     fn encode(&mut self, item: Resp3Frame, dst: &mut BytesMut) -> Result<(), Self::Error> {
-      resp3_encode(dst, &item, self.int_as_blobstring)
-        .map(|_| ())
-        .map_err(RedisProtocolError::from)
+      resp3_encode(dst, &item, self.int_as_blobstring).map(|_| ())
     }
   }
 
@@ -89,9 +87,7 @@ mod resp3 {
     type Error = RedisProtocolError;
 
     fn encode(&mut self, item: BorrowedFrame, dst: &mut BytesMut) -> Result<(), Self::Error> {
-      resp3_encode_borrowed(dst, &item, self.int_as_blobstring)
-        .map(|_| ())
-        .map_err(RedisProtocolError::from)
+      resp3_encode_borrowed(dst, &item, self.int_as_blobstring).map(|_| ())
     }
   }
 
@@ -209,9 +205,7 @@ mod resp2 {
     type Error = RedisProtocolError;
 
     fn encode(&mut self, item: Resp2Frame, dst: &mut BytesMut) -> Result<(), Self::Error> {
-      resp2_encode(dst, &item, self.int_as_bulkstring)
-        .map(|_| ())
-        .map_err(RedisProtocolError::from)
+      resp2_encode(dst, &item, self.int_as_bulkstring).map(|_| ())
     }
   }
 
@@ -219,9 +213,7 @@ mod resp2 {
     type Error = RedisProtocolError;
 
     fn encode(&mut self, item: BorrowedFrame, dst: &mut BytesMut) -> Result<(), Self::Error> {
-      resp2_encode_borrowed(dst, &item, self.int_as_bulkstring)
-        .map(|_| ())
-        .map_err(RedisProtocolError::from)
+      resp2_encode_borrowed(dst, &item, self.int_as_bulkstring).map(|_| ())
     }
   }
 

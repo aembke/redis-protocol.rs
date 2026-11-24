@@ -1217,9 +1217,7 @@ mod owned_tests {
 
     assert!(
       exptected_permutations.contains(&data.to_vec()),
-      "No middle permutations matched: data {:?} needs to match with one of the following {:#?}",
-      data,
-      exptected_permutations
+      "No middle permutations matched: data {data:?} needs to match with one of the following {exptected_permutations:#?}"
     );
   }
 
@@ -1926,9 +1924,7 @@ mod bytes_tests {
 
     assert!(
       exptected_permutations.contains(&data),
-      "No middle permutations matched: data {:?} needs to match with one of the following {:#?}",
-      data,
-      exptected_permutations
+      "No middle permutations matched: data {data:?} needs to match with one of the following {exptected_permutations:#?}"
     );
   }
 

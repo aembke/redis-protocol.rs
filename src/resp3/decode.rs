@@ -26,7 +26,7 @@ fn map_complete_frame(frame: RangeFrame) -> DecodedRangeFrame {
 fn expect_complete_index_frame<T>(frame: DecodedRangeFrame) -> Result<RangeFrame, RedisParseError<T>> {
   frame
     .into_complete_frame()
-    .map_err(|e| RedisParseError::new_custom("expect_complete_frame", format!("{:?}", e)))
+    .map_err(|e| RedisParseError::new_custom("expect_complete_frame", format!("{e:?}")))
 }
 
 fn parse_as<V, T>(s: &[u8]) -> Result<V, RedisParseError<T>>
@@ -36,7 +36,7 @@ where
 {
   str::from_utf8(s)?
     .parse::<V>()
-    .map_err(|e| RedisParseError::new_custom("parse_as", format!("{:?}", e)))
+    .map_err(|e| RedisParseError::new_custom("parse_as", format!("{e:?}")))
 }
 
 fn to_isize<T>(s: &[u8]) -> Result<isize, RedisParseError<T>> {
@@ -46,7 +46,7 @@ fn to_isize<T>(s: &[u8]) -> Result<isize, RedisParseError<T>> {
     Ok(-1)
   } else {
     s.parse::<isize>()
-      .map_err(|e| RedisParseError::new_custom("to_isize", format!("{:?}", e)))
+      .map_err(|e| RedisParseError::new_custom("to_isize", format!("{e:?}")))
   }
 }
 fn to_bool<T>(s: &[u8]) -> Result<bool, RedisParseError<T>> {
@@ -106,37 +106,37 @@ fn attach_attributes<T>(
   mut frame: DecodedRangeFrame,
 ) -> Result<DecodedRangeFrame, RedisParseError<T>> {
   if let Err(e) = frame.add_attributes(attributes) {
-    Err(RedisParseError::new_custom("attach_attributes", format!("{:?}", e)))
+    Err(RedisParseError::new_custom("attach_attributes", format!("{e:?}")))
   } else {
     Ok(frame)
   }
 }
 
-fn d_read_to_crlf(input: (&[u8], usize)) -> DResult<usize> {
+fn d_read_to_crlf(input: (&[u8], usize)) -> DResult<'_, usize> {
   decode_log_str!(input.0, _input, "Parsing to CRLF. Remaining: {:?}", input);
   let (input_bytes, data) = nom_terminated(nom_take_until(CRLF.as_bytes()), nom_take(2_usize)).parse(input.0)?;
   Ok(((input_bytes, input.1 + data.len() + 2), data.len()))
 }
 
-fn d_read_to_crlf_take(input: (&[u8], usize)) -> DResult<&[u8]> {
+fn d_read_to_crlf_take(input: (&[u8], usize)) -> DResult<'_, &[u8]> {
   decode_log_str!(input.0, _input, "Parsing to CRLF. Remaining: {:?}", _input);
   let (input_bytes, data) = nom_terminated(nom_take_until(CRLF.as_bytes()), nom_take(2_usize)).parse(input.0)?;
   Ok(((input_bytes, input.1 + data.len() + 2), data))
 }
 
-fn d_read_prefix_len(input: (&[u8], usize)) -> DResult<usize> {
+fn d_read_prefix_len(input: (&[u8], usize)) -> DResult<'_, usize> {
   let ((input, offset), data) = d_read_to_crlf_take(input)?;
   decode_log!("Reading prefix len. Data: {:?}", str::from_utf8(data));
   Ok(((input, offset), etry!(parse_as::<usize, _>(data))))
 }
 
-fn d_read_prefix_len_signed(input: (&[u8], usize)) -> DResult<isize> {
+fn d_read_prefix_len_signed(input: (&[u8], usize)) -> DResult<'_, isize> {
   let ((input, offset), data) = d_read_to_crlf_take(input)?;
   decode_log!("Reading prefix len. Data: {:?}", str::from_utf8(data));
   Ok(((input, offset), etry!(to_isize(data))))
 }
 
-fn d_frame_type(input: (&[u8], usize)) -> DResult<FrameKind> {
+fn d_frame_type(input: (&[u8], usize)) -> DResult<'_, FrameKind> {
   let (input_bytes, byte) = nom_be_u8(input.0)?;
 
   match FrameKind::from_byte(byte) {
@@ -162,7 +162,7 @@ fn d_frame_type(input: (&[u8], usize)) -> DResult<FrameKind> {
   }
 }
 
-fn d_parse_simplestring(input: (&[u8], usize)) -> DResult<RangeFrame> {
+fn d_parse_simplestring(input: (&[u8], usize)) -> DResult<'_, RangeFrame> {
   let offset = input.1;
   let ((input, next_offset), len) = d_read_to_crlf(input)?;
   Ok(((input, next_offset), RangeFrame::SimpleString {
@@ -171,7 +171,7 @@ fn d_parse_simplestring(input: (&[u8], usize)) -> DResult<RangeFrame> {
   }))
 }
 
-fn d_parse_simpleerror(input: (&[u8], usize)) -> DResult<RangeFrame> {
+fn d_parse_simpleerror(input: (&[u8], usize)) -> DResult<'_, RangeFrame> {
   let offset = input.1;
   let ((input, next_offset), len) = d_read_to_crlf(input)?;
   Ok(((input, next_offset), RangeFrame::SimpleError {
@@ -180,7 +180,7 @@ fn d_parse_simpleerror(input: (&[u8], usize)) -> DResult<RangeFrame> {
   }))
 }
 
-fn d_parse_number(input: (&[u8], usize)) -> DResult<RangeFrame> {
+fn d_parse_number(input: (&[u8], usize)) -> DResult<'_, RangeFrame> {
   let ((input, next_offset), data) = d_read_to_crlf_take(input)?;
   let parsed = etry!(parse_as::<i64, _>(data));
   Ok(((input, next_offset), RangeFrame::Number {
@@ -189,7 +189,7 @@ fn d_parse_number(input: (&[u8], usize)) -> DResult<RangeFrame> {
   }))
 }
 
-fn d_parse_double(input: (&[u8], usize)) -> DResult<RangeFrame> {
+fn d_parse_double(input: (&[u8], usize)) -> DResult<'_, RangeFrame> {
   let ((input, next_offset), data) = d_read_to_crlf_take(input)?;
   let parsed = etry!(parse_as::<f64, _>(data));
   Ok(((input, next_offset), RangeFrame::Double {
@@ -198,7 +198,7 @@ fn d_parse_double(input: (&[u8], usize)) -> DResult<RangeFrame> {
   }))
 }
 
-fn d_parse_boolean(input: (&[u8], usize)) -> DResult<RangeFrame> {
+fn d_parse_boolean(input: (&[u8], usize)) -> DResult<'_, RangeFrame> {
   let ((input, next_offset), data) = d_read_to_crlf_take(input)?;
   let parsed = etry!(to_bool(data));
   Ok(((input, next_offset), RangeFrame::Boolean {
@@ -207,12 +207,12 @@ fn d_parse_boolean(input: (&[u8], usize)) -> DResult<RangeFrame> {
   }))
 }
 
-fn d_parse_null(input: (&[u8], usize)) -> DResult<RangeFrame> {
+fn d_parse_null(input: (&[u8], usize)) -> DResult<'_, RangeFrame> {
   let ((input, next_offset), _) = d_read_to_crlf(input)?;
   Ok(((input, next_offset), RangeFrame::Null))
 }
 
-fn d_parse_blobstring(input: (&[u8], usize), len: usize) -> DResult<RangeFrame> {
+fn d_parse_blobstring(input: (&[u8], usize), len: usize) -> DResult<'_, RangeFrame> {
   let offset = input.1;
   let (input, data) = nom_terminated(nom_take(len), nom_take(2_usize)).parse(input.0)?;
 
@@ -222,7 +222,7 @@ fn d_parse_blobstring(input: (&[u8], usize), len: usize) -> DResult<RangeFrame> 
   }))
 }
 
-fn d_parse_bloberror(input: (&[u8], usize)) -> DResult<RangeFrame> {
+fn d_parse_bloberror(input: (&[u8], usize)) -> DResult<'_, RangeFrame> {
   let ((input, offset), len) = d_read_prefix_len(input)?;
   let (input, data) = nom_terminated(nom_take(len), nom_take(2_usize)).parse(input)?;
 
@@ -232,7 +232,7 @@ fn d_parse_bloberror(input: (&[u8], usize)) -> DResult<RangeFrame> {
   }))
 }
 
-fn d_parse_verbatimstring(input: (&[u8], usize)) -> DResult<RangeFrame> {
+fn d_parse_verbatimstring(input: (&[u8], usize)) -> DResult<'_, RangeFrame> {
   let ((input, prefix_offset), len) = d_read_prefix_len(input)?;
   let (input, format_bytes) = nom_terminated(nom_take(3_usize), nom_take(1_usize)).parse(input)?;
   if len < 4 {
@@ -253,7 +253,7 @@ fn d_parse_verbatimstring(input: (&[u8], usize)) -> DResult<RangeFrame> {
   ))
 }
 
-fn d_parse_bignumber(input: (&[u8], usize)) -> DResult<RangeFrame> {
+fn d_parse_bignumber(input: (&[u8], usize)) -> DResult<'_, RangeFrame> {
   let offset = input.1;
   let ((input, next_offset), len) = d_read_to_crlf(input)?;
 
@@ -317,7 +317,7 @@ fn d_parse_attribute(input: (&[u8], usize)) -> DResult<RangeAttributes> {
   Ok((input, attributes))
 }
 
-fn d_parse_hello(input: (&[u8], usize)) -> DResult<RangeFrame> {
+fn d_parse_hello(input: (&[u8], usize)) -> DResult<'_, RangeFrame> {
   // HELLO [protover [AUTH username password] [SETNAME clientname]]\r\n
   // The HELLO definition seems somewhat undefined, nor does it use length prefixes or CRLF delimiters, so most of the
   // above logic isn't useful here. this is hacky and should be improved
@@ -419,7 +419,7 @@ fn d_check_streaming(input: (&[u8], usize), kind: FrameKind) -> DResult<DecodedR
   Ok((input, frame))
 }
 
-fn d_parse_chunked_string(input: (&[u8], usize)) -> DResult<DecodedRangeFrame> {
+fn d_parse_chunked_string(input: (&[u8], usize)) -> DResult<'_, DecodedRangeFrame> {
   let (input, len) = d_read_prefix_len(input)?;
   let (input, frame) = if len == 0 {
     (input, RangeFrame::new_end_stream())
@@ -436,7 +436,7 @@ fn d_parse_chunked_string(input: (&[u8], usize)) -> DResult<DecodedRangeFrame> {
   Ok((input, DecodedRangeFrame::Complete(frame)))
 }
 
-fn d_return_end_stream(input: (&[u8], usize)) -> DResult<DecodedRangeFrame> {
+fn d_return_end_stream(input: (&[u8], usize)) -> DResult<'_, DecodedRangeFrame> {
   let (input, _) = d_read_to_crlf(input)?;
   Ok((input, DecodedRangeFrame::Complete(RangeFrame::new_end_stream())))
 }
@@ -667,7 +667,7 @@ pub mod owned_tests {
     let (frame, len) = match complete::decode(bytes) {
       Ok(Some((f, l))) => (Some(f), l),
       Ok(None) => panic!("Failed to decode bytes. None returned."),
-      Err(e) => panic!("{:?}", e),
+      Err(e) => panic!("{e:?}"),
     };
 
     assert_eq!(frame, expected.0, "decoded frame matched");
@@ -681,7 +681,7 @@ pub mod owned_tests {
     let (frame, len) = match complete::decode(&bytes) {
       Ok(Some((f, l))) => (Some(f), l),
       Ok(None) => panic!("Failed to decode bytes. None returned."),
-      Err(e) => panic!("{:?}", e),
+      Err(e) => panic!("{e:?}"),
     };
 
     assert_eq!(frame, expected.0, "decoded frame matched");
@@ -692,7 +692,7 @@ pub mod owned_tests {
     let (frame, len) = match complete::decode(bytes) {
       Ok(Some((f, l))) => (Some(f), l),
       Ok(None) => (None, 0),
-      Err(e) => panic!("{:?}", e),
+      Err(e) => panic!("{e:?}"),
     };
 
     assert!(frame.is_none());
@@ -1840,7 +1840,7 @@ pub mod bytes_tests {
     let (frame, len) = match complete::decode_bytes(bytes) {
       Ok(Some((f, l))) => (Some(f), l),
       Ok(None) => panic!("Failed to decode bytes. None returned."),
-      Err(e) => panic!("{:?}", e),
+      Err(e) => panic!("{e:?}"),
     };
 
     assert_eq!(frame, expected.0, "decoded frame matched");
@@ -1855,7 +1855,7 @@ pub mod bytes_tests {
     let (frame, len) = match complete::decode_bytes(&bytes) {
       Ok(Some((f, l))) => (Some(f), l),
       Ok(None) => panic!("Failed to decode bytes. None returned."),
-      Err(e) => panic!("{:?}", e),
+      Err(e) => panic!("{e:?}"),
     };
 
     assert_eq!(frame, expected.0, "decoded frame matched");
@@ -1866,7 +1866,7 @@ pub mod bytes_tests {
     let (frame, len) = match complete::decode_bytes(bytes) {
       Ok(Some((f, l))) => (Some(f), l),
       Ok(None) => (None, 0),
-      Err(e) => panic!("{:?}", e),
+      Err(e) => panic!("{e:?}"),
     };
 
     assert!(frame.is_none());

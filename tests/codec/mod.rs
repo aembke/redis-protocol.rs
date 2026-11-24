@@ -44,14 +44,14 @@ fn read_redis_username() -> String {
 
 async fn connect_resp2(int_as_bulkstring: bool) -> Framed<TcpStream, Resp2> {
   let addr = format!("{}:{}", read_redis_centralized_host(), read_redis_centralized_port());
-  debug!("Connecting to {}", addr);
+  debug!("Connecting to {addr}");
   let socket = TcpStream::connect(addr).await.unwrap();
   Framed::new(socket, Resp2::new(int_as_bulkstring))
 }
 
 async fn connect_resp3(int_as_blobstring: bool) -> Framed<TcpStream, Resp3> {
   let addr = format!("{}:{}", read_redis_centralized_host(), read_redis_centralized_port());
-  debug!("Connecting to {}", addr);
+  debug!("Connecting to {addr}");
   let socket = TcpStream::connect(addr).await.unwrap();
   Framed::new(socket, Resp3::new(int_as_blobstring))
 }
