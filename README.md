@@ -57,6 +57,12 @@ fn main() {
 | `convert`     |         | Enable the `FromResp2` and `FromResp3` trait interfaces.                                                                                     |
 | `index-map`   |         | Use [IndexMap](https://crates.io/crates/indexmap) types instead of `HashMap`. This is useful for testing and may also be useful for callers. |
 
+## Untrusted Input
+
+The decoders reject frames with aggregate types (arrays, maps, sets, etc.) nested more than
+[MAX_DECODE_DEPTH](https://docs.rs/redis-protocol/latest/redis_protocol/types/constant.MAX_DECODE_DEPTH.html) levels
+deep, returning an error rather than risking a stack overflow.
+
 ## no_std
 
 `no_std` builds are supported by disabling the `std` feature. However, a few optional dependencies must be activated as

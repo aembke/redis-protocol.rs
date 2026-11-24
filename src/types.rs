@@ -6,6 +6,15 @@ pub(crate) type _Range = (usize, usize);
 /// A wrapper type for the nom result type that stores range offsets alongside the buffer.
 pub(crate) type DResult<'a, T> = IResult<(&'a [u8], usize), T, RedisParseError<&'a [u8]>>;
 
+/// The maximum nesting depth of aggregate frames (arrays, maps, sets, attributes, etc.) supported by the decoders.
+///
+/// Frames nested more deeply than this return a parse error rather than recursing further. This protects callers from
+/// stack overflows when decoding untrusted input.
+pub const MAX_DECODE_DEPTH: usize = 128;
+
+/// The maximum initial capacity, in bytes, of the buffer used to store the inner frames of an aggregate type.
+pub(crate) const MAX_INITIAL_CAPACITY_BYTES: usize = 65536;
+
 /// Terminating bytes between frames.
 pub const CRLF: &str = "\r\n";
 /// The number of slots in a Redis cluster.

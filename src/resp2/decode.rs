@@ -9,10 +9,9 @@ use crate::{
   utils,
 };
 use alloc::vec::Vec;
-use core::str;
+use core::{mem::size_of, str};
 use nom::{
   bytes::streaming::{take as nom_take, take_until as nom_take_until},
-  multi::count as nom_count,
   number::streaming::be_u8,
   sequence::terminated as nom_terminated,
   Err as NomErr,
@@ -127,7 +126,7 @@ fn d_parse_bulkstring_or_null(input: (&[u8], usize)) -> DResult<'_, RangeFrame> 
   }
 }
 
-fn d_parse_array_frames(input: (&[u8], usize), len: usize) -> DResult<Vec<RangeFrame>> {
+fn d_parse_array_frames(input: (&[u8], usize), len: usize, depth: usize) -> DResult<'_, Vec<RangeFrame>> {
   decode_log_str!(
     input.0,
     _input,
@@ -135,10 +134,20 @@ fn d_parse_array_frames(input: (&[u8], usize), len: usize) -> DResult<Vec<RangeF
     len,
     _input
   );
-  nom_count(d_parse_frame, len).parse(input)
+  // mirror nom's `count`, which caps the initial allocation to avoid trusting the length prefix. this is a manual
+  // loop in order to keep the stack frames on the recursive parsing path small.
+  let mut frames = Vec::with_capacity(len.min(MAX_INITIAL_CAPACITY_BYTES / size_of::<RangeFrame>()));
+  let mut input = input;
+  for _ in 0 .. len {
+    let (next, frame) = d_parse_frame(input, depth + 1)?;
+    frames.push(frame);
+    input = next;
+  }
+
+  Ok((input, frames))
 }
 
-fn d_parse_array(input: (&[u8], usize)) -> DResult<RangeFrame> {
+fn d_parse_array(input: (&[u8], usize), depth: usize) -> DResult<'_, RangeFrame> {
   let ((input, offset), len) = d_read_prefix_len(input)?;
   decode_log_str!(
     input,
@@ -152,12 +161,18 @@ fn d_parse_array(input: (&[u8], usize)) -> DResult<RangeFrame> {
     d_parse_null((input, offset))
   } else {
     let len = etry!(utils::isize_to_usize(len));
-    let ((input, offset), frames) = d_parse_array_frames((input, offset), len)?;
+    let ((input, offset), frames) = d_parse_array_frames((input, offset), len, depth)?;
     Ok(((input, offset), RangeFrame::Array(frames)))
   }
 }
 
-fn d_parse_frame(input: (&[u8], usize)) -> DResult<RangeFrame> {
+fn d_parse_frame(input: (&[u8], usize), depth: usize) -> DResult<'_, RangeFrame> {
+  if depth > MAX_DECODE_DEPTH {
+    e!(RedisParseError::new_custom(
+      "parse_frame",
+      "Max frame nesting depth exceeded."
+    ));
+  }
   let ((input, offset), kind) = d_frame_type(input)?;
   decode_log_str!(input, _input, "Parsed kind: {:?}, remaining: {:?}", kind, _input);
 
@@ -166,7 +181,7 @@ fn d_parse_frame(input: (&[u8], usize)) -> DResult<RangeFrame> {
     FrameKind::Error => d_parse_error((input, offset)),
     FrameKind::Integer => d_parse_integer((input, offset)),
     FrameKind::BulkString => d_parse_bulkstring_or_null((input, offset)),
-    FrameKind::Array => d_parse_array((input, offset)),
+    FrameKind::Array => d_parse_array((input, offset), depth),
     _ => e!(RedisParseError::new_custom("parse_frame", "Invalid frame kind.")),
   }
 }
@@ -178,7 +193,7 @@ fn d_parse_frame(input: (&[u8], usize)) -> DResult<RangeFrame> {
 pub fn decode_range(buf: &[u8]) -> Result<Option<(RangeFrame, usize)>, RedisProtocolError> {
   let (offset, _len) = (0, buf.len());
 
-  match d_parse_frame((buf, offset)) {
+  match d_parse_frame((buf, offset), 0) {
     Ok(((_remaining, amt), frame)) => {
       #[cfg(feature = "std")]
       debug_assert_eq!(amt, _len - _remaining.len(), "returned offset doesn't match");
@@ -581,5 +596,53 @@ mod bytes_tests {
   fn should_error_on_junk() {
     let mut bytes: BytesMut = "foobarbazwibblewobble".into();
     decode_bytes_mut(&mut bytes).unwrap();
+  }
+}
+
+#[cfg(test)]
+mod depth_tests {
+  use super::*;
+
+  fn nested_array(depth: usize) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(depth * 4 + 4);
+    for _ in 0 .. depth {
+      buf.extend_from_slice(b"*1\r\n");
+    }
+    buf.extend_from_slice(b"+e\r\n");
+    buf
+  }
+
+  #[test]
+  fn should_decode_at_max_depth() {
+    let buf = nested_array(MAX_DECODE_DEPTH);
+    let (_, amt) = decode(&buf).unwrap().unwrap();
+    assert_eq!(amt, buf.len());
+  }
+
+  #[test]
+  fn should_error_past_max_depth() {
+    let buf = nested_array(MAX_DECODE_DEPTH + 1);
+    assert!(decode(&buf).is_err());
+  }
+
+  #[test]
+  fn should_error_on_incomplete_frame_past_max_depth() {
+    let mut buf = nested_array(MAX_DECODE_DEPTH + 1);
+    buf.truncate(buf.len() - 4);
+    assert!(decode(&buf).is_err());
+  }
+
+  #[test]
+  fn should_not_overflow_stack_with_deep_nesting() {
+    // https://github.com/aembke/redis-protocol.rs/issues/45
+    std::thread::Builder::new()
+      .stack_size(1024 * 1024)
+      .spawn(|| {
+        let buf = nested_array(100_000);
+        assert!(decode(&buf).is_err());
+      })
+      .unwrap()
+      .join()
+      .unwrap();
   }
 }

@@ -1,15 +1,14 @@
 use crate::{
   error::*,
   resp3::{types::*, utils as resp3_utils},
-  types::{DResult, CRLF},
+  types::{DResult, CRLF, MAX_DECODE_DEPTH, MAX_INITIAL_CAPACITY_BYTES},
   utils,
 };
 use alloc::{format, vec::Vec};
-use core::{fmt::Debug, str, str::FromStr};
+use core::{fmt::Debug, mem::size_of, str, str::FromStr};
 use nom::{
   bytes::streaming::{take as nom_take, take_until as nom_take_until},
-  combinator::{map as nom_map, map_res as nom_map_res},
-  multi::count as nom_count,
+  combinator::map as nom_map,
   number::streaming::be_u8 as nom_be_u8,
   sequence::terminated as nom_terminated,
   Err as NomErr,
@@ -263,57 +262,35 @@ fn d_parse_bignumber(input: (&[u8], usize)) -> DResult<'_, RangeFrame> {
   }))
 }
 
-fn d_parse_array_frames(input: (&[u8], usize), len: usize) -> DResult<Vec<RangeFrame>> {
-  nom_count(
-    nom_map_res(d_parse_frame_or_attribute, expect_complete_index_frame::<&[u8]>),
-    len,
-  )
-  .parse(input)
+/// Parse `len` complete frames.
+///
+/// This is a manual loop rather than `nom::multi::count` in order to keep the stack frames on the recursive parsing
+/// path small.
+fn d_parse_array_frames(input: (&[u8], usize), len: usize, depth: usize) -> DResult<'_, Vec<RangeFrame>> {
+  // mirror nom's `count`, which caps the initial allocation to avoid trusting the length prefix
+  let mut frames = Vec::with_capacity(len.min(MAX_INITIAL_CAPACITY_BYTES / size_of::<RangeFrame>()));
+  let mut input = input;
+  for _ in 0 .. len {
+    let (next, frame) = d_parse_frame_or_attribute(input, depth + 1)?;
+    frames.push(etry!(expect_complete_index_frame::<&[u8]>(frame)));
+    input = next;
+  }
+
+  Ok((input, frames))
 }
 
-fn d_parse_kv_pairs(input: (&[u8], usize), len: usize) -> DResult<FrameMap<RangeFrame, RangeFrame>> {
-  nom_map_res(
-    nom_count(
-      nom_map_res(d_parse_frame_or_attribute, expect_complete_index_frame::<&[u8]>),
-      len.saturating_mul(2),
-    ),
-    to_map::<&[u8]>,
-  )
-  .parse(input)
+fn d_parse_kv_pairs(
+  input: (&[u8], usize),
+  len: usize,
+  depth: usize,
+) -> DResult<'_, FrameMap<RangeFrame, RangeFrame>> {
+  let (input, frames) = d_parse_array_frames(input, len.saturating_mul(2), depth)?;
+  Ok((input, etry!(to_map::<&[u8]>(frames))))
 }
 
-fn d_parse_array(input: (&[u8], usize), len: usize) -> DResult<RangeFrame> {
-  let (input, data) = d_parse_array_frames(input, len)?;
-  Ok((input, RangeFrame::Array { data, attributes: None }))
-}
-
-fn d_parse_push(input: (&[u8], usize)) -> DResult<RangeFrame> {
+fn d_parse_attribute(input: (&[u8], usize), depth: usize) -> DResult<'_, RangeAttributes> {
   let (input, len) = d_read_prefix_len(input)?;
-  let (input, data) = d_parse_array_frames(input, len)?;
-  Ok((input, RangeFrame::Push { data, attributes: None }))
-}
-
-fn d_parse_set(input: (&[u8], usize), len: usize) -> DResult<RangeFrame> {
-  let (input, frames) = d_parse_array_frames(input, len)?;
-
-  Ok((input, RangeFrame::Set {
-    data:       etry!(to_set(frames)),
-    attributes: None,
-  }))
-}
-
-fn d_parse_map(input: (&[u8], usize), len: usize) -> DResult<RangeFrame> {
-  let (input, frames) = d_parse_kv_pairs(input, len)?;
-
-  Ok((input, RangeFrame::Map {
-    data:       frames,
-    attributes: None,
-  }))
-}
-
-fn d_parse_attribute(input: (&[u8], usize)) -> DResult<RangeAttributes> {
-  let (input, len) = d_read_prefix_len(input)?;
-  let (input, attributes) = d_parse_kv_pairs(input, len)?;
+  let (input, attributes) = d_parse_kv_pairs(input, len, depth)?;
   Ok((input, attributes))
 }
 
@@ -392,31 +369,55 @@ fn d_parse_hello(input: (&[u8], usize)) -> DResult<'_, RangeFrame> {
   }))
 }
 
-/// Check for a streaming variant of a frame, and if found then return the prefix bytes only, otherwise return the
-/// complete frame.
-///
-/// Only supported for arrays, sets, maps, and blob strings.
-fn d_check_streaming(input: (&[u8], usize), kind: FrameKind) -> DResult<DecodedRangeFrame> {
+/// Parse a blob string, or the prefix bytes of a streamed blob string.
+fn d_parse_blobstring_or_streaming(input: (&[u8], usize)) -> DResult<'_, DecodedRangeFrame> {
   let (input, len) = d_read_prefix_len_signed(input)?;
-  let (input, frame) = if len == -1 {
-    (input, DecodedRangeFrame::Streaming(StreamedRangeFrame::new(kind)))
+  if len == -1 {
+    Ok((
+      input,
+      DecodedRangeFrame::Streaming(StreamedRangeFrame::new(FrameKind::BlobString)),
+    ))
   } else {
     let len = etry!(utils::isize_to_usize(len));
-    let (input, frame) = match kind {
-      FrameKind::Array => d_parse_array(input, len)?,
-      FrameKind::Set => d_parse_set(input, len)?,
-      FrameKind::Map => d_parse_map(input, len)?,
-      FrameKind::BlobString => d_parse_blobstring(input, len)?,
-      _ => e!(RedisParseError::new_custom(
-        "check_streaming",
-        format!("Invalid frame type: {:?}", kind)
-      )),
-    };
+    let (input, frame) = d_parse_blobstring(input, len)?;
+    Ok((input, DecodedRangeFrame::Complete(frame)))
+  }
+}
 
-    (input, DecodedRangeFrame::Complete(frame))
+/// Parse an aggregate frame (array, set, map, or push), or the prefix bytes of a streamed aggregate frame.
+///
+/// This function is on the recursive parsing path, so it should use as little stack space as possible.
+fn d_parse_aggregate(input: (&[u8], usize), kind: FrameKind, depth: usize) -> DResult<'_, DecodedRangeFrame> {
+  let (input, len) = d_read_prefix_len_signed(input)?;
+  if len == -1 && kind != FrameKind::Push {
+    return Ok((input, DecodedRangeFrame::Streaming(StreamedRangeFrame::new(kind))));
+  }
+  let len = etry!(utils::isize_to_usize(len));
+  let len = if kind == FrameKind::Map {
+    len.saturating_mul(2)
+  } else {
+    len
   };
 
-  Ok((input, frame))
+  let (input, data) = d_parse_array_frames(input, len, depth)?;
+  let frame = match kind {
+    FrameKind::Array => RangeFrame::Array { data, attributes: None },
+    FrameKind::Push => RangeFrame::Push { data, attributes: None },
+    FrameKind::Set => RangeFrame::Set {
+      data:       etry!(to_set(data)),
+      attributes: None,
+    },
+    FrameKind::Map => RangeFrame::Map {
+      data:       etry!(to_map(data)),
+      attributes: None,
+    },
+    _ => e!(RedisParseError::new_custom(
+      "parse_aggregate",
+      "Invalid aggregate frame type."
+    )),
+  };
+
+  Ok((input, DecodedRangeFrame::Complete(frame)))
 }
 
 fn d_parse_chunked_string(input: (&[u8], usize)) -> DResult<'_, DecodedRangeFrame> {
@@ -441,12 +442,28 @@ fn d_return_end_stream(input: (&[u8], usize)) -> DResult<'_, DecodedRangeFrame> 
   Ok((input, DecodedRangeFrame::Complete(RangeFrame::new_end_stream())))
 }
 
-fn d_parse_non_attribute_frame(input: (&[u8], usize), kind: FrameKind) -> DResult<DecodedRangeFrame> {
+fn d_parse_non_attribute_frame(
+  input: (&[u8], usize),
+  kind: FrameKind,
+  depth: usize,
+) -> DResult<'_, DecodedRangeFrame> {
+  match kind {
+    FrameKind::Array | FrameKind::Set | FrameKind::Map | FrameKind::Push => d_parse_aggregate(input, kind, depth),
+    FrameKind::Attribute => e!(RedisParseError::new_custom(
+      "parse_non_attribute_frame",
+      "Unexpected attribute frame.",
+    )),
+    _ => d_parse_leaf_frame(input, kind),
+  }
+}
+
+/// Parse a frame that cannot contain other frames.
+///
+/// This is kept out of line so that the stack frames on the recursive aggregate parsing path stay small.
+#[inline(never)]
+fn d_parse_leaf_frame(input: (&[u8], usize), kind: FrameKind) -> DResult<'_, DecodedRangeFrame> {
   let (input, frame) = match kind {
-    FrameKind::Array => d_check_streaming(input, kind)?,
-    FrameKind::BlobString => d_check_streaming(input, kind)?,
-    FrameKind::Map => d_check_streaming(input, kind)?,
-    FrameKind::Set => d_check_streaming(input, kind)?,
+    FrameKind::BlobString => d_parse_blobstring_or_streaming(input)?,
     FrameKind::SimpleString => nom_map(d_parse_simplestring, map_complete_frame).parse(input)?,
     FrameKind::SimpleError => nom_map(d_parse_simpleerror, map_complete_frame).parse(input)?,
     FrameKind::Number => nom_map(d_parse_number, map_complete_frame).parse(input)?,
@@ -455,40 +472,43 @@ fn d_parse_non_attribute_frame(input: (&[u8], usize), kind: FrameKind) -> DResul
     FrameKind::Boolean => nom_map(d_parse_boolean, map_complete_frame).parse(input)?,
     FrameKind::BlobError => nom_map(d_parse_bloberror, map_complete_frame).parse(input)?,
     FrameKind::VerbatimString => nom_map(d_parse_verbatimstring, map_complete_frame).parse(input)?,
-    FrameKind::Push => nom_map(d_parse_push, map_complete_frame).parse(input)?,
     FrameKind::BigNumber => nom_map(d_parse_bignumber, map_complete_frame).parse(input)?,
     FrameKind::Hello => nom_map(d_parse_hello, map_complete_frame).parse(input)?,
     FrameKind::ChunkedString => d_parse_chunked_string(input)?,
     FrameKind::EndStream => d_return_end_stream(input)?,
-    FrameKind::Attribute => {
-      e!(RedisParseError::new_custom(
-        "parse_non_attribute_frame",
-        "Unexpected attribute frame.",
-      ));
-    },
+    _ => e!(RedisParseError::new_custom(
+      "parse_leaf_frame",
+      format!("Unexpected frame kind: {kind:?}")
+    )),
   };
 
   Ok((input, frame))
 }
 
-fn d_parse_attribute_and_frame(input: (&[u8], usize)) -> DResult<DecodedRangeFrame> {
-  let (input, attributes) = d_parse_attribute(input)?;
+#[inline(never)]
+fn d_parse_attribute_and_frame(input: (&[u8], usize), depth: usize) -> DResult<'_, DecodedRangeFrame> {
+  let (input, attributes) = d_parse_attribute(input, depth)?;
   let (input, kind) = d_frame_type(input)?;
-  let (input, next_frame) = d_parse_non_attribute_frame(input, kind)?;
+  let (input, next_frame) = d_parse_non_attribute_frame(input, kind, depth)?;
   let frame = etry!(attach_attributes(attributes, next_frame));
 
   Ok((input, frame))
 }
 
-fn d_parse_frame_or_attribute(input: (&[u8], usize)) -> DResult<DecodedRangeFrame> {
-  let (input, kind) = d_frame_type(input)?;
-  let (input, frame) = if kind == FrameKind::Attribute {
-    d_parse_attribute_and_frame(input)?
-  } else {
-    d_parse_non_attribute_frame(input, kind)?
-  };
+fn d_parse_frame_or_attribute(input: (&[u8], usize), depth: usize) -> DResult<'_, DecodedRangeFrame> {
+  if depth > MAX_DECODE_DEPTH {
+    e!(RedisParseError::new_custom(
+      "parse_frame",
+      "Max frame nesting depth exceeded."
+    ));
+  }
 
-  Ok((input, frame))
+  let (input, kind) = d_frame_type(input)?;
+  if kind == FrameKind::Attribute {
+    d_parse_attribute_and_frame(input, depth)
+  } else {
+    d_parse_non_attribute_frame(input, kind, depth)
+  }
 }
 
 /// Decoding functions for complete RESP3 frames.
@@ -502,7 +522,7 @@ pub mod complete {
   pub fn decode_range(buf: &[u8]) -> Result<Option<(RangeFrame, usize)>, RedisProtocolError> {
     let (offset, _len) = (0, buf.len());
 
-    let (frame, amt) = match d_parse_frame_or_attribute((buf, offset)) {
+    let (frame, amt) = match d_parse_frame_or_attribute((buf, offset), 0) {
       Ok(((_remaining, offset), frame)) => {
         #[cfg(feature = "std")]
         debug_assert_eq!(offset, _len - _remaining.len(), "returned offset doesn't match");
@@ -573,7 +593,7 @@ pub mod streaming {
   pub fn decode_range(buf: &[u8]) -> Result<Option<(DecodedRangeFrame, usize)>, RedisProtocolError> {
     let (offset, _len) = (0, buf.len());
 
-    match d_parse_frame_or_attribute((buf, offset)) {
+    match d_parse_frame_or_attribute((buf, offset), 0) {
       Ok(((_remaining, offset), frame)) => {
         #[cfg(feature = "std")]
         debug_assert_eq!(offset, _len - _remaining.len(), "returned offset doesn't match");
@@ -2996,5 +3016,55 @@ pub mod bytes_tests {
 
     decode_and_verify_some(&bytes, &expected);
     decode_and_verify_padded_some(&bytes, &expected);
+  }
+}
+
+#[cfg(test)]
+mod depth_tests {
+  use super::*;
+
+  fn nested(prefix: &[u8], depth: usize) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(depth * prefix.len() + 4);
+    for _ in 0 .. depth {
+      buf.extend_from_slice(prefix);
+    }
+    buf.extend_from_slice(b"+e\r\n");
+    buf
+  }
+
+  #[test]
+  fn should_decode_at_max_depth() {
+    // sets cannot contain aggregate types, and attributes must precede a non-attribute frame
+    for prefix in [&b"*1\r\n"[..], b">1\r\n", b"%1\r\n+k\r\n"] {
+      let buf = nested(prefix, MAX_DECODE_DEPTH);
+      let (_, amt) = complete::decode(&buf).unwrap().unwrap();
+      assert_eq!(amt, buf.len());
+    }
+  }
+
+  #[test]
+  fn should_error_past_max_depth() {
+    for prefix in [&b"*1\r\n"[..], b"~1\r\n", b">1\r\n", b"%1\r\n+k\r\n", b"|1\r\n+k\r\n"] {
+      let buf = nested(prefix, MAX_DECODE_DEPTH + 1);
+      assert!(complete::decode(&buf).is_err());
+      assert!(streaming::decode(&buf).is_err());
+    }
+  }
+
+  #[test]
+  fn should_not_overflow_stack_with_deep_nesting() {
+    // https://github.com/aembke/redis-protocol.rs/issues/45
+    std::thread::Builder::new()
+      .stack_size(1024 * 1024)
+      .spawn(|| {
+        for prefix in [&b"*1\r\n"[..], b"~1\r\n", b">1\r\n", b"%1\r\n+k\r\n", b"|1\r\n+k\r\n"] {
+          let buf = nested(prefix, 100_000);
+          assert!(complete::decode(&buf).is_err());
+          assert!(streaming::decode(&buf).is_err());
+        }
+      })
+      .unwrap()
+      .join()
+      .unwrap();
   }
 }
