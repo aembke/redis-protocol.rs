@@ -238,3 +238,9 @@ fn main() {
 }
 
 ```
+
+## Benchmarks
+
+```bash
+cargo bench --features bytes
+```

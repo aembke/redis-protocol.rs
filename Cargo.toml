@@ -38,7 +38,7 @@ tokio = { version = "1.36", features = ["full"] }
 pretty_env_logger = "0.5"
 futures = "0.3"
 itertools = "0.12"
-criterion = { version = "0.4", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 
 [features]
 default = ["std", "resp2", "resp3"]
@@ -60,18 +60,12 @@ doctest = true
 name = "redis_protocol"
 test = true
 
-#[[bench]]
-#name = "resp2_decode"
-#harness = false
+[[bench]]
+name = "decode"
+harness = false
+required-features = ["resp2", "resp3"]
 
-#[[bench]]
-#name = "resp2_encode"
-#harness = false
-
-#[[bench]]
-#name = "resp3_encode"
-#harness = false
-
-#[[bench]]
-#name = "resp3_decode"
-#harness = false
+[[bench]]
+name = "encode"
+harness = false
+required-features = ["resp2", "resp3"]
