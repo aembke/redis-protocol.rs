@@ -4,7 +4,7 @@ macro_rules! encode_checks(
     let remaining = $buf.len() - $offset;
 
     if required > remaining {
-      return Err(RedisProtocolError::from(cookie_factory::GenError::BufferTooSmall(required - remaining)));
+      return Err(RedisProtocolError::from(crate::gen::GenError::BufferTooSmall(required - remaining)));
     }
   }
 );
@@ -72,4 +72,38 @@ macro_rules! check_single_vec_reply(
       return $t::from_frame($v.pop_or_take());
     }
   }
+);
+
+/// Write a single byte. Equivalent to the legacy `cookie-factory` macro with the same name.
+#[cfg(any(feature = "resp2", feature = "resp3"))]
+macro_rules! gen_be_u8(
+  ($i:expr, $val:expr) => (
+    crate::gen::gen_slice($i, &[$val])
+  );
+);
+
+/// Write a byte slice. Equivalent to the legacy `cookie-factory` macro with the same name.
+#[cfg(any(feature = "resp2", feature = "resp3"))]
+macro_rules! gen_slice(
+  ($i:expr, $val:expr) => (
+    crate::gen::gen_slice($i, $val)
+  );
+);
+
+/// Apply a sequence of generators separated by `>>`, short-circuiting on the first error. Equivalent to the subset of
+/// the legacy `cookie-factory` macro with the same name used by this crate.
+#[cfg(any(feature = "resp2", feature = "resp3"))]
+macro_rules! do_gen(
+  (__impl $i:expr, $submac:ident!( $($args:tt)* )) => (
+    $submac!($i, $($args)*)
+  );
+  (__impl $i:expr, $submac:ident!( $($args:tt)* ) >> $($rest:tt)*) => (
+    match $submac!($i, $($args)*) {
+      Ok(next) => do_gen!(__impl next, $($rest)*),
+      Err(e) => Err(e),
+    }
+  );
+  ($i:expr, $($rest:tt)*) => (
+    do_gen!(__impl $i, $($rest)*)
+  );
 );

@@ -24,7 +24,6 @@ rustdoc-args = ["--cfg", "docsrs"]
 [dependencies]
 bytes = { version = "1.1", default-features = false, optional = true }
 bytes-utils = { version = "0.1", default-features = false, optional = true }
-cookie-factory = { version = "0.3", default-features = false }
 crc16 = { version = "0.4" }
 indexmap = { version = "2.2", optional = true }
 log = "0.4"
@@ -49,7 +48,7 @@ index-map = ["indexmap"]
 bytes = ["dep:bytes", "bytes-utils"]
 decode-logs = []
 alloc = ["nom/alloc"]
-std = ["cookie-factory/default", "nom/default"]
+std = ["nom/default"]
 codec = ["tokio-util", "bytes"]
 convert = []
 

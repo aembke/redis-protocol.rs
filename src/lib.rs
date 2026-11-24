@@ -25,8 +25,6 @@ extern crate core;
 
 #[macro_use]
 extern crate log;
-#[macro_use]
-extern crate cookie_factory;
 
 #[cfg(feature = "bytes")]
 #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
@@ -42,6 +40,8 @@ pub extern crate tokio_util;
 mod macros;
 /// Error types.
 pub mod error;
+#[cfg(any(feature = "resp2", feature = "resp3"))]
+mod gen;
 mod int2dec;
 mod utils;
 

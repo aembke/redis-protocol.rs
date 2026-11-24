@@ -1,5 +1,6 @@
+#[cfg(any(feature = "resp2", feature = "resp3"))]
+use crate::gen::GenError;
 use alloc::{borrow::Cow, format, string::FromUtf8Error};
-use cookie_factory::GenError;
 use core::{borrow::Borrow, fmt, fmt::Debug, str::Utf8Error};
 use nom::{
   error::{ErrorKind, FromExternalError, ParseError},
@@ -119,6 +120,7 @@ impl fmt::Display for RedisProtocolError {
   }
 }
 
+#[cfg(any(feature = "resp2", feature = "resp3"))]
 impl From<GenError> for RedisProtocolError {
   fn from(e: GenError) -> Self {
     match e {
@@ -128,9 +130,7 @@ impl From<GenError> for RedisProtocolError {
         3 => RedisProtocolError::new(RedisProtocolErrorKind::EncodeError, "Cannot stream non aggregate type."),
         _ => RedisProtocolError::new_empty(),
       },
-      GenError::InvalidOffset => RedisProtocolError::new(RedisProtocolErrorKind::EncodeError, "Invalid offset."),
       GenError::BufferTooSmall(b) => RedisProtocolError::buffer_too_small(b),
-      _ => RedisProtocolError::new_empty(),
     }
   }
 }

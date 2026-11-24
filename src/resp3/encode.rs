@@ -4,6 +4,7 @@
 
 use crate::{
   error::RedisProtocolError,
+  gen::GenError,
   int2dec,
   resp3::{
     types::*,
@@ -12,7 +13,6 @@ use crate::{
   types::CRLF,
 };
 use alloc::string::{String, ToString};
-use cookie_factory::GenError;
 
 #[cfg(feature = "bytes")]
 use crate::utils;

@@ -2,8 +2,7 @@
 //!
 //! <https://redis.io/topics/protocol#resp-protocol-description>
 
-use crate::{error::RedisProtocolError, int2dec, resp2::types::*, types::CRLF};
-use cookie_factory::GenError;
+use crate::{error::RedisProtocolError, gen::GenError, int2dec, resp2::types::*, types::CRLF};
 use core::str;
 
 #[cfg(feature = "bytes")]
