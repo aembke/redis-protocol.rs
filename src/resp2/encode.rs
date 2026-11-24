@@ -472,7 +472,7 @@ mod bytes_tests {
     let padded = [PADDING, expected].join("");
 
     assert_eq!(buf, padded.as_bytes(), "padded buf contents match");
-    assert_eq!(len, padded.as_bytes().len(), "padded expected len is correct");
+    assert_eq!(len, expected.as_bytes().len(), "padded expected len is correct");
   }
 
   fn encode_buf_and_verify_empty(input: &BytesFrame, expected: &str) {

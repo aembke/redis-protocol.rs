@@ -129,7 +129,7 @@ pub fn zero_extend(buf: &mut BytesMut, amt: usize) {
 
 /// Append an encoded frame to `buf`, reserving `amt` bytes first.
 ///
-/// Returns the length of `buf` after encoding. If encoding fails, `buf` is restored to its original length.
+/// Returns the number of bytes encoded. If encoding fails, `buf` is restored to its original length.
 #[cfg(all(feature = "bytes", any(feature = "resp2", feature = "resp3")))]
 pub(crate) fn extend_with<F>(buf: &mut BytesMut, amt: usize, encode: F) -> Result<usize, RedisProtocolError>
 where
@@ -141,7 +141,7 @@ where
   match encode(buf) {
     Ok(()) => {
       debug_assert_eq!(buf.len() - start, amt, "encoded length doesn't match encode_len");
-      Ok(buf.len())
+      Ok(buf.len() - start)
     },
     Err(e) => {
       buf.truncate(start);

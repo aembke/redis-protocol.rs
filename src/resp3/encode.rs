@@ -655,15 +655,24 @@ fn gen_bytes_frame<W: GenOut>(x: W, frame: &BytesFrame, int_as_blobstring: bool)
 /// use std::net::TcpStream;
 /// # use std::io::Write;
 /// fn example(socket: &mut TcpStream) {
-///   // in many cases the starting buffer won't be empty, so this example shows how to track the offset as well
+///   // the buffer may already hold other frames, and the new frame is appended after them
 ///   let frame = OwnedFrame::Array {
 ///     // send `HGET foo bar`
-///     data: vec![
-///       OwnedFrame::BlobString { data: "HGET".into(), attributes: None },
-///       OwnedFrame::BlobString { data: "foo".into(), attributes: None },
-///       OwnedFrame::BlobString { data: "bar".into(), attributes: None },
+///     data:       vec![
+///       OwnedFrame::BlobString {
+///         data:       "HGET".into(),
+///         attributes: None,
+///       },
+///       OwnedFrame::BlobString {
+///         data:       "foo".into(),
+///         attributes: None,
+///       },
+///       OwnedFrame::BlobString {
+///         data:       "bar".into(),
+///         attributes: None,
+///       },
 ///     ],
-///     attributes: None
+///     attributes: None,
 ///   };
 ///   let mut buf = Vec::with_capacity(frame.encode_len(false));
 ///   let amt = encode(&mut buf, &frame, false).expect("Failed to encode frame");
@@ -682,20 +691,33 @@ fn gen_bytes_frame<W: GenOut>(x: W, frame: &BytesFrame, int_as_blobstring: bool)
 /// use tokio::net::TcpStream;
 /// # use tokio::io::AsyncWriteExt;
 /// async fn example(socket: &mut TcpStream, buf: &mut BytesMut) {
-///   // in many cases the starting buffer won't be empty, so this example shows how to track the offset as well
+///   // the buffer may already hold other frames, and the new frame is appended after them
 ///   let frame = BytesFrame::Array {
 ///     // send `HGET foo bar`
-///     data: vec![
-///       BytesFrame::BlobString { data: "HGET".into(), attributes: None },
-///       BytesFrame::BlobString { data: "foo".into(), attributes: None },
-///       BytesFrame::BlobString { data: "bar".into(), attributes: None },
+///     data:       vec![
+///       BytesFrame::BlobString {
+///         data:       "HGET".into(),
+///         attributes: None,
+///       },
+///       BytesFrame::BlobString {
+///         data:       "foo".into(),
+///         attributes: None,
+///       },
+///       BytesFrame::BlobString {
+///         data:       "bar".into(),
+///         attributes: None,
+///       },
 ///     ],
-///     attributes: None
+///     attributes: None,
 ///   };
 ///   let amt = extend_encode(buf, &frame, false).expect("Failed to encode frame");
+///   println!("Encoded {} bytes", amt);
 ///
-///   socket.write_all(&buf).await.expect("Failed to write to socket");
-///   let _ = buf.split_to(amt);
+///   socket
+///     .write_all(&buf)
+///     .await
+///     .expect("Failed to write to socket");
+///   buf.clear();
 /// }
 /// ```
 pub mod complete {
@@ -1930,7 +1952,7 @@ mod bytes_tests {
       str::from_utf8(&buf),
       expected
     );
-    assert_eq!(len, padded.as_bytes().len(), "padded expected len is correct");
+    assert_eq!(len, expected.as_bytes().len(), "padded expected len is correct");
   }
 
   fn encode_and_verify_non_empty_unordered(input: &BytesFrame, expected_start: &str, expected_middle: &[&str]) {
@@ -1944,7 +1966,7 @@ mod bytes_tests {
     let expected_middle_len: usize = expected_middle.iter().map(|x| x.as_bytes().len()).sum();
     assert_eq!(
       len,
-      expected_start_padded.as_bytes().len() + expected_middle_len,
+      expected_start.as_bytes().len() + expected_middle_len,
       "padded expected len is correct"
     );
   }
@@ -2023,7 +2045,7 @@ mod bytes_tests {
     assert_eq!(buf, expected_bytes, "empty buf contents match with attrs");
     assert_eq!(
       len,
-      expected.as_bytes().len() + encoded_attributes.len() + PADDING.as_bytes().len(),
+      expected.as_bytes().len() + encoded_attributes.len(),
       "empty expected len is correct with attrs"
     );
   }
@@ -2050,7 +2072,7 @@ mod bytes_tests {
     let expected_middle_len: usize = expected_middle.iter().map(|x| x.as_bytes().len()).sum();
     assert_eq!(
       len,
-      expected_start.as_bytes().len() + expected_middle_len + encoded_attributes.len() + PADDING.as_bytes().len(),
+      expected_start.as_bytes().len() + expected_middle_len + encoded_attributes.len(),
       "empty expected len is correct with attrs"
     );
   }
