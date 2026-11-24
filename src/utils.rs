@@ -127,6 +127,29 @@ pub fn zero_extend(buf: &mut BytesMut, amt: usize) {
   buf.resize(buf.len() + amt, 0);
 }
 
+/// Append an encoded frame to `buf`, reserving `amt` bytes first.
+///
+/// Returns the length of `buf` after encoding. If encoding fails, `buf` is restored to its original length.
+#[cfg(all(feature = "bytes", any(feature = "resp2", feature = "resp3")))]
+pub(crate) fn extend_with<F>(buf: &mut BytesMut, amt: usize, encode: F) -> Result<usize, RedisProtocolError>
+where
+  F: FnOnce(&mut BytesMut) -> Result<(), crate::gen::GenError>,
+{
+  let start = buf.len();
+  buf.reserve(amt);
+
+  match encode(buf) {
+    Ok(()) => {
+      debug_assert_eq!(buf.len() - start, amt, "encoded length doesn't match encode_len");
+      Ok(buf.len())
+    },
+    Err(e) => {
+      buf.truncate(start);
+      Err(e.into())
+    },
+  }
+}
+
 /// Whether an error payload is a `MOVED` or `ASK` redirection.
 pub(crate) fn is_redirection(payload: &str) -> bool {
   if payload.starts_with("MOVED") || payload.starts_with("ASK") {

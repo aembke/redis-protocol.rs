@@ -4,7 +4,7 @@
 
 use crate::{
   error::RedisProtocolError,
-  gen::GenError,
+  gen::{GenError, GenOut},
   int2dec,
   resp3::{
     types::*,
@@ -43,12 +43,12 @@ macro_rules! encode_attributes (
   }
 );
 
-fn gen_simplestring<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
-  mut x: (&'a mut [u8], usize),
+fn gen_simplestring<'b, W: GenOut, A: Into<BorrowedAttrs<'b>>>(
+  mut x: W,
   data: &[u8],
   attributes: Option<A>,
   int_as_blobstring: bool,
-) -> Result<(&'a mut [u8], usize), GenError> {
+) -> Result<W, GenError> {
   encode_attributes!(x, attributes, int_as_blobstring);
 
   do_gen!(
@@ -57,12 +57,12 @@ fn gen_simplestring<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   )
 }
 
-fn gen_simpleerror<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
-  mut x: (&'a mut [u8], usize),
+fn gen_simpleerror<'b, W: GenOut, A: Into<BorrowedAttrs<'b>>>(
+  mut x: W,
   data: &str,
   attributes: Option<A>,
   int_as_blobstring: bool,
-) -> Result<(&'a mut [u8], usize), GenError> {
+) -> Result<W, GenError> {
   encode_attributes!(x, attributes, int_as_blobstring);
 
   do_gen!(
@@ -71,12 +71,12 @@ fn gen_simpleerror<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   )
 }
 
-fn gen_number<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
-  mut x: (&'a mut [u8], usize),
+fn gen_number<'b, W: GenOut, A: Into<BorrowedAttrs<'b>>>(
+  mut x: W,
   data: i64,
   attributes: Option<A>,
   int_as_blobstring: bool,
-) -> Result<(&'a mut [u8], usize), GenError> {
+) -> Result<W, GenError> {
   encode_attributes!(x, attributes, int_as_blobstring);
   let (buf, buf_padding) = int2dec::i64_to_digits(data);
 
@@ -101,16 +101,16 @@ fn gen_number<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   }
 }
 
-fn gen_null(x: (&mut [u8], usize)) -> Result<(&mut [u8], usize), GenError> {
+fn gen_null<W: GenOut>(x: W) -> Result<W, GenError> {
   do_gen!(x, gen_slice!(NULL.as_bytes()))
 }
 
-fn gen_double<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
-  mut x: (&'a mut [u8], usize),
+fn gen_double<'b, W: GenOut, A: Into<BorrowedAttrs<'b>>>(
+  mut x: W,
   data: f64,
   attributes: Option<A>,
   int_as_blobstring: bool,
-) -> Result<(&'a mut [u8], usize), GenError> {
+) -> Result<W, GenError> {
   encode_attributes!(x, attributes, int_as_blobstring);
 
   resp3_utils::with_f64_str(data, |s| {
@@ -121,24 +121,24 @@ fn gen_double<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   })
 }
 
-fn gen_boolean<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
-  mut x: (&'a mut [u8], usize),
+fn gen_boolean<'b, W: GenOut, A: Into<BorrowedAttrs<'b>>>(
+  mut x: W,
   data: bool,
   attributes: Option<A>,
   int_as_blobstring: bool,
-) -> Result<(&'a mut [u8], usize), GenError> {
+) -> Result<W, GenError> {
   encode_attributes!(x, attributes, int_as_blobstring);
 
   let data = if data { BOOL_TRUE_BYTES } else { BOOL_FALSE_BYTES };
   do_gen!(x, gen_slice!(data.as_bytes()))
 }
 
-fn gen_bignumber<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
-  mut x: (&'a mut [u8], usize),
+fn gen_bignumber<'b, W: GenOut, A: Into<BorrowedAttrs<'b>>>(
+  mut x: W,
   data: &[u8],
   attributes: Option<A>,
   int_as_blobstring: bool,
-) -> Result<(&'a mut [u8], usize), GenError> {
+) -> Result<W, GenError> {
   encode_attributes!(x, attributes, int_as_blobstring);
 
   do_gen!(
@@ -147,12 +147,12 @@ fn gen_bignumber<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   )
 }
 
-fn gen_blobstring<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
-  mut x: (&'a mut [u8], usize),
+fn gen_blobstring<'b, W: GenOut, A: Into<BorrowedAttrs<'b>>>(
+  mut x: W,
   data: &[u8],
   attributes: Option<A>,
   int_as_blobstring: bool,
-) -> Result<(&'a mut [u8], usize), GenError> {
+) -> Result<W, GenError> {
   encode_attributes!(x, attributes, int_as_blobstring);
 
   let (len, padding) = int2dec::u64_to_digits(data.len() as u64);
@@ -166,12 +166,12 @@ fn gen_blobstring<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   )
 }
 
-fn gen_bloberror<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
-  mut x: (&'a mut [u8], usize),
+fn gen_bloberror<'b, W: GenOut, A: Into<BorrowedAttrs<'b>>>(
+  mut x: W,
   data: &[u8],
   attributes: Option<A>,
   int_as_blobstring: bool,
-) -> Result<(&'a mut [u8], usize), GenError> {
+) -> Result<W, GenError> {
   encode_attributes!(x, attributes, int_as_blobstring);
 
   let (len, padding) = int2dec::u64_to_digits(data.len() as u64);
@@ -185,13 +185,13 @@ fn gen_bloberror<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   )
 }
 
-fn gen_verbatimstring<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
-  mut x: (&'a mut [u8], usize),
+fn gen_verbatimstring<'b, W: GenOut, A: Into<BorrowedAttrs<'b>>>(
+  mut x: W,
   data: &[u8],
   format: &VerbatimStringFormat,
   attributes: Option<A>,
   int_as_blobstring: bool,
-) -> Result<(&'a mut [u8], usize), GenError> {
+) -> Result<W, GenError> {
   encode_attributes!(x, attributes, int_as_blobstring);
 
   let total_len = format.encode_len() + data.len();
@@ -208,12 +208,12 @@ fn gen_verbatimstring<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   )
 }
 
-fn gen_owned_array<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
-  mut x: (&'a mut [u8], usize),
+fn gen_owned_array<'b, W: GenOut, A: Into<BorrowedAttrs<'b>>>(
+  mut x: W,
   data: &[OwnedFrame],
   attributes: Option<A>,
   int_as_blobstring: bool,
-) -> Result<(&'a mut [u8], usize), GenError> {
+) -> Result<W, GenError> {
   encode_attributes!(x, attributes, int_as_blobstring);
 
   let (len, padding) = int2dec::u64_to_digits(data.len() as u64);
@@ -223,18 +223,18 @@ fn gen_owned_array<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   )?;
 
   for frame in data.iter() {
-    x = gen_owned_frame(x.0, x.1, frame, int_as_blobstring)?;
+    x = gen_owned_frame(x, frame, int_as_blobstring)?;
   }
 
   Ok(x)
 }
 
-fn gen_borrowed_array<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
-  mut x: (&'a mut [u8], usize),
+fn gen_borrowed_array<'b, W: GenOut, A: Into<BorrowedAttrs<'b>>>(
+  mut x: W,
   data: &[BorrowedFrame],
   attributes: Option<A>,
   int_as_blobstring: bool,
-) -> Result<(&'a mut [u8], usize), GenError> {
+) -> Result<W, GenError> {
   encode_attributes!(x, attributes, int_as_blobstring);
 
   let (len, padding) = int2dec::u64_to_digits(data.len() as u64);
@@ -244,19 +244,19 @@ fn gen_borrowed_array<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   )?;
 
   for frame in data.iter() {
-    x = gen_borrowed_frame(x.0, x.1, frame, int_as_blobstring)?;
+    x = gen_borrowed_frame(x, frame, int_as_blobstring)?;
   }
 
   Ok(x)
 }
 
 #[cfg(feature = "bytes")]
-fn gen_bytes_array<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
-  mut x: (&'a mut [u8], usize),
+fn gen_bytes_array<'b, W: GenOut, A: Into<BorrowedAttrs<'b>>>(
+  mut x: W,
   data: &[BytesFrame],
   attributes: Option<A>,
   int_as_blobstring: bool,
-) -> Result<(&'a mut [u8], usize), GenError> {
+) -> Result<W, GenError> {
   encode_attributes!(x, attributes, int_as_blobstring);
 
   let (len, padding) = int2dec::u64_to_digits(data.len() as u64);
@@ -266,18 +266,18 @@ fn gen_bytes_array<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   )?;
 
   for frame in data.iter() {
-    x = gen_bytes_frame(x.0, x.1, frame, int_as_blobstring)?;
+    x = gen_bytes_frame(x, frame, int_as_blobstring)?;
   }
 
   Ok(x)
 }
 
-fn gen_owned_map<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
-  mut x: (&'a mut [u8], usize),
+fn gen_owned_map<'b, W: GenOut, A: Into<BorrowedAttrs<'b>>>(
+  mut x: W,
   data: &FrameMap<OwnedFrame, OwnedFrame>,
   attributes: Option<A>,
   int_as_blobstring: bool,
-) -> Result<(&'a mut [u8], usize), GenError> {
+) -> Result<W, GenError> {
   encode_attributes!(x, attributes, int_as_blobstring);
 
   let (len, padding) = int2dec::u64_to_digits(data.len() as u64);
@@ -287,19 +287,19 @@ fn gen_owned_map<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   )?;
 
   for (key, value) in data.iter() {
-    x = gen_owned_frame(x.0, x.1, key, int_as_blobstring)?;
-    x = gen_owned_frame(x.0, x.1, value, int_as_blobstring)?;
+    x = gen_owned_frame(x, key, int_as_blobstring)?;
+    x = gen_owned_frame(x, value, int_as_blobstring)?;
   }
 
   Ok(x)
 }
 
-fn gen_borrowed_map<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
-  mut x: (&'a mut [u8], usize),
+fn gen_borrowed_map<'b, W: GenOut, A: Into<BorrowedAttrs<'b>>>(
+  mut x: W,
   data: &FrameMap<BorrowedFrame, BorrowedFrame>,
   attributes: Option<A>,
   int_as_blobstring: bool,
-) -> Result<(&'a mut [u8], usize), GenError> {
+) -> Result<W, GenError> {
   encode_attributes!(x, attributes, int_as_blobstring);
 
   let (len, padding) = int2dec::u64_to_digits(data.len() as u64);
@@ -309,20 +309,20 @@ fn gen_borrowed_map<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   )?;
 
   for (key, value) in data.iter() {
-    x = gen_borrowed_frame(x.0, x.1, key, int_as_blobstring)?;
-    x = gen_borrowed_frame(x.0, x.1, value, int_as_blobstring)?;
+    x = gen_borrowed_frame(x, key, int_as_blobstring)?;
+    x = gen_borrowed_frame(x, value, int_as_blobstring)?;
   }
 
   Ok(x)
 }
 
 #[cfg(feature = "bytes")]
-fn gen_bytes_map<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
-  mut x: (&'a mut [u8], usize),
+fn gen_bytes_map<'b, W: GenOut, A: Into<BorrowedAttrs<'b>>>(
+  mut x: W,
   data: &FrameMap<BytesFrame, BytesFrame>,
   attributes: Option<A>,
   int_as_blobstring: bool,
-) -> Result<(&'a mut [u8], usize), GenError> {
+) -> Result<W, GenError> {
   encode_attributes!(x, attributes, int_as_blobstring);
 
   let (len, padding) = int2dec::u64_to_digits(data.len() as u64);
@@ -332,19 +332,19 @@ fn gen_bytes_map<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   )?;
 
   for (key, value) in data.iter() {
-    x = gen_bytes_frame(x.0, x.1, key, int_as_blobstring)?;
-    x = gen_bytes_frame(x.0, x.1, value, int_as_blobstring)?;
+    x = gen_bytes_frame(x, key, int_as_blobstring)?;
+    x = gen_bytes_frame(x, value, int_as_blobstring)?;
   }
 
   Ok(x)
 }
 
-fn gen_owned_set<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
-  mut x: (&'a mut [u8], usize),
+fn gen_owned_set<'b, W: GenOut, A: Into<BorrowedAttrs<'b>>>(
+  mut x: W,
   data: &FrameSet<OwnedFrame>,
   attributes: Option<A>,
   int_as_blobstring: bool,
-) -> Result<(&'a mut [u8], usize), GenError> {
+) -> Result<W, GenError> {
   encode_attributes!(x, attributes, int_as_blobstring);
 
   let (len, padding) = int2dec::u64_to_digits(data.len() as u64);
@@ -354,18 +354,18 @@ fn gen_owned_set<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   )?;
 
   for frame in data.iter() {
-    x = gen_owned_frame(x.0, x.1, frame, int_as_blobstring)?;
+    x = gen_owned_frame(x, frame, int_as_blobstring)?;
   }
 
   Ok(x)
 }
 
-fn gen_borrowed_set<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
-  mut x: (&'a mut [u8], usize),
+fn gen_borrowed_set<'b, W: GenOut, A: Into<BorrowedAttrs<'b>>>(
+  mut x: W,
   data: &FrameSet<BorrowedFrame>,
   attributes: Option<A>,
   int_as_blobstring: bool,
-) -> Result<(&'a mut [u8], usize), GenError> {
+) -> Result<W, GenError> {
   encode_attributes!(x, attributes, int_as_blobstring);
 
   let (len, padding) = int2dec::u64_to_digits(data.len() as u64);
@@ -375,19 +375,19 @@ fn gen_borrowed_set<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   )?;
 
   for frame in data.iter() {
-    x = gen_borrowed_frame(x.0, x.1, frame, int_as_blobstring)?;
+    x = gen_borrowed_frame(x, frame, int_as_blobstring)?;
   }
 
   Ok(x)
 }
 
 #[cfg(feature = "bytes")]
-fn gen_bytes_set<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
-  mut x: (&'a mut [u8], usize),
+fn gen_bytes_set<'b, W: GenOut, A: Into<BorrowedAttrs<'b>>>(
+  mut x: W,
   data: &FrameSet<BytesFrame>,
   attributes: Option<A>,
   int_as_blobstring: bool,
-) -> Result<(&'a mut [u8], usize), GenError> {
+) -> Result<W, GenError> {
   encode_attributes!(x, attributes, int_as_blobstring);
 
   let (len, padding) = int2dec::u64_to_digits(data.len() as u64);
@@ -397,17 +397,13 @@ fn gen_bytes_set<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   )?;
 
   for frame in data.iter() {
-    x = gen_bytes_frame(x.0, x.1, frame, int_as_blobstring)?;
+    x = gen_bytes_frame(x, frame, int_as_blobstring)?;
   }
 
   Ok(x)
 }
 
-fn gen_owned_attribute<'a>(
-  x: (&'a mut [u8], usize),
-  data: &OwnedAttributes,
-  int_as_blobstring: bool,
-) -> Result<(&'a mut [u8], usize), GenError> {
+fn gen_owned_attribute<W: GenOut>(x: W, data: &OwnedAttributes, int_as_blobstring: bool) -> Result<W, GenError> {
   let (len, padding) = int2dec::u64_to_digits(data.len() as u64);
   let mut x = do_gen!(
     x,
@@ -415,19 +411,15 @@ fn gen_owned_attribute<'a>(
   )?;
 
   for (key, value) in data.iter() {
-    x = gen_owned_frame(x.0, x.1, key, int_as_blobstring)?;
-    x = gen_owned_frame(x.0, x.1, value, int_as_blobstring)?;
+    x = gen_owned_frame(x, key, int_as_blobstring)?;
+    x = gen_owned_frame(x, value, int_as_blobstring)?;
   }
 
   Ok(x)
 }
 
 #[cfg(feature = "bytes")]
-fn gen_bytes_attribute<'a>(
-  x: (&'a mut [u8], usize),
-  data: &BytesAttributes,
-  int_as_blobstring: bool,
-) -> Result<(&'a mut [u8], usize), GenError> {
+fn gen_bytes_attribute<W: GenOut>(x: W, data: &BytesAttributes, int_as_blobstring: bool) -> Result<W, GenError> {
   let (len, padding) = int2dec::u64_to_digits(data.len() as u64);
   let mut x = do_gen!(
     x,
@@ -435,19 +427,19 @@ fn gen_bytes_attribute<'a>(
   )?;
 
   for (key, value) in data.iter() {
-    x = gen_bytes_frame(x.0, x.1, key, int_as_blobstring)?;
-    x = gen_bytes_frame(x.0, x.1, value, int_as_blobstring)?;
+    x = gen_bytes_frame(x, key, int_as_blobstring)?;
+    x = gen_bytes_frame(x, value, int_as_blobstring)?;
   }
 
   Ok(x)
 }
 
-fn gen_owned_push<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
-  mut x: (&'a mut [u8], usize),
+fn gen_owned_push<'b, W: GenOut, A: Into<BorrowedAttrs<'b>>>(
+  mut x: W,
   data: &[OwnedFrame],
   attributes: Option<A>,
   int_as_blobstring: bool,
-) -> Result<(&'a mut [u8], usize), GenError> {
+) -> Result<W, GenError> {
   encode_attributes!(x, attributes, int_as_blobstring);
 
   let (len, padding) = int2dec::u64_to_digits(data.len() as u64);
@@ -457,18 +449,18 @@ fn gen_owned_push<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   )?;
 
   for frame in data.iter() {
-    x = gen_owned_frame(x.0, x.1, frame, int_as_blobstring)?;
+    x = gen_owned_frame(x, frame, int_as_blobstring)?;
   }
 
   Ok(x)
 }
 
-fn gen_borrowed_push<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
-  mut x: (&'a mut [u8], usize),
+fn gen_borrowed_push<'b, W: GenOut, A: Into<BorrowedAttrs<'b>>>(
+  mut x: W,
   data: &[BorrowedFrame],
   attributes: Option<A>,
   int_as_blobstring: bool,
-) -> Result<(&'a mut [u8], usize), GenError> {
+) -> Result<W, GenError> {
   encode_attributes!(x, attributes, int_as_blobstring);
 
   let (len, padding) = int2dec::u64_to_digits(data.len() as u64);
@@ -478,19 +470,19 @@ fn gen_borrowed_push<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   )?;
 
   for frame in data.iter() {
-    x = gen_borrowed_frame(x.0, x.1, frame, int_as_blobstring)?;
+    x = gen_borrowed_frame(x, frame, int_as_blobstring)?;
   }
 
   Ok(x)
 }
 
 #[cfg(feature = "bytes")]
-fn gen_bytes_push<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
-  mut x: (&'a mut [u8], usize),
+fn gen_bytes_push<'b, W: GenOut, A: Into<BorrowedAttrs<'b>>>(
+  mut x: W,
   data: &[BytesFrame],
   attributes: Option<A>,
   int_as_blobstring: bool,
-) -> Result<(&'a mut [u8], usize), GenError> {
+) -> Result<W, GenError> {
   encode_attributes!(x, attributes, int_as_blobstring);
 
   let (len, padding) = int2dec::u64_to_digits(data.len() as u64);
@@ -500,18 +492,18 @@ fn gen_bytes_push<'a, 'b, A: Into<BorrowedAttrs<'b>>>(
   )?;
 
   for frame in data.iter() {
-    x = gen_bytes_frame(x.0, x.1, frame, int_as_blobstring)?;
+    x = gen_bytes_frame(x, frame, int_as_blobstring)?;
   }
 
   Ok(x)
 }
 
-fn gen_hello<'a>(
-  x: (&'a mut [u8], usize),
+fn gen_hello<W: GenOut>(
+  x: W,
   version: &RespVersion,
   auth: Option<(&str, &str)>,
   setname: Option<&str>,
-) -> Result<(&'a mut [u8], usize), GenError> {
+) -> Result<W, GenError> {
   let mut x = do_gen!(
     x,
     gen_slice!(HELLO.as_bytes()) >> gen_slice!(EMPTY_SPACE.as_bytes()) >> gen_be_u8!(version.to_byte())
@@ -540,7 +532,7 @@ fn gen_hello<'a>(
   do_gen!(x, gen_slice!(CRLF.as_bytes()))
 }
 
-fn gen_chunked_string<'a>(x: (&'a mut [u8], usize), data: &[u8]) -> Result<(&'a mut [u8], usize), GenError> {
+fn gen_chunked_string<W: GenOut>(x: W, data: &[u8]) -> Result<W, GenError> {
   if data.is_empty() {
     // signal the end of the chunked stream
     do_gen!(x, gen_slice!(END_STREAM_STRING_BYTES.as_bytes()))
@@ -557,14 +549,8 @@ fn gen_chunked_string<'a>(x: (&'a mut [u8], usize), data: &[u8]) -> Result<(&'a 
   }
 }
 
-fn gen_owned_frame<'a>(
-  buf: &'a mut [u8],
-  offset: usize,
-  frame: &OwnedFrame,
-  int_as_blobstring: bool,
-) -> Result<(&'a mut [u8], usize), GenError> {
-  log::trace!("Encode {:?}, buf len: {}", frame.kind(), buf.len());
-  let x = (buf, offset);
+fn gen_owned_frame<W: GenOut>(x: W, frame: &OwnedFrame, int_as_blobstring: bool) -> Result<W, GenError> {
+  log::trace!("Encode {:?}", frame.kind());
 
   match frame {
     OwnedFrame::Array { data, attributes } => gen_owned_array(x, data, attributes.as_ref(), int_as_blobstring),
@@ -594,14 +580,8 @@ fn gen_owned_frame<'a>(
   }
 }
 
-fn gen_borrowed_frame<'a>(
-  buf: &'a mut [u8],
-  offset: usize,
-  frame: &BorrowedFrame,
-  int_as_blobstring: bool,
-) -> Result<(&'a mut [u8], usize), GenError> {
-  log::trace!("Encode {:?}, buf len: {}", frame.kind(), buf.len());
-  let x = (buf, offset);
+fn gen_borrowed_frame<W: GenOut>(x: W, frame: &BorrowedFrame, int_as_blobstring: bool) -> Result<W, GenError> {
+  log::trace!("Encode {:?}", frame.kind());
 
   match frame {
     BorrowedFrame::Array { data, attributes } => gen_borrowed_array(x, data, attributes.as_ref(), int_as_blobstring),
@@ -632,14 +612,8 @@ fn gen_borrowed_frame<'a>(
 }
 
 #[cfg(feature = "bytes")]
-fn gen_bytes_frame<'a>(
-  buf: &'a mut [u8],
-  offset: usize,
-  frame: &BytesFrame,
-  int_as_blobstring: bool,
-) -> Result<(&'a mut [u8], usize), GenError> {
-  log::trace!("Encode {:?}, buf len: {}", frame.kind(), buf.len());
-  let x = (buf, offset);
+fn gen_bytes_frame<W: GenOut>(x: W, frame: &BytesFrame, int_as_blobstring: bool) -> Result<W, GenError> {
+  log::trace!("Encode {:?}", frame.kind());
 
   match frame {
     BytesFrame::Array { data, attributes } => gen_bytes_array(x, data, attributes.as_ref(), int_as_blobstring),
@@ -732,7 +706,7 @@ pub mod complete {
   /// The caller is responsible for extending `buf` if a `BufferTooSmall` error is returned.
   pub fn encode(buf: &mut [u8], frame: &OwnedFrame, int_as_blobstring: bool) -> Result<usize, RedisProtocolError> {
     encode_checks!(buf, 0, frame.encode_len(int_as_blobstring));
-    gen_owned_frame(buf, 0, frame, int_as_blobstring)
+    gen_owned_frame((buf, 0), frame, int_as_blobstring)
       .map(|(_, amt)| amt)
       .map_err(|e| e.into())
   }
@@ -746,7 +720,7 @@ pub mod complete {
     int_as_blobstring: bool,
   ) -> Result<usize, RedisProtocolError> {
     encode_checks!(buf, 0, frame.encode_len(int_as_blobstring));
-    gen_borrowed_frame(buf, 0, frame, int_as_blobstring)
+    gen_borrowed_frame((buf, 0), frame, int_as_blobstring)
       .map(|(_, amt)| amt)
       .map_err(|e| e.into())
   }
@@ -764,7 +738,7 @@ pub mod complete {
     int_as_blobstring: bool,
   ) -> Result<usize, RedisProtocolError> {
     encode_checks!(buf, 0, frame.encode_len(int_as_blobstring));
-    gen_bytes_frame(buf, 0, frame, int_as_blobstring)
+    gen_bytes_frame((buf, 0), frame, int_as_blobstring)
       .map(|(_, amt)| amt)
       .map_err(|e| e.into())
   }
@@ -779,13 +753,9 @@ pub mod complete {
     frame: &BytesFrame,
     int_as_blobstring: bool,
   ) -> Result<usize, RedisProtocolError> {
-    let amt = frame.encode_len(int_as_blobstring);
-    let offset = buf.len();
-    utils::zero_extend(buf, amt);
-
-    gen_bytes_frame(buf, offset, frame, int_as_blobstring)
-      .map(|(_, amt)| amt)
-      .map_err(|e| e.into())
+    utils::extend_with(buf, frame.encode_len(int_as_blobstring), |buf| {
+      gen_bytes_frame(buf, frame, int_as_blobstring).map(|_| ())
+    })
   }
 
   /// Attempt to encode a borrowed frame at the end of `buf`, extending the buffer before encoding.
@@ -798,13 +768,9 @@ pub mod complete {
     frame: &BorrowedFrame,
     int_as_blobstring: bool,
   ) -> Result<usize, RedisProtocolError> {
-    let amt = frame.encode_len(int_as_blobstring);
-    let offset = buf.len();
-    utils::zero_extend(buf, amt);
-
-    gen_borrowed_frame(buf, offset, frame, int_as_blobstring)
-      .map(|(_, amt)| amt)
-      .map_err(|e| e.into())
+    utils::extend_with(buf, frame.encode_len(int_as_blobstring), |buf| {
+      gen_borrowed_frame(buf, frame, int_as_blobstring).map(|_| ())
+    })
   }
 }
 
@@ -881,17 +847,14 @@ pub mod streaming {
   /// Number of bytes needed to encode the terminating bytes after an aggregate type.
   pub const END_STREAM_AGGREGATE_TYPE_ENCODE_LEN: usize = 3;
 
-  fn gen_start_streaming_string(x: (&mut [u8], usize)) -> Result<(&mut [u8], usize), GenError> {
+  fn gen_start_streaming_string<W: GenOut>(x: W) -> Result<W, GenError> {
     do_gen!(
       x,
       gen_be_u8!(BLOB_STRING_BYTE) >> gen_be_u8!(STREAMED_LENGTH_BYTE) >> gen_slice!(CRLF.as_bytes())
     )
   }
 
-  fn gen_streaming_string_chunk<'a>(
-    x: (&'a mut [u8], usize),
-    data: &[u8],
-  ) -> Result<(&'a mut [u8], usize), GenError> {
+  fn gen_streaming_string_chunk<W: GenOut>(x: W, data: &[u8]) -> Result<W, GenError> {
     do_gen!(
       x,
       gen_be_u8!(CHUNKED_STRING_BYTE)
@@ -902,78 +865,75 @@ pub mod streaming {
     )
   }
 
-  fn gen_end_streaming_string(x: (&mut [u8], usize)) -> Result<(&mut [u8], usize), GenError> {
+  fn gen_end_streaming_string<W: GenOut>(x: W) -> Result<W, GenError> {
     do_gen!(x, gen_slice!(END_STREAM_STRING_BYTES.as_bytes()))
   }
 
-  fn gen_start_streaming_aggregate_type(
-    x: (&mut [u8], usize),
-    kind: FrameKind,
-  ) -> Result<(&mut [u8], usize), GenError> {
+  fn gen_start_streaming_aggregate_type<W: GenOut>(x: W, kind: FrameKind) -> Result<W, GenError> {
     do_gen!(
       x,
       gen_be_u8!(kind.to_byte()) >> gen_be_u8!(STREAMED_LENGTH_BYTE) >> gen_slice!(CRLF.as_bytes())
     )
   }
 
-  fn gen_end_streaming_aggregate_type(x: (&mut [u8], usize)) -> Result<(&mut [u8], usize), GenError> {
+  fn gen_end_streaming_aggregate_type<W: GenOut>(x: W) -> Result<W, GenError> {
     do_gen!(x, gen_slice!(END_STREAM_AGGREGATE_BYTES.as_bytes()))
   }
 
-  fn gen_owned_streaming_inner_value_frame<'a>(
-    x: (&'a mut [u8], usize),
+  fn gen_owned_streaming_inner_value_frame<W: GenOut>(
+    x: W,
     data: &OwnedFrame,
     int_as_blobstring: bool,
-  ) -> Result<(&'a mut [u8], usize), GenError> {
-    gen_owned_frame(x.0, x.1, data, int_as_blobstring)
+  ) -> Result<W, GenError> {
+    gen_owned_frame(x, data, int_as_blobstring)
   }
 
-  fn gen_borrowed_streaming_inner_value_frame<'a>(
-    x: (&'a mut [u8], usize),
+  fn gen_borrowed_streaming_inner_value_frame<W: GenOut>(
+    x: W,
     data: &BorrowedFrame,
     int_as_blobstring: bool,
-  ) -> Result<(&'a mut [u8], usize), GenError> {
-    gen_borrowed_frame(x.0, x.1, data, int_as_blobstring)
+  ) -> Result<W, GenError> {
+    gen_borrowed_frame(x, data, int_as_blobstring)
   }
 
-  fn gen_owned_streaming_inner_kv_pair_frames<'a>(
-    x: (&'a mut [u8], usize),
+  fn gen_owned_streaming_inner_kv_pair_frames<W: GenOut>(
+    x: W,
     key: &OwnedFrame,
     value: &OwnedFrame,
     int_as_blobstring: bool,
-  ) -> Result<(&'a mut [u8], usize), GenError> {
-    let x = gen_owned_frame(x.0, x.1, key, int_as_blobstring)?;
-    gen_owned_frame(x.0, x.1, value, int_as_blobstring)
+  ) -> Result<W, GenError> {
+    let x = gen_owned_frame(x, key, int_as_blobstring)?;
+    gen_owned_frame(x, value, int_as_blobstring)
   }
 
-  fn gen_borrowed_streaming_inner_kv_pair_frames<'a>(
-    x: (&'a mut [u8], usize),
+  fn gen_borrowed_streaming_inner_kv_pair_frames<W: GenOut>(
+    x: W,
     key: &BorrowedFrame,
     value: &BorrowedFrame,
     int_as_blobstring: bool,
-  ) -> Result<(&'a mut [u8], usize), GenError> {
-    let x = gen_borrowed_frame(x.0, x.1, key, int_as_blobstring)?;
-    gen_borrowed_frame(x.0, x.1, value, int_as_blobstring)
+  ) -> Result<W, GenError> {
+    let x = gen_borrowed_frame(x, key, int_as_blobstring)?;
+    gen_borrowed_frame(x, value, int_as_blobstring)
   }
 
   #[cfg(feature = "bytes")]
-  fn gen_bytes_streaming_inner_value_frame<'a>(
-    x: (&'a mut [u8], usize),
+  fn gen_bytes_streaming_inner_value_frame<W: GenOut>(
+    x: W,
     data: &BytesFrame,
     int_as_blobstring: bool,
-  ) -> Result<(&'a mut [u8], usize), GenError> {
-    gen_bytes_frame(x.0, x.1, data, int_as_blobstring)
+  ) -> Result<W, GenError> {
+    gen_bytes_frame(x, data, int_as_blobstring)
   }
 
   #[cfg(feature = "bytes")]
-  fn gen_bytes_streaming_inner_kv_pair_frames<'a>(
-    x: (&'a mut [u8], usize),
+  fn gen_bytes_streaming_inner_kv_pair_frames<W: GenOut>(
+    x: W,
     key: &BytesFrame,
     value: &BytesFrame,
     int_as_blobstring: bool,
-  ) -> Result<(&'a mut [u8], usize), GenError> {
-    let x = gen_bytes_frame(x.0, x.1, key, int_as_blobstring)?;
-    gen_bytes_frame(x.0, x.1, value, int_as_blobstring)
+  ) -> Result<W, GenError> {
+    let x = gen_bytes_frame(x, key, int_as_blobstring)?;
+    gen_bytes_frame(x, value, int_as_blobstring)
   }
 
   /// Encode the starting bytes in a streaming blob string.

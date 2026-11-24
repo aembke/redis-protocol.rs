@@ -2,6 +2,9 @@
 //!
 //! These replace the subset of the legacy `cookie-factory` macro interface previously used by this crate.
 
+#[cfg(feature = "bytes")]
+use bytes::BytesMut;
+
 /// Errors returned by the internal serialization functions.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum GenError {
@@ -12,19 +15,41 @@ pub(crate) enum GenError {
   CustomError(u32),
 }
 
-/// Copy `data` into `buf` at `offset`, returning the buffer and the next offset.
-#[inline]
-pub(crate) fn gen_slice<'a>(
-  (buf, offset): (&'a mut [u8], usize),
-  data: &[u8],
-) -> Result<(&'a mut [u8], usize), GenError> {
-  let end = offset + data.len();
-  if end > buf.len() {
-    return Err(GenError::BufferTooSmall(end - buf.len()));
-  }
+/// A destination for encoded bytes.
+pub(crate) trait GenOut: Sized {
+  /// Append `data`, returning the destination for the next write.
+  fn gen_slice(self, data: &[u8]) -> Result<Self, GenError>;
+}
 
-  buf[offset .. end].copy_from_slice(data);
-  Ok((buf, end))
+/// A slice and the offset of the next write, which fails if the slice is too small.
+impl GenOut for (&mut [u8], usize) {
+  #[inline]
+  fn gen_slice(self, data: &[u8]) -> Result<Self, GenError> {
+    let (buf, offset) = self;
+    let end = offset + data.len();
+    if end > buf.len() {
+      return Err(GenError::BufferTooSmall(end - buf.len()));
+    }
+
+    buf[offset .. end].copy_from_slice(data);
+    Ok((buf, end))
+  }
+}
+
+/// A growable buffer. Bytes are appended directly, so the buffer doesn't need to be zero-filled before encoding.
+#[cfg(feature = "bytes")]
+impl GenOut for &mut BytesMut {
+  #[inline]
+  fn gen_slice(self, data: &[u8]) -> Result<Self, GenError> {
+    self.extend_from_slice(data);
+    Ok(self)
+  }
+}
+
+/// Write `data` to `x`, returning the destination for the next write.
+#[inline]
+pub(crate) fn gen_slice<W: GenOut>(x: W, data: &[u8]) -> Result<W, GenError> {
+  x.gen_slice(data)
 }
 
 #[cfg(test)]
