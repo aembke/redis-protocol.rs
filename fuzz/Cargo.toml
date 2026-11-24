@@ -43,3 +43,17 @@ path = "fuzz_targets/resp3_bytes.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "resp2_scan"
+path = "fuzz_targets/resp2_scan.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "resp3_scan"
+path = "fuzz_targets/resp3_scan.rs"
+test = false
+doc = false
+bench = false

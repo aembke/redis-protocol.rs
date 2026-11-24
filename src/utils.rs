@@ -36,6 +36,20 @@ pub(crate) fn find_crlf(buf: &[u8]) -> Result<(&[u8], &[u8]), nom::Err<RedisPars
   Err(nom::Err::Incomplete(nom::Needed::Unknown))
 }
 
+/// Whether `buf[start..]` contains a CRLF, resuming the search from `*searched` (the buffer length at the end of the
+/// last unsuccessful search) so that a line arriving in many small reads is only searched once.
+#[cfg(any(feature = "resp2", feature = "resp3"))]
+pub(crate) fn line_is_buffered(buf: &[u8], start: usize, searched: &mut usize) -> bool {
+  // the last search may have stopped between the `\r` and the `\n`
+  let from = start.max(searched.saturating_sub(1));
+  if buf.get(from ..).is_some_and(|rest| find_crlf(rest).is_ok()) {
+    true
+  } else {
+    *searched = buf.len();
+    false
+  }
+}
+
 pub fn isize_to_usize<T>(val: isize) -> Result<usize, RedisParseError<T>> {
   if val >= 0 {
     Ok(val as usize)

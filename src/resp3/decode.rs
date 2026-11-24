@@ -1,7 +1,7 @@
 use crate::{
   error::*,
   resp3::{types::*, utils as resp3_utils},
-  types::{DResult, MAX_DECODE_DEPTH, MAX_INITIAL_CAPACITY_BYTES},
+  types::{DResult, Scan, MAX_DECODE_DEPTH, MAX_INITIAL_CAPACITY_BYTES},
   utils,
 };
 use alloc::{format, vec::Vec};
@@ -672,6 +672,283 @@ pub mod streaming {
         buf,
       )),
     })
+  }
+}
+
+/// An aggregate frame that the scanner is inside of.
+#[derive(Clone, Debug)]
+struct OpenAggregate {
+  kind:      FrameKind,
+  /// The number of inner frames still expected. Maps and attributes count keys and values separately.
+  remaining: usize,
+  /// Whether a key that cannot be hashed was found, which the decoder rejects once the aggregate ends.
+  bad_key:   bool,
+}
+
+/// An incremental scanner that finds the end of the next frame in a buffer that is filled over several reads.
+///
+/// The decoding functions in this module don't keep any state between calls. When the buffer holds only part of a
+/// frame they return `Ok(None)`, and the next call parses the buffer again from the start. If a large frame arrives
+/// over many small reads (TLS, for example, usually yields one record per read), the total decoding cost grows with
+/// the square of the frame size.
+///
+/// A `FrameScanner` remembers how far it got. Each call to [scan](Self::scan) reads only the bytes added since the
+/// previous call, and blob contents are skipped by their length prefix. Call a decoding function when the scanner
+/// reports that the buffer contains a complete frame.
+///
+/// The scanner uses the same parsing logic as the [streaming] decoder, so the [Scan] value always matches what that
+/// decoder would return for the same buffer. The [complete] decoder differs in one case: the scanner reports the
+/// header of a streamed frame as a complete frame, which the complete decoder rejects. The scanner never copies or
+/// stores the buffer contents.
+///
+/// ```rust
+/// # use redis_protocol::{resp3::decode::{streaming::decode, FrameScanner}, types::Scan};
+/// let mut scanner = FrameScanner::new();
+/// let mut buf = b"%1\r\n+foo\r\n$3\r\nb".to_vec();
+/// assert_eq!(scanner.scan(&buf), Scan::Incomplete);
+///
+/// // the next call only reads the new bytes
+/// buf.extend_from_slice(b"ar\r\n");
+/// assert_eq!(scanner.scan(&buf), Scan::Complete(buf.len()));
+///
+/// let (frame, amt) = decode(&buf).unwrap().unwrap();
+/// assert_eq!(amt, 19);
+/// ```
+///
+/// The scanner's offsets are relative to the start of the buffer, so the buffer must only grow between calls that
+/// return [Scan::Incomplete]. The scanner resets itself when it returns [Scan::Complete] or [Scan::Invalid], at which
+/// point the caller is expected to decode or discard the frame. Call [reset](Self::reset) if the buffer is cleared or
+/// replaced in any other way.
+#[derive(Clone, Debug, Default)]
+pub struct FrameScanner {
+  /// The offset of the next frame header to read.
+  pos:             usize,
+  /// The buffer length at the end of the last search for the CRLF that ends the next header.
+  searched:        usize,
+  /// Whether the next frame follows an attribute, which annotates it.
+  after_attribute: bool,
+  /// The aggregate frames that contain the next frame, innermost last.
+  stack:           Vec<OpenAggregate>,
+}
+
+impl FrameScanner {
+  /// Create a new scanner.
+  pub fn new() -> Self {
+    Self::default()
+  }
+
+  /// Reset the scanner so that the next call to [scan](Self::scan) starts from the beginning of the buffer.
+  pub fn reset(&mut self) {
+    self.pos = 0;
+    self.searched = 0;
+    self.after_attribute = false;
+    self.stack.clear();
+  }
+
+  fn finish(&mut self, result: Scan) -> Scan {
+    self.reset();
+    result
+  }
+
+  /// Whether the scanner has not read any part of the next frame.
+  fn is_idle(&self) -> bool {
+    self.pos == 0 && self.searched == 0
+  }
+
+  /// Decode the next frame in `buf` with `decode`, using the scanner to avoid parsing a partial frame more than once.
+  ///
+  /// If no part of the next frame has been scanned yet, `decode` runs right away, since the whole frame is usually
+  /// already buffered. If it returns `Ok(None)`, the scanner reads the partial frame, and later calls only run
+  /// `decode` once the frame is complete. This costs one parse per frame when frames arrive whole, and keeps the
+  /// cost linear in the frame size when they don't.
+  ///
+  /// ```rust
+  /// # use redis_protocol::resp3::decode::{streaming::decode, FrameScanner};
+  /// let mut scanner = FrameScanner::new();
+  /// let mut buf = b"$5\r\nhel".to_vec();
+  /// assert!(scanner
+  ///   .decode_with(&mut buf, |buf| decode(buf))
+  ///   .unwrap()
+  ///   .is_none());
+  ///
+  /// buf.extend_from_slice(b"lo\r\n");
+  /// let (frame, amt) = scanner
+  ///   .decode_with(&mut buf, |buf| decode(buf))
+  ///   .unwrap()
+  ///   .unwrap();
+  /// buf.drain(.. amt);
+  /// ```
+  pub fn decode_with<B, T, E, F>(&mut self, buf: &mut B, decode: F) -> Result<Option<T>, E>
+  where
+    B: AsRef<[u8]> + ?Sized,
+    F: FnOnce(&mut B) -> Result<Option<T>, E>,
+  {
+    if self.is_idle() {
+      let result = decode(buf);
+      if let Ok(None) = result {
+        let _ = self.scan(buf.as_ref());
+      }
+      result
+    } else if self.scan(buf.as_ref()) == Scan::Incomplete {
+      Ok(None)
+    } else {
+      decode(buf)
+    }
+  }
+
+  /// Move past a frame header, or a whole frame.
+  fn advance(&mut self, next: usize) {
+    self.pos = next;
+    self.searched = next;
+    self.after_attribute = false;
+  }
+
+  /// Record the kind of the next inner frame in the innermost aggregate, which is a map or set key if the aggregate
+  /// requires one.
+  fn check_key(&mut self, kind: FrameKind) {
+    if let Some(parent) = self.stack.last_mut() {
+      let is_key = match parent.kind {
+        FrameKind::Set => true,
+        // the first of each pair. maps and attributes count down from an even number.
+        FrameKind::Map | FrameKind::Attribute => parent.remaining % 2 == 0,
+        _ => false,
+      };
+
+      if is_key && !kind.can_hash() {
+        parent.bad_key = true;
+      }
+    }
+  }
+
+  /// Continue scanning `buf`, which must contain the same bytes as the previous call, plus any newly received bytes.
+  pub fn scan(&mut self, buf: &[u8]) -> Scan {
+    if buf.len() < self.pos.max(self.searched) {
+      // the buffer was changed without calling `reset`. start over rather than read the wrong offsets.
+      self.reset();
+    }
+
+    loop {
+      let depth = self.stack.len();
+      if depth > MAX_DECODE_DEPTH {
+        return self.finish(Scan::Invalid);
+      }
+      // the decoder rejects an invalid type byte before reading the rest of the line
+      let (input, kind) = match d_frame_type((&buf[self.pos ..], self.pos)) {
+        Ok(result) => result,
+        Err(NomErr::Incomplete(_)) => return Scan::Incomplete,
+        Err(_) => return self.finish(Scan::Invalid),
+      };
+      if kind == FrameKind::Attribute && self.after_attribute {
+        // the decoder doesn't allow an attribute to annotate another attribute
+        return self.finish(Scan::Invalid);
+      }
+      if !utils::line_is_buffered(buf, self.pos, &mut self.searched) {
+        return Scan::Incomplete;
+      }
+
+      let after_attribute = self.after_attribute;
+      if kind == FrameKind::Attribute {
+        match d_read_prefix_len(input) {
+          Ok(((_, next), len)) => {
+            self.advance(next);
+            if len > 0 {
+              self.stack.push(OpenAggregate {
+                kind:      FrameKind::Attribute,
+                remaining: len.saturating_mul(2),
+                bad_key:   false,
+              });
+            } else {
+              // the annotated frame comes next. otherwise it follows the attribute's key/value pairs.
+              self.after_attribute = true;
+            }
+            continue;
+          },
+          Err(NomErr::Incomplete(_)) => return Scan::Incomplete,
+          Err(_) => return self.finish(Scan::Invalid),
+        }
+      }
+
+      if matches!(
+        kind,
+        FrameKind::Array | FrameKind::Set | FrameKind::Map | FrameKind::Push
+      ) {
+        let ((_, next), len) = match d_read_prefix_len_signed(input) {
+          Ok(result) => result,
+          Err(NomErr::Incomplete(_)) => return Scan::Incomplete,
+          Err(_) => return self.finish(Scan::Invalid),
+        };
+
+        if len == -1 && kind != FrameKind::Push {
+          // the header of a streamed aggregate is decoded as a separate frame, which can't be inside another frame
+          return if depth == 0 {
+            self.finish(Scan::Complete(next))
+          } else {
+            self.finish(Scan::Invalid)
+          };
+        } else if len < 0 {
+          return self.finish(Scan::Invalid);
+        }
+
+        self.check_key(kind);
+        self.advance(next);
+        let len = if kind == FrameKind::Map {
+          (len as usize).saturating_mul(2)
+        } else {
+          len as usize
+        };
+        if len > 0 {
+          self.stack.push(OpenAggregate {
+            kind,
+            remaining: len,
+            bad_key: false,
+          });
+          continue;
+        }
+      } else {
+        // leaf frames are parsed with the decoder's own logic, which only reads one header line plus any blob
+        // contents
+        let ((_, next), mut frame) = match d_parse_leaf_frame(input, kind) {
+          Ok(result) => result,
+          Err(NomErr::Incomplete(_)) => return Scan::Incomplete,
+          Err(_) => return self.finish(Scan::Invalid),
+        };
+        if after_attribute && frame.add_attributes(resp3_utils::new_map(0)).is_err() {
+          return self.finish(Scan::Invalid);
+        }
+
+        match frame {
+          DecodedRangeFrame::Streaming(_) if depth == 0 => return self.finish(Scan::Complete(next)),
+          DecodedRangeFrame::Streaming(_) => return self.finish(Scan::Invalid),
+          DecodedRangeFrame::Complete(frame) => self.check_key(frame.kind()),
+        }
+        self.advance(next);
+      }
+
+      // a frame ended, which may also end one or more of the aggregates that contain it
+      loop {
+        let parent = match self.stack.last_mut() {
+          Some(parent) => parent,
+          None => {
+            let amt = self.pos;
+            return self.finish(Scan::Complete(amt));
+          },
+        };
+
+        parent.remaining -= 1;
+        if parent.remaining > 0 {
+          break;
+        }
+        let closed = self.stack.pop().unwrap();
+        if closed.bad_key {
+          return self.finish(Scan::Invalid);
+        }
+        if closed.kind == FrameKind::Attribute {
+          // the frame that the attribute annotates comes next, in the same position
+          self.after_attribute = true;
+          break;
+        }
+      }
+    }
   }
 }
 
@@ -3066,5 +3343,261 @@ mod depth_tests {
       .unwrap()
       .join()
       .unwrap();
+  }
+}
+
+#[cfg(test)]
+mod scan_tests {
+  use super::*;
+  use alloc::{format, vec::Vec};
+
+  struct Rng(u64);
+  impl Rng {
+    fn next(&mut self) -> u64 {
+      self.0 ^= self.0 << 13;
+      self.0 ^= self.0 >> 7;
+      self.0 ^= self.0 << 17;
+      self.0
+    }
+
+    fn below(&mut self, n: u64) -> u64 {
+      self.next() % n
+    }
+
+    fn one_in(&mut self, n: u64) -> bool {
+      self.below(n) == 0
+    }
+  }
+
+  /// Bytes that must be skipped by length rather than parsed: CRLF and every type byte.
+  const NOISE: &[u8] = b"ab\r\n*$:-+%|>~;._?H=!(,#01";
+
+  fn noise(rng: &mut Rng, len: usize, out: &mut Vec<u8>) {
+    for _ in 0 .. len {
+      out.push(NOISE[rng.below(NOISE.len() as u64) as usize]);
+    }
+  }
+
+  fn blob(rng: &mut Rng, kind: u8, out: &mut Vec<u8>) {
+    let len = rng.below(200) as usize;
+    out.push(kind);
+    out.extend_from_slice(format!("{len}\r\n").as_bytes());
+    noise(rng, len, out);
+    out.extend_from_slice(b"\r\n");
+  }
+
+  /// A frame that can be a map key or set member.
+  fn key(rng: &mut Rng, out: &mut Vec<u8>) {
+    match rng.below(4) {
+      0 => out.extend_from_slice(format!("+k{}\r\n", rng.below(1000)).as_bytes()),
+      1 => out.extend_from_slice(format!(":{}\r\n", rng.below(1000)).as_bytes()),
+      2 => out.extend_from_slice(b"_\r\n"),
+      _ => blob(rng, b'$', out),
+    }
+  }
+
+  /// A frame, which is occasionally invalid in a way that the decoder only detects after parsing other frames.
+  fn frame(rng: &mut Rng, depth: u32, out: &mut Vec<u8>) {
+    match rng.below(if depth == 0 { 13 } else { 20 }) {
+      0 => out.extend_from_slice(b"+OK\r\n"),
+      1 => out.extend_from_slice(b"-ERR wrong type\r\n"),
+      2 => out.extend_from_slice(format!(":{}\r\n", rng.next() as i64).as_bytes()),
+      3 => out.extend_from_slice(b"_\r\n"),
+      4 => out.extend_from_slice(if rng.one_in(2) { b"#t\r\n" } else { b"#f\r\n" }),
+      5 => out.extend_from_slice(b",3.14159\r\n"),
+      6 => out.extend_from_slice(b"(3492890328409238509324850943850943825024385\r\n"),
+      7 => blob(rng, b'$', out),
+      8 => blob(rng, b'!', out),
+      9 => {
+        let len = rng.below(100) as usize;
+        let format = if rng.one_in(20) { "bad" } else { "txt" };
+        out.extend_from_slice(format!("={}\r\n{format}:", len + 4).as_bytes());
+        noise(rng, len, out);
+        out.extend_from_slice(b"\r\n");
+      },
+      10 => out.extend_from_slice(b"HELLO 3 AUTH default password\r\n"),
+      11 => {
+        // a chunk of a streamed string, which the decoder also accepts inside an aggregate
+        let len = rng.below(50) as usize;
+        out.extend_from_slice(format!(";{len}\r\n").as_bytes());
+        if len > 0 {
+          noise(rng, len, out);
+          out.extend_from_slice(b"\r\n");
+        }
+      },
+      12 => {
+        // a streamed frame header, which is only valid at the top level
+        out.extend_from_slice([&b"$?\r\n"[..], b"*?\r\n", b"%?\r\n", b"~?\r\n", b">?\r\n"][rng.below(5) as usize])
+      },
+      13 | 14 => {
+        let len = rng.below(5);
+        let kind = if rng.one_in(2) { '*' } else { '>' };
+        out.extend_from_slice(format!("{kind}{len}\r\n").as_bytes());
+        for _ in 0 .. len {
+          frame(rng, depth - 1, out);
+        }
+      },
+      15 => {
+        let len = rng.below(4);
+        out.extend_from_slice(format!("%{len}\r\n").as_bytes());
+        for _ in 0 .. len {
+          if rng.one_in(10) {
+            // an aggregate key, which the decoder rejects once the map ends
+            frame(rng, depth - 1, out);
+          } else {
+            key(rng, out);
+          }
+          frame(rng, depth - 1, out);
+        }
+      },
+      16 => {
+        let len = rng.below(4);
+        out.extend_from_slice(format!("~{len}\r\n").as_bytes());
+        for _ in 0 .. len {
+          if rng.one_in(10) {
+            frame(rng, depth - 1, out);
+          } else {
+            key(rng, out);
+          }
+        }
+      },
+      _ => {
+        let len = rng.below(3);
+        out.extend_from_slice(format!("|{len}\r\n").as_bytes());
+        for _ in 0 .. len {
+          if rng.one_in(10) {
+            frame(rng, depth - 1, out);
+          } else {
+            key(rng, out);
+          }
+          frame(rng, depth - 1, out);
+        }
+        // the annotated frame, which may also be a null or another attribute, both of which the decoder rejects
+        frame(rng, depth - 1, out);
+      },
+    }
+  }
+
+  fn decode_len(buf: &[u8]) -> Result<Option<usize>, RedisProtocolError> {
+    streaming::decode_range(buf).map(|r| r.map(|(_, amt)| amt))
+  }
+
+  /// Feed `wire` to a scanner in random chunks, checking that each result matches the decoder's.
+  fn check(rng: &mut Rng, wire: &[u8]) {
+    let max_chunk = [1, 3, 16, 256, 4096][rng.below(5) as usize];
+    let mut scanner = FrameScanner::new();
+    let mut buf = Vec::new();
+    let mut offset = 0;
+
+    while offset < wire.len() {
+      let end = (offset + 1 + rng.below(max_chunk) as usize).min(wire.len());
+      buf.extend_from_slice(&wire[offset .. end]);
+      offset = end;
+
+      loop {
+        match (scanner.scan(&buf), decode_len(&buf)) {
+          (Scan::Incomplete, Ok(None)) => break,
+          (Scan::Complete(amt), Ok(Some(expected))) if amt == expected => {
+            buf.drain(.. amt);
+          },
+          (Scan::Invalid, Err(_)) => return,
+          (scan, decoded) => panic!(
+            "scan returned {:?}, decoder returned {:?}, buffer: {:?}",
+            scan,
+            decoded,
+            String::from_utf8_lossy(&buf)
+          ),
+        }
+      }
+    }
+  }
+
+  #[test]
+  fn should_match_decoder_on_chunked_input() {
+    let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
+    for _ in 0 .. 10_000 {
+      let mut wire = Vec::new();
+      for _ in 0 .. 1 + rng.below(3) {
+        frame(&mut rng, 3, &mut wire);
+      }
+      check(&mut rng, &wire);
+    }
+  }
+
+  #[test]
+  fn should_match_decoder_on_corrupted_input() {
+    let mut rng = Rng(0x2545_f491_4f6c_dd1d);
+    for _ in 0 .. 10_000 {
+      let mut wire = Vec::new();
+      for _ in 0 .. 1 + rng.below(3) {
+        frame(&mut rng, 3, &mut wire);
+      }
+      for _ in 0 .. 1 + rng.below(2) {
+        let idx = rng.below(wire.len() as u64) as usize;
+        wire[idx] = NOISE[rng.below(NOISE.len() as u64) as usize];
+      }
+      check(&mut rng, &wire);
+    }
+  }
+
+  #[test]
+  fn should_match_decoder_at_max_depth() {
+    let mut rng = Rng(7);
+    for depth in [
+      MAX_DECODE_DEPTH - 1,
+      MAX_DECODE_DEPTH,
+      MAX_DECODE_DEPTH + 1,
+      MAX_DECODE_DEPTH + 2,
+    ] {
+      for prefix in [
+        &b"*1\r\n"[..],
+        b"%1\r\n+k\r\n",
+        b"|1\r\n+k\r\n",
+        b"|0\r\n*1\r\n",
+        b">1\r\n",
+      ] {
+        for tail in [
+          &b":1\r\n"[..],
+          b"*0\r\n",
+          b"*?\r\n",
+          b"*1\r\n",
+          b"|1\r\n+a\r\n+b\r\n+c\r\n",
+        ] {
+          let mut wire = prefix.repeat(depth);
+          wire.extend_from_slice(tail);
+          if prefix.starts_with(b"|1") {
+            // each attribute annotates the frame after the attributes
+            wire.extend_from_slice(&b"+v\r\n".repeat(depth));
+          }
+          for _ in 0 .. 4 {
+            check(&mut rng, &wire);
+          }
+        }
+      }
+    }
+  }
+
+  #[test]
+  fn should_find_long_simple_strings_incrementally() {
+    let mut wire = b"(".to_vec();
+    wire.extend(core::iter::repeat_n(b'1', 10_000));
+    wire.extend_from_slice(b"\r\n");
+    let mut scanner = FrameScanner::new();
+    for end in 1 .. wire.len() {
+      assert_eq!(scanner.scan(&wire[.. end]), Scan::Incomplete);
+      assert_eq!(scanner.searched, end);
+    }
+    assert_eq!(scanner.scan(&wire), Scan::Complete(wire.len()));
+  }
+
+  #[test]
+  fn should_scan_streamed_frames_one_part_at_a_time() {
+    let mut scanner = FrameScanner::new();
+    let mut buf: &[u8] = b"*?\r\n:1\r\n.\r\n$?\r\n;3\r\nfoo\r\n;0\r\n";
+    for expected in [4, 4, 3, 4, 9, 4] {
+      assert_eq!(scanner.scan(buf), Scan::Complete(expected));
+      buf = &buf[expected ..];
+    }
+    assert_eq!(scanner.scan(buf), Scan::Incomplete);
   }
 }

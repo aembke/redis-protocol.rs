@@ -15,6 +15,21 @@ pub const MAX_DECODE_DEPTH: usize = 128;
 /// The maximum initial capacity, in bytes, of the buffer used to store the inner frames of an aggregate type.
 pub(crate) const MAX_INITIAL_CAPACITY_BYTES: usize = 65536;
 
+/// The result of scanning a buffer for a complete frame.
+///
+/// See the `FrameScanner` types in the [resp2](crate::resp2::decode::FrameScanner) and
+/// [resp3](crate::resp3::decode::FrameScanner) decoding modules.
+#[cfg(any(feature = "resp2", feature = "resp3"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Scan {
+  /// The buffer does not contain a complete frame yet. Decoding it now would return `Ok(None)`.
+  Incomplete,
+  /// The first `n` bytes of the buffer contain a complete frame. Decoding it now would return that frame.
+  Complete(usize),
+  /// The buffer does not start with a valid frame. Decoding it now would return an error.
+  Invalid,
+}
+
 /// Terminating bytes between frames.
 pub const CRLF: &str = "\r\n";
 /// The number of slots in a Redis cluster.

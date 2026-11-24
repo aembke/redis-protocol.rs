@@ -3,7 +3,7 @@ mod resp3 {
   use crate::{
     error::{RedisProtocolError, RedisProtocolErrorKind},
     resp3::{
-      decode::streaming::decode_bytes_mut as resp3_decode,
+      decode::{streaming::decode_bytes_mut as resp3_decode, FrameScanner},
       encode::complete::{extend_encode as resp3_encode, extend_encode_borrowed as resp3_encode_borrowed},
       types::{BorrowedFrame, BytesFrame as Resp3Frame, StreamedFrame},
     },
@@ -61,6 +61,7 @@ mod resp3 {
   #[derive(Debug, Default)]
   pub struct Resp3 {
     streaming:         Option<StreamedFrame<Resp3Frame>>,
+    scanner:           FrameScanner,
     int_as_blobstring: bool,
   }
 
@@ -71,6 +72,7 @@ mod resp3 {
       Resp3 {
         int_as_blobstring,
         streaming: None,
+        scanner: FrameScanner::new(),
       }
     }
   }
@@ -99,7 +101,9 @@ mod resp3 {
       if src.is_empty() {
         return Ok(None);
       }
-      let parsed = match resp3_decode(src)? {
+      // a decoding attempt parses the buffer from the start, so the scanner avoids repeated attempts on partial
+      // frames
+      let parsed = match self.scanner.decode_with(src, resp3_decode)? {
         Some((f, _, _)) => f,
         None => return Ok(None),
       };
@@ -144,7 +148,7 @@ mod resp2 {
   use crate::{
     error::RedisProtocolError,
     resp2::{
-      decode::decode_bytes_mut as resp2_decode,
+      decode::{decode_bytes_mut as resp2_decode, FrameScanner},
       encode::{extend_encode as resp2_encode, extend_encode_borrowed as resp2_encode_borrowed},
       types::{BorrowedFrame, BytesFrame as Resp2Frame},
     },
@@ -190,6 +194,7 @@ mod resp2 {
   /// ```
   #[derive(Clone, Debug, Default)]
   pub struct Resp2 {
+    scanner:           FrameScanner,
     int_as_bulkstring: bool,
   }
 
@@ -197,7 +202,10 @@ mod resp2 {
     /// Create a new codec with the provided flag describing whether the encoder logic should send integers as blob
     /// strings.
     pub fn new(int_as_bulkstring: bool) -> Resp2 {
-      Resp2 { int_as_bulkstring }
+      Resp2 {
+        int_as_bulkstring,
+        scanner: FrameScanner::new(),
+      }
     }
   }
 
@@ -225,7 +233,9 @@ mod resp2 {
       if src.is_empty() {
         return Ok(None);
       }
-      let parsed = match resp2_decode(src)? {
+      // a decoding attempt parses the buffer from the start, so the scanner avoids repeated attempts on partial
+      // frames
+      let parsed = match self.scanner.decode_with(src, resp2_decode)? {
         Some((frame, _, _)) => frame,
         None => return Ok(None),
       };

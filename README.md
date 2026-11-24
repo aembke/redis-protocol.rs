@@ -91,6 +91,32 @@ different use cases:
 * `RangeFrame` types represent ranges into an associated buffer and are typically used to implement forms of zero-copy
   parsing. This is the lowest level interface.
 
+### Incremental Decoding
+
+The decoding functions don't keep any state between calls. When a buffer holds only part of a frame they return
+`None`, and the next call parses the buffer again from the start. If a large frame arrives over many small reads, such
+as TLS records, the total cost of decoding it grows with the square of its size.
+
+The `FrameScanner` types in the `resp2::decode` and `resp3::decode` modules avoid this. A scanner remembers how far it
+got through a partial frame, so each call only reads newly received bytes, and the decoder only runs once the frame is
+complete. The codecs in the `codec` module use a scanner internally.
+
+```rust
+use bytes::BytesMut;
+use redis_protocol::resp2::decode::{decode_bytes_mut, FrameScanner};
+
+fn example() {
+  let mut scanner = FrameScanner::new();
+  let mut buf = BytesMut::from("*2\r\n$3\r\nfoo\r\n$3\r\nb");
+  assert!(scanner.decode_with(&mut buf, decode_bytes_mut).unwrap().is_none());
+
+  // the next call reads only the new bytes
+  buf.extend_from_slice(b"ar\r\n");
+  let (frame, _, _) = scanner.decode_with(&mut buf, decode_bytes_mut).unwrap().unwrap();
+  println!("Decoded {:?}", frame);
+}
+```
+
 ### RESP2 `OwnedFrame` Decoding Example
 
 Simple array decoding example adapted from the tests
