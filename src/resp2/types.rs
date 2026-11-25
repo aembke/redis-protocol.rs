@@ -246,8 +246,11 @@ pub trait Resp2Frame: Debug + Hash + Eq {
   }
 
   /// Convert the frame to a double.
+  ///
+  /// Integers are cast to a double and strings are parsed with [str_to_f64](crate::str_to_f64), which supports
+  /// `inf`, `-inf`, and `nan`.
   fn as_f64(&self) -> Option<f64> {
-    self.as_str().and_then(|s| s.parse::<f64>().ok())
+    self.as_str().and_then(|s| utils::str_to_f64(s).ok())
   }
 
   /// Convert the frame to another type.
@@ -421,6 +424,13 @@ impl Resp2Frame for OwnedFrame {
     }
   }
 
+  fn as_f64(&self) -> Option<f64> {
+    match self {
+      OwnedFrame::Integer(i) => Some(*i as f64),
+      _ => self.as_str().and_then(|s| utils::str_to_f64(s).ok()),
+    }
+  }
+
   fn as_bytes(&self) -> Option<&[u8]> {
     Some(match self {
       OwnedFrame::BulkString(b) => b,
@@ -581,6 +591,13 @@ impl Resp2Frame for BytesFrame {
       BytesFrame::Null => Some(false),
       BytesFrame::NullArray => Some(false),
       _ => None,
+    }
+  }
+
+  fn as_f64(&self) -> Option<f64> {
+    match self {
+      BytesFrame::Integer(i) => Some(*i as f64),
+      _ => self.as_str().and_then(|s| utils::str_to_f64(s).ok()),
     }
   }
 

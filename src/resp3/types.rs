@@ -353,8 +353,177 @@ impl<'a> From<&'a BytesAttributes> for BorrowedAttrs<'a> {
   }
 }
 
+/// Compare doubles such that equality agrees with [hash_f64](resp3_utils::hash_f64): `-0.0 == 0.0` and NaN values
+/// with the same bit pattern are equal. This keeps the `Eq` and `Hash` impls on frames consistent.
+#[inline]
+fn f64_frame_eq(lhs: f64, rhs: f64) -> bool {
+  let normalize = |f: f64| if f == 0.0 { 0.0_f64 } else { f };
+  normalize(lhs).to_bits() == normalize(rhs).to_bits()
+}
+
+/// Implement `PartialEq` for a frame type, comparing doubles with [f64_frame_eq].
+///
+/// All frame types share the same variant and field names.
+macro_rules! impl_frame_eq {
+  ($t:ty) => {
+    impl PartialEq for $t {
+      fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+          (
+            Self::BlobString {
+              data: l,
+              attributes: la,
+            },
+            Self::BlobString {
+              data: r,
+              attributes: ra,
+            },
+          )
+          | (
+            Self::BlobError {
+              data: l,
+              attributes: la,
+            },
+            Self::BlobError {
+              data: r,
+              attributes: ra,
+            },
+          )
+          | (
+            Self::SimpleString {
+              data: l,
+              attributes: la,
+            },
+            Self::SimpleString {
+              data: r,
+              attributes: ra,
+            },
+          )
+          | (
+            Self::BigNumber {
+              data: l,
+              attributes: la,
+            },
+            Self::BigNumber {
+              data: r,
+              attributes: ra,
+            },
+          ) => l == r && la == ra,
+          (
+            Self::SimpleError {
+              data: l,
+              attributes: la,
+            },
+            Self::SimpleError {
+              data: r,
+              attributes: ra,
+            },
+          ) => l == r && la == ra,
+          (
+            Self::Boolean {
+              data: l,
+              attributes: la,
+            },
+            Self::Boolean {
+              data: r,
+              attributes: ra,
+            },
+          ) => l == r && la == ra,
+          (Self::Null, Self::Null) => true,
+          (
+            Self::Number {
+              data: l,
+              attributes: la,
+            },
+            Self::Number {
+              data: r,
+              attributes: ra,
+            },
+          ) => l == r && la == ra,
+          (
+            Self::Double {
+              data: l,
+              attributes: la,
+            },
+            Self::Double {
+              data: r,
+              attributes: ra,
+            },
+          ) => f64_frame_eq(*l, *r) && la == ra,
+          (
+            Self::VerbatimString {
+              data: l,
+              format: lf,
+              attributes: la,
+            },
+            Self::VerbatimString {
+              data: r,
+              format: rf,
+              attributes: ra,
+            },
+          ) => l == r && lf == rf && la == ra,
+          (
+            Self::Array {
+              data: l,
+              attributes: la,
+            },
+            Self::Array {
+              data: r,
+              attributes: ra,
+            },
+          )
+          | (
+            Self::Push {
+              data: l,
+              attributes: la,
+            },
+            Self::Push {
+              data: r,
+              attributes: ra,
+            },
+          ) => l == r && la == ra,
+          (
+            Self::Map {
+              data: l,
+              attributes: la,
+            },
+            Self::Map {
+              data: r,
+              attributes: ra,
+            },
+          ) => l == r && la == ra,
+          (
+            Self::Set {
+              data: l,
+              attributes: la,
+            },
+            Self::Set {
+              data: r,
+              attributes: ra,
+            },
+          ) => l == r && la == ra,
+          (
+            Self::Hello {
+              version: lv,
+              auth: la,
+              setname: ls,
+            },
+            Self::Hello {
+              version: rv,
+              auth: ra,
+              setname: rs,
+            },
+          ) => lv == rv && la == ra && ls == rs,
+          (Self::ChunkedString(l), Self::ChunkedString(r)) => l == r,
+          _ => false,
+        }
+      }
+    }
+  };
+}
+
 /// A borrowed frame variant, typically used for encoding use cases.
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub enum BorrowedFrame<'a> {
   /// A blob of bytes.
   BlobString {
@@ -508,6 +677,7 @@ impl<'a> Clone for BorrowedFrame<'a> {
   }
 }
 
+impl_frame_eq!(BorrowedFrame<'_>);
 impl Eq for BorrowedFrame<'_> {}
 
 impl Hash for BorrowedFrame<'_> {
@@ -572,7 +742,7 @@ impl BorrowedFrame<'_> {
 
 /// A reference-free frame type representing ranges into an associated buffer, typically used to implement zero-copy
 /// parsing.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum RangeFrame {
   /// A blob of bytes.
   BlobString {
@@ -659,6 +829,7 @@ pub enum RangeFrame {
   ChunkedString(_Range),
 }
 
+impl_frame_eq!(RangeFrame);
 impl Eq for RangeFrame {}
 
 impl RangeFrame {
@@ -944,8 +1115,11 @@ pub trait Resp3Frame: Debug + Hash + Eq + Sized {
   }
 
   /// Convert the frame to a double.
+  ///
+  /// Numbers are cast to a double and strings are parsed with [str_to_f64](crate::str_to_f64), which supports
+  /// `inf`, `-inf`, and `nan`.
   fn as_f64(&self) -> Option<f64> {
-    self.as_str().and_then(|s| s.parse::<f64>().ok())
+    self.as_str().and_then(|s| utils::str_to_f64(s).ok())
   }
 
   /// Convert the frame to another type.
@@ -973,7 +1147,7 @@ pub trait Resp3Frame: Debug + Hash + Eq + Sized {
 /// An enum describing a RESP3 frame that uses owned byte containers.
 ///
 /// <https://github.com/antirez/RESP3/blob/master/spec.md>
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum OwnedFrame {
   /// A blob of bytes.
   BlobString {
@@ -1064,6 +1238,7 @@ pub enum OwnedFrame {
   ChunkedString(Vec<u8>),
 }
 
+impl_frame_eq!(OwnedFrame);
 impl Eq for OwnedFrame {}
 
 impl Hash for OwnedFrame {
@@ -1345,7 +1520,16 @@ impl Resp3Frame for OwnedFrame {
         1 => Some(true),
         _ => None,
       },
+      OwnedFrame::Null => Some(false),
       _ => None,
+    }
+  }
+
+  fn as_f64(&self) -> Option<f64> {
+    match self {
+      OwnedFrame::Double { data, .. } => Some(*data),
+      OwnedFrame::Number { data, .. } => Some(*data as f64),
+      _ => self.as_str().and_then(|s| utils::str_to_f64(s).ok()),
     }
   }
 
@@ -1358,7 +1542,9 @@ impl Resp3Frame for OwnedFrame {
       | OwnedFrame::BigNumber { data, .. } => String::from_utf8(data.to_vec()).ok(),
       OwnedFrame::VerbatimString { data, .. } => String::from_utf8(data.to_vec()).ok(),
       OwnedFrame::ChunkedString(b) => String::from_utf8(b.to_vec()).ok(),
-      OwnedFrame::Double { data, .. } => Some(data.to_string()),
+      OwnedFrame::Double { data, .. } => Some(resp3_utils::with_f64_str(*data, |s| {
+        s.iter().map(|b| *b as char).collect()
+      })),
       OwnedFrame::Number { data, .. } => Some(data.to_string()),
       _ => None,
     }
@@ -1522,7 +1708,7 @@ impl From<f64> for OwnedFrame {
 /// <https://github.com/antirez/RESP3/blob/master/spec.md>
 #[cfg(feature = "bytes")]
 #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum BytesFrame {
   /// A blob of bytes.
   BlobString {
@@ -1707,6 +1893,8 @@ impl Hash for BytesFrame {
   }
 }
 
+#[cfg(feature = "bytes")]
+impl_frame_eq!(BytesFrame);
 #[cfg(feature = "bytes")]
 impl Eq for BytesFrame {}
 
@@ -1969,7 +2157,16 @@ impl Resp3Frame for BytesFrame {
         1 => Some(true),
         _ => None,
       },
+      BytesFrame::Null => Some(false),
       _ => None,
+    }
+  }
+
+  fn as_f64(&self) -> Option<f64> {
+    match self {
+      BytesFrame::Double { data, .. } => Some(*data),
+      BytesFrame::Number { data, .. } => Some(*data as f64),
+      _ => self.as_str().and_then(|s| utils::str_to_f64(s).ok()),
     }
   }
 
@@ -1982,7 +2179,9 @@ impl Resp3Frame for BytesFrame {
       | BytesFrame::BigNumber { data, .. } => String::from_utf8(data.to_vec()).ok(),
       BytesFrame::VerbatimString { data, .. } => String::from_utf8(data.to_vec()).ok(),
       BytesFrame::ChunkedString(b) => String::from_utf8(b.to_vec()).ok(),
-      BytesFrame::Double { data, .. } => Some(data.to_string()),
+      BytesFrame::Double { data, .. } => Some(resp3_utils::with_f64_str(*data, |s| {
+        s.iter().map(|b| *b as char).collect()
+      })),
       BytesFrame::Number { data, .. } => Some(data.to_string()),
       _ => None,
     }
@@ -2230,7 +2429,113 @@ impl<T: Resp3Frame> StreamedFrame<T> {
 #[cfg(feature = "bytes")]
 mod tests {
   use super::*;
-  use crate::resp3::utils::new_map;
+  use crate::resp3::utils::{new_map, new_set};
+  use std::{collections::hash_map::RandomState, hash::BuildHasher};
+
+  #[test]
+  fn should_compare_doubles_consistently_with_hash() {
+    let owned = |data: f64| OwnedFrame::Double { data, attributes: None };
+    let bytes = |data: f64| BytesFrame::Double { data, attributes: None };
+    let range = |data: f64| RangeFrame::Double { data, attributes: None };
+    let borrowed = |data: f64| BorrowedFrame::Double { data, attributes: None };
+
+    assert_eq!(owned(f64::NAN), owned(f64::NAN));
+    assert_eq!(owned(-0.0), owned(0.0));
+    assert_ne!(owned(1.0), owned(2.0));
+    assert_ne!(owned(1.0), OwnedFrame::Number {
+      data:       1,
+      attributes: None,
+    });
+    assert_eq!(bytes(f64::NAN), bytes(f64::NAN));
+    assert_eq!(bytes(-0.0), bytes(0.0));
+    assert_ne!(bytes(1.0), bytes(f64::NAN));
+    assert_eq!(range(f64::NAN), range(f64::NAN));
+    assert_eq!(range(-0.0), range(0.0));
+    assert_eq!(borrowed(f64::NAN), borrowed(f64::NAN));
+    assert_eq!(borrowed(-0.0), borrowed(0.0));
+
+    // frames that compare equal hash the same, so doubles can be used as set members and map keys
+    let state = RandomState::new();
+    assert_eq!(state.hash_one(owned(-0.0)), state.hash_one(owned(0.0)));
+    assert_eq!(state.hash_one(bytes(f64::NAN)), state.hash_one(bytes(f64::NAN)));
+    let mut set = new_set(0);
+    set.insert(owned(f64::NAN));
+    set.insert(owned(f64::NAN));
+    set.insert(owned(0.0));
+    set.insert(owned(-0.0));
+    assert_eq!(set.len(), 2);
+
+    // nested doubles use the same rules
+    let array = |data: f64| OwnedFrame::Array {
+      data:       vec![owned(data)],
+      attributes: None,
+    };
+    assert_eq!(array(f64::NAN), array(f64::NAN));
+    assert_ne!(array(1.0), array(f64::NAN));
+  }
+
+  #[test]
+  fn should_compare_non_double_frames() {
+    let blob = |data: &str| OwnedFrame::BlobString {
+      data:       data.as_bytes().to_vec(),
+      attributes: None,
+    };
+    assert_eq!(blob("a"), blob("a"));
+    assert_ne!(blob("a"), blob("b"));
+    assert_ne!(blob("a"), OwnedFrame::SimpleString {
+      data:       "a".into(),
+      attributes: None,
+    });
+    assert_eq!(OwnedFrame::Null, OwnedFrame::Null);
+
+    let mut attributes = new_map(0);
+    attributes.insert(blob("a"), blob("b"));
+    let with_attrs = OwnedFrame::BlobString {
+      data:       "a".into(),
+      attributes: Some(Box::new(attributes)),
+    };
+    assert_ne!(with_attrs, blob("a"));
+    assert_eq!(with_attrs, with_attrs.clone());
+
+    let verbatim = |format: VerbatimStringFormat| OwnedFrame::VerbatimString {
+      data: "a".into(),
+      format,
+      attributes: None,
+    };
+    assert_eq!(
+      verbatim(VerbatimStringFormat::Text),
+      verbatim(VerbatimStringFormat::Text)
+    );
+    assert_ne!(
+      verbatim(VerbatimStringFormat::Text),
+      verbatim(VerbatimStringFormat::Markdown)
+    );
+  }
+
+  #[test]
+  fn should_read_doubles_and_null_from_frames() {
+    let owned = |data: f64| OwnedFrame::Double { data, attributes: None };
+    let bytes = |data: f64| BytesFrame::Double { data, attributes: None };
+
+    assert_eq!(owned(1.5).as_f64(), Some(1.5));
+    assert_eq!(bytes(1.5).as_f64(), Some(1.5));
+    assert_eq!(OwnedFrame::from(3_i64).as_f64(), Some(3.0));
+    assert_eq!(BytesFrame::from(3_i64).as_f64(), Some(3.0));
+    assert_eq!(
+      BytesFrame::BlobString {
+        data:       "-inf".into(),
+        attributes: None,
+      }
+      .as_f64(),
+      Some(f64::NEG_INFINITY)
+    );
+    assert_eq!(OwnedFrame::Null.as_bool(), Some(false));
+    assert_eq!(BytesFrame::Null.as_bool(), Some(false));
+    assert_eq!(owned(f64::NAN).to_string(), Some("nan".into()));
+    assert_eq!(owned(f64::INFINITY).to_string(), Some("inf".into()));
+    assert_eq!(bytes(f64::NEG_INFINITY).to_string(), Some("-inf".into()));
+    assert_eq!(bytes(1.5).to_string(), Some("1.5".into()));
+  }
 
   #[test]
   fn should_convert_basic_streaming_buffer_to_frame() {

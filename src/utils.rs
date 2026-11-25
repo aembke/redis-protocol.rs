@@ -240,7 +240,7 @@ pub fn str_to_f64(s: &str) -> Result<f64, RedisProtocolError> {
     "nan" => Ok(f64::NAN),
     _ => s.parse::<f64>().map_err(|_| {
       RedisProtocolError::new(
-        RedisProtocolErrorKind::Unknown,
+        RedisProtocolErrorKind::Parse,
         "Could not convert to floating point value.",
       )
     }),
