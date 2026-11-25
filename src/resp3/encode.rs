@@ -510,38 +510,47 @@ fn gen_bytes_push<'b, W: GenOut, A: Into<BorrowedAttrs<'b>>>(
   Ok(x)
 }
 
+/// Write one argument of a command as a blob string.
+fn gen_command_arg<W: GenOut>(x: W, data: &[u8]) -> Result<W, GenError> {
+  let (len, padding) = int2dec::u64_to_digits(data.len() as u64);
+  do_gen!(
+    x,
+    gen_be_u8!(BLOB_STRING_BYTE)
+      >> gen_slice!(&len[padding ..])
+      >> gen_slice!(CRLF.as_bytes())
+      >> gen_slice!(data)
+      >> gen_slice!(CRLF.as_bytes())
+  )
+}
+
+/// Write a `HELLO` command as an array of blob strings, like any other command.
+///
+/// Every server version that supports `HELLO` (6.0 and later) accepts this, and unlike an inline command it works
+/// with arguments that contain spaces or newlines. The arguments must all be blob strings, since Redis rejects other
+/// types in a command array and closes the connection.
 fn gen_hello<W: GenOut>(
   x: W,
   version: &RespVersion,
   auth: Option<(&str, &str)>,
   setname: Option<&str>,
 ) -> Result<W, GenError> {
+  let args = 2 + if auth.is_some() { 3 } else { 0 } + if setname.is_some() { 2 } else { 0 };
   let mut x = do_gen!(
     x,
-    gen_slice!(HELLO.as_bytes()) >> gen_slice!(EMPTY_SPACE.as_bytes()) >> gen_be_u8!(version.to_byte())
+    gen_be_u8!(ARRAY_BYTE) >> gen_slice!(&[b'0' + args]) >> gen_slice!(CRLF.as_bytes())
   )?;
+  x = gen_command_arg(x, HELLO.as_bytes())?;
+  x = gen_command_arg(x, &[version.to_byte()])?;
   if let Some((username, password)) = auth {
-    x = do_gen!(
-      x,
-      gen_slice!(EMPTY_SPACE.as_bytes())
-        >> gen_slice!(AUTH.as_bytes())
-        >> gen_slice!(EMPTY_SPACE.as_bytes())
-        >> gen_slice!(username.as_bytes())
-        >> gen_slice!(EMPTY_SPACE.as_bytes())
-        >> gen_slice!(password.as_bytes())
-    )?;
+    x = gen_command_arg(x, AUTH.as_bytes())?;
+    x = gen_command_arg(x, username.as_bytes())?;
+    x = gen_command_arg(x, password.as_bytes())?;
   }
   if let Some(name) = setname {
-    x = do_gen!(
-      x,
-      gen_slice!(EMPTY_SPACE.as_bytes())
-        >> gen_slice!(SETNAME.as_bytes())
-        >> gen_slice!(EMPTY_SPACE.as_bytes())
-        >> gen_slice!(name.as_bytes())
-    )?;
+    x = gen_command_arg(x, SETNAME.as_bytes())?;
+    x = gen_command_arg(x, name.as_bytes())?;
   }
-
-  do_gen!(x, gen_slice!(CRLF.as_bytes()))
+  Ok(x)
 }
 
 fn gen_chunked_string<W: GenOut>(x: W, data: &[u8]) -> Result<W, GenError> {
@@ -1768,7 +1777,7 @@ mod owned_tests {
 
   #[test]
   fn should_encode_hello() {
-    let expected = "HELLO 3\r\n";
+    let expected = "*2\r\n$5\r\nHELLO\r\n$1\r\n3\r\n";
     let input = OwnedFrame::Hello {
       version: RespVersion::RESP3,
       auth:    None,
@@ -1777,7 +1786,7 @@ mod owned_tests {
 
     encode_and_verify_empty(&input, expected);
 
-    let expected = "HELLO 2\r\n";
+    let expected = "*2\r\n$5\r\nHELLO\r\n$1\r\n2\r\n";
     let input = OwnedFrame::Hello {
       version: RespVersion::RESP2,
       auth:    None,
@@ -1789,7 +1798,7 @@ mod owned_tests {
 
   #[test]
   fn should_encode_hello_with_auth() {
-    let expected = "HELLO 3 AUTH default mypassword\r\n";
+    let expected = "*5\r\n$5\r\nHELLO\r\n$1\r\n3\r\n$4\r\nAUTH\r\n$7\r\ndefault\r\n$10\r\nmypassword\r\n";
     let input = OwnedFrame::Hello {
       version: RespVersion::RESP3,
       auth:    Some(Box::new(("default".into(), "mypassword".into()))),
@@ -1801,7 +1810,7 @@ mod owned_tests {
 
   #[test]
   fn should_encode_hello_with_auth_and_setname() {
-    let expected = "HELLO 3 AUTH default mypassword SETNAME myname\r\n";
+    let expected = "*7\r\n$5\r\nHELLO\r\n$1\r\n3\r\n$4\r\nAUTH\r\n$7\r\ndefault\r\n$10\r\nmypassword\r\n$7\r\nSETNAME\r\n$6\r\nmyname\r\n";
     let input = OwnedFrame::Hello {
       version: RespVersion::RESP3,
       auth:    Some(Box::new(("default".into(), "mypassword".into()))),
@@ -2750,7 +2759,7 @@ mod bytes_tests {
 
   #[test]
   fn should_encode_hello() {
-    let expected = "HELLO 3\r\n";
+    let expected = "*2\r\n$5\r\nHELLO\r\n$1\r\n3\r\n";
     let input = BytesFrame::Hello {
       version: RespVersion::RESP3,
       auth:    None,
@@ -2760,7 +2769,7 @@ mod bytes_tests {
     encode_and_verify_empty(&input, expected);
     encode_and_verify_non_empty(&input, expected);
 
-    let expected = "HELLO 2\r\n";
+    let expected = "*2\r\n$5\r\nHELLO\r\n$1\r\n2\r\n";
     let input = BytesFrame::Hello {
       version: RespVersion::RESP2,
       auth:    None,
@@ -2773,7 +2782,7 @@ mod bytes_tests {
 
   #[test]
   fn should_encode_hello_with_auth() {
-    let expected = "HELLO 3 AUTH default mypassword\r\n";
+    let expected = "*5\r\n$5\r\nHELLO\r\n$1\r\n3\r\n$4\r\nAUTH\r\n$7\r\ndefault\r\n$10\r\nmypassword\r\n";
     let input = BytesFrame::Hello {
       version: RespVersion::RESP3,
       auth:    Some(Box::new(("default".into(), "mypassword".into()))),
@@ -2786,7 +2795,7 @@ mod bytes_tests {
 
   #[test]
   fn should_encode_hello_with_auth_and_setname() {
-    let expected = "HELLO 3 AUTH default mypassword SETNAME myname\r\n";
+    let expected = "*7\r\n$5\r\nHELLO\r\n$1\r\n3\r\n$4\r\nAUTH\r\n$7\r\ndefault\r\n$10\r\nmypassword\r\n$7\r\nSETNAME\r\n$6\r\nmyname\r\n";
     let input = BytesFrame::Hello {
       version: RespVersion::RESP3,
       auth:    Some(Box::new(("default".into(), "mypassword".into()))),

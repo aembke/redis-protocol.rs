@@ -210,6 +210,20 @@ async fn should_use_resp3_codec_hello() {
     response.kind(),
     Resp3FrameKind::SimpleError | Resp3FrameKind::BlobError
   ));
+
+  socket.send(resp3_encode_command("CLIENT GETNAME")).await.unwrap();
+  let response = socket.next().await.unwrap().unwrap();
+  assert_eq!(response.as_str().unwrap(), "baz");
+
+  // HELLO is sent as an array of blob strings, so a password with a space is one argument
+  let hello = Resp3BytesFrame::Hello {
+    version: RespVersion::RESP3,
+    auth:    Some(Box::new((read_redis_username().into(), "wrong password".into()))),
+    setname: None,
+  };
+  socket.send(hello).await.unwrap();
+  let response = socket.next().await.unwrap().unwrap();
+  assert!(response.as_str().unwrap().starts_with("WRONGPASS"), "{response:?}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -98,15 +98,23 @@ pub fn double_encode_len(f: f64) -> usize {
   1 + with_f64_str(f, |s| s.len()) + 2
 }
 
-pub fn auth_encode_len(username: Option<&str>, password: Option<&str>) -> usize {
-  if username.is_none() && password.is_none() {
-    return 0;
+/// The encoded length of a `HELLO` command, which is sent as an array of blob strings.
+pub fn hello_encode_len(auth: Option<(&str, &str)>, setname: Option<&str>) -> usize {
+  let mut args = 2;
+  // `HELLO` and the version, which is one digit
+  let mut len = blobstring_encode_len(HELLO.as_bytes()) + blobstring_encode_len(b"3");
+  if let Some((username, password)) = auth {
+    args += 3;
+    len += blobstring_encode_len(AUTH.as_bytes())
+      + blobstring_encode_len(username.as_bytes())
+      + blobstring_encode_len(password.as_bytes());
+  }
+  if let Some(setname) = setname {
+    args += 2;
+    len += blobstring_encode_len(SETNAME.as_bytes()) + blobstring_encode_len(setname.as_bytes());
   }
 
-  1 + AUTH.as_bytes().len()
-    + 1
-    + username.map(|s| s.as_bytes().len() + 1).unwrap_or(0)
-    + password.map(|s| s.as_bytes().len()).unwrap_or(0)
+  length_prefix_encode_len(args) + len
 }
 
 // As mentioned elsewhere in the comments, some of the encoding and decoding logic differs in meaningful ways based on
@@ -172,39 +180,18 @@ pub fn bytes_set_encode_len(set: &FrameSet<BytesFrame>, int_as_blobstring: bool)
 
 #[cfg(feature = "bytes")]
 pub fn bytes_hello_encode_len(auth: &Option<Box<(Str, Str)>>, setname: &Option<Str>) -> usize {
-  let username = auth.as_deref().map(|(u, _)| &**u);
-  let password = auth.as_deref().map(|(_, p)| &**p);
-  let setname_len = if let Some(setname) = setname.as_ref() {
-    1 + SETNAME.as_bytes().len() + 1 + setname.as_bytes().len()
-  } else {
-    0
-  };
-
-  HELLO.as_bytes().len() + 1 + 1 + auth_encode_len(username, password) + setname_len + 2
+  hello_encode_len(auth.as_deref().map(|(u, p)| (&**u, &**p)), setname.as_deref())
 }
 
 pub fn owned_hello_encode_len(auth: &Option<Box<(String, String)>>, setname: &Option<String>) -> usize {
-  let username = auth.as_deref().map(|(u, _)| &**u);
-  let password = auth.as_deref().map(|(_, p)| &**p);
-  let setname_len = if let Some(setname) = setname.as_ref() {
-    1 + SETNAME.as_bytes().len() + 1 + setname.as_bytes().len()
-  } else {
-    0
-  };
-
-  HELLO.as_bytes().len() + 1 + 1 + auth_encode_len(username, password) + setname_len + 2
+  hello_encode_len(
+    auth.as_deref().map(|(u, p)| (u.as_str(), p.as_str())),
+    setname.as_deref(),
+  )
 }
 
 pub fn borrowed_hello_encode_len(auth: &Option<(&str, &str)>, setname: &Option<&str>) -> usize {
-  let username = auth.as_ref().map(|(u, _)| &**u);
-  let password = auth.as_ref().map(|(_, p)| &**p);
-  let setname_len = if let Some(setname) = setname.as_ref() {
-    1 + SETNAME.as_bytes().len() + 1 + setname.as_bytes().len()
-  } else {
-    0
-  };
-
-  HELLO.as_bytes().len() + 1 + 1 + auth_encode_len(username, password) + setname_len + 2
+  hello_encode_len(*auth, *setname)
 }
 
 #[cfg(feature = "bytes")]
@@ -1684,36 +1671,33 @@ mod tests {
       setname: None,
     };
 
-    // HELLO 3\r\n
-    let expected_len = 5 + 1 + 1 + 2;
-    assert_eq!(bytes_encode_len(&frame, false), expected_len);
+    let expected = "*2\r\n$5\r\nHELLO\r\n$1\r\n3\r\n";
+    assert_eq!(bytes_encode_len(&frame, false), expected.len());
 
     let frame = BytesFrame::Hello {
       version: RespVersion::RESP2,
       auth:    None,
       setname: None,
     };
-    // HELLO 2\r\n
-    let expected_len = 5 + 1 + 1 + 2;
-    assert_eq!(bytes_encode_len(&frame, false), expected_len);
+    let expected = "*2\r\n$5\r\nHELLO\r\n$1\r\n2\r\n";
+    assert_eq!(bytes_encode_len(&frame, false), expected.len());
 
     let frame = BytesFrame::Hello {
       version: RespVersion::RESP3,
       auth:    Some(Box::new(("foo".into(), "bar".into()))),
       setname: None,
     };
-    // HELLO 3 AUTH foo bar\r\n
-    let expected_len = 5 + 1 + 1 + 1 + 4 + 1 + 3 + 1 + 3 + 2;
-    assert_eq!(bytes_encode_len(&frame, false), expected_len);
+    let expected = "*5\r\n$5\r\nHELLO\r\n$1\r\n3\r\n$4\r\nAUTH\r\n$3\r\nfoo\r\n$3\r\nbar\r\n";
+    assert_eq!(bytes_encode_len(&frame, false), expected.len());
 
     let frame = BytesFrame::Hello {
       version: RespVersion::RESP3,
       auth:    Some(Box::new(("foo".into(), "bar".into()))),
       setname: Some("baz".into()),
     };
-    // HELLO 3 AUTH foo bar SETNAME baz\r\n
-    let expected_len = 5 + 1 + 1 + 1 + 4 + 1 + 3 + 1 + 3 + 1 + 7 + 1 + 3 + 2;
-    assert_eq!(bytes_encode_len(&frame, false), expected_len);
+    let expected =
+      "*7\r\n$5\r\nHELLO\r\n$1\r\n3\r\n$4\r\nAUTH\r\n$3\r\nfoo\r\n$3\r\nbar\r\n$7\r\nSETNAME\r\n$3\r\nbaz\r\n";
+    assert_eq!(bytes_encode_len(&frame, false), expected.len());
   }
 
   #[test]

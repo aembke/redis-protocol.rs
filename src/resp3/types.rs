@@ -595,6 +595,9 @@ pub enum BorrowedFrame<'a> {
   },
   /// A special frame type used when first connecting to the server to describe the protocol version and optional
   /// credentials.
+  ///
+  /// This is encoded as a command, an array of blob strings. The decoder parses the inline form, such as
+  /// `HELLO 3 AUTH foo bar`, so an encoded `Hello` frame decodes as an array.
   Hello {
     version: RespVersion,
     auth:    Option<(&'a str, &'a str)>,
@@ -819,6 +822,9 @@ pub enum RangeFrame {
   },
   /// A special frame type used when first connecting to the server to describe the protocol version and optional
   /// credentials.
+  ///
+  /// This is encoded as a command, an array of blob strings. The decoder parses the inline form, such as
+  /// `HELLO 3 AUTH foo bar`, so an encoded `Hello` frame decodes as an array.
   Hello {
     version: RespVersion,
     /// The username and password ranges.
@@ -1228,6 +1234,9 @@ pub enum OwnedFrame {
   },
   /// A special frame type used when first connecting to the server to describe the protocol version and optional
   /// credentials.
+  ///
+  /// This is encoded as a command, an array of blob strings. The decoder parses the inline form, such as
+  /// `HELLO 3 AUTH foo bar`, so an encoded `Hello` frame decodes as an array.
   Hello {
     version: RespVersion,
     /// The username and password.
@@ -1789,6 +1798,9 @@ pub enum BytesFrame {
   },
   /// A special frame type used when first connecting to the server to describe the protocol version and optional
   /// credentials.
+  ///
+  /// This is encoded as a command, an array of blob strings. The decoder parses the inline form, such as
+  /// `HELLO 3 AUTH foo bar`, so an encoded `Hello` frame decodes as an array.
   Hello {
     version: RespVersion,
     /// The username and password.
