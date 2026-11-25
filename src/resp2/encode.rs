@@ -56,6 +56,9 @@ fn gen_integer<W: GenOut>(x: W, data: i64, as_bulkstring: bool) -> Result<W, Gen
 
 fn gen_bulkstring<W: GenOut>(x: W, data: &[u8]) -> Result<W, GenError> {
   let (len, padding) = int2dec::u64_to_digits(data.len() as u64);
+  // reserve the whole blob, so a large payload doesn't grow the buffer to exactly its size and then again for the
+  // trailing CRLF, copying the payload twice. see benches/reserve.rs.
+  let x = x.reserve(1 + len.len() - padding + 2 + data.len() + 2);
 
   do_gen!(
     x,
@@ -234,7 +237,7 @@ pub fn encode_bytes(
     .map_err(|e| e.into())
 }
 
-/// Attempt to encode a frame at the end of `buf`, extending the buffer before encoding.
+/// Attempt to encode a frame at the end of `buf`, which grows as needed.
 ///
 /// Returns the number of bytes encoded.
 #[cfg(feature = "bytes")]
@@ -244,12 +247,19 @@ pub fn extend_encode(
   frame: &BytesFrame,
   int_as_bulkstring: bool,
 ) -> Result<usize, RedisProtocolError> {
-  utils::extend_with(buf, frame.encode_len(int_as_bulkstring), |buf| {
-    gen_bytes_frame(buf, frame, int_as_bulkstring).map(|_| ())
-  })
+  // the buffer grows as needed, which benchmarks showed is faster than computing `encode_len` first
+  let amt = utils::extend_with(buf, 0, |buf| gen_bytes_frame(buf, frame, int_as_bulkstring).map(|_| ()))?;
+  // every test that encodes a frame also checks `encode_len`, which the slice-based functions rely on
+  #[cfg(test)]
+  assert_eq!(
+    amt,
+    frame.encode_len(int_as_bulkstring),
+    "encoded length doesn't match encode_len"
+  );
+  Ok(amt)
 }
 
-/// Attempt to encode a borrowed frame at the end of `buf`, extending the buffer before encoding.
+/// Attempt to encode a borrowed frame at the end of `buf`, which grows as needed.
 ///
 /// Returns the number of bytes encoded.
 #[cfg(feature = "bytes")]
@@ -259,9 +269,61 @@ pub fn extend_encode_borrowed(
   frame: &BorrowedFrame,
   int_as_bulkstring: bool,
 ) -> Result<usize, RedisProtocolError> {
-  utils::extend_with(buf, frame.encode_len(int_as_bulkstring), |buf| {
+  // the buffer grows as needed, which benchmarks showed is faster than computing `encode_len` first
+  let amt = utils::extend_with(buf, 0, |buf| {
     gen_borrowed_frame(buf, frame, int_as_bulkstring).map(|_| ())
-  })
+  })?;
+  // every test that encodes a frame also checks `encode_len`, which the slice-based functions rely on
+  #[cfg(test)]
+  assert_eq!(
+    amt,
+    frame.encode_len(int_as_bulkstring),
+    "encoded length doesn't match encode_len"
+  );
+  Ok(amt)
+}
+
+/// Other ways `extend_encode` could reserve space, kept so `benches/reserve.rs` can compare them with the current
+/// approach. This is compiled only with `--cfg redis_protocol_bench` and isn't part of the public interface.
+#[cfg(all(feature = "bytes", redis_protocol_bench))]
+#[doc(hidden)]
+pub mod reserve_strategies {
+  use super::*;
+
+  /// Reserve the exact encoded length before encoding. This was the behavior before 7.0.
+  pub fn extend_encode_exact(
+    buf: &mut BytesMut,
+    frame: &BytesFrame,
+    flag: bool,
+  ) -> Result<usize, RedisProtocolError> {
+    utils::extend_with(buf, frame.encode_len(flag), |buf| {
+      gen_bytes_frame(buf, frame, flag).map(|_| ())
+    })
+  }
+
+  /// Reserve a cheap over-estimate before encoding.
+  pub fn extend_encode_estimate(
+    buf: &mut BytesMut,
+    frame: &BytesFrame,
+    flag: bool,
+  ) -> Result<usize, RedisProtocolError> {
+    utils::extend_with(buf, estimate(frame), |buf| {
+      gen_bytes_frame(buf, frame, flag).map(|_| ())
+    })
+  }
+
+  /// Estimate the encoded length without counting digits. Every length prefix and integer is assumed to need 20
+  /// digits.
+  fn estimate(frame: &BytesFrame) -> usize {
+    match frame {
+      BytesFrame::BulkString(data) => data.len() + 25,
+      BytesFrame::SimpleString(data) => data.len() + 3,
+      BytesFrame::Error(data) => data.len() + 3,
+      BytesFrame::Integer(_) => 30,
+      BytesFrame::Null | BytesFrame::NullArray => 5,
+      BytesFrame::Array(frames) => 23 + frames.iter().map(estimate).sum::<usize>(),
+    }
+  }
 }
 
 // Regression tests duplicated for each frame type.

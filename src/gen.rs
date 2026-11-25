@@ -19,6 +19,12 @@ pub(crate) enum GenError {
 pub(crate) trait GenOut: Sized {
   /// Append `data`, returning the destination for the next write.
   fn gen_slice(self, data: &[u8]) -> Result<Self, GenError>;
+
+  /// Make room for at least `amt` more bytes, if the destination can grow.
+  #[inline]
+  fn reserve(self, _amt: usize) -> Self {
+    self
+  }
 }
 
 /// A slice and the offset of the next write, which fails if the slice is too small.
@@ -43,6 +49,12 @@ impl GenOut for &mut BytesMut {
   fn gen_slice(self, data: &[u8]) -> Result<Self, GenError> {
     self.extend_from_slice(data);
     Ok(self)
+  }
+
+  #[inline]
+  fn reserve(self, amt: usize) -> Self {
+    BytesMut::reserve(self, amt);
+    self
   }
 }
 

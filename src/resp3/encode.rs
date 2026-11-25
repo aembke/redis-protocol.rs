@@ -144,6 +144,9 @@ fn gen_bignumber<'b, W: GenOut, A: Into<BorrowedAttrs<'b>>>(
 ) -> Result<W, GenError> {
   encode_attributes!(x, attributes, int_as_blobstring);
 
+  // reserve the whole blob, so a large payload doesn't grow the buffer to exactly its size and then again for the
+  // trailing CRLF, copying the payload twice. see benches/reserve.rs.
+  let x = x.reserve(1 + data.len() + 2);
   do_gen!(
     x,
     gen_be_u8!(FrameKind::BigNumber.to_byte()) >> gen_slice!(data) >> gen_slice!(CRLF.as_bytes())
@@ -159,6 +162,9 @@ fn gen_blobstring<'b, W: GenOut, A: Into<BorrowedAttrs<'b>>>(
   encode_attributes!(x, attributes, int_as_blobstring);
 
   let (len, padding) = int2dec::u64_to_digits(data.len() as u64);
+  // reserve the whole blob, so a large payload doesn't grow the buffer to exactly its size and then again for the
+  // trailing CRLF, copying the payload twice. see benches/reserve.rs.
+  let x = x.reserve(1 + len.len() - padding + 2 + data.len() + 2);
   do_gen!(
     x,
     gen_be_u8!(FrameKind::BlobString.to_byte())
@@ -178,6 +184,9 @@ fn gen_bloberror<'b, W: GenOut, A: Into<BorrowedAttrs<'b>>>(
   encode_attributes!(x, attributes, int_as_blobstring);
 
   let (len, padding) = int2dec::u64_to_digits(data.len() as u64);
+  // reserve the whole blob, so a large payload doesn't grow the buffer to exactly its size and then again for the
+  // trailing CRLF, copying the payload twice. see benches/reserve.rs.
+  let x = x.reserve(1 + len.len() - padding + 2 + data.len() + 2);
   do_gen!(
     x,
     gen_be_u8!(FrameKind::BlobError.to_byte())
@@ -199,6 +208,9 @@ fn gen_verbatimstring<'b, W: GenOut, A: Into<BorrowedAttrs<'b>>>(
 
   let total_len = format.encode_len() + data.len();
   let (len, padding) = int2dec::u64_to_digits(total_len as u64);
+  // reserve the whole blob, so a large payload doesn't grow the buffer to exactly its size and then again for the
+  // trailing CRLF, copying the payload twice. see benches/reserve.rs.
+  let x = x.reserve(1 + len.len() - padding + 2 + total_len + 2);
   do_gen!(
     x,
     gen_be_u8!(FrameKind::VerbatimString.to_byte())
@@ -541,6 +553,8 @@ fn gen_chunked_string<W: GenOut>(x: W, data: &[u8]) -> Result<W, GenError> {
     do_gen!(x, gen_slice!(END_STREAM_STRING_BYTES.as_bytes()))
   } else {
     let (len, padding) = int2dec::u64_to_digits(data.len() as u64);
+    // reserve the whole blob, so a large payload isn't copied twice. see benches/reserve.rs.
+    let x = x.reserve(1 + len.len() - padding + 2 + data.len() + 2);
     do_gen!(
       x,
       gen_be_u8!(FrameKind::ChunkedString.to_byte())
@@ -647,6 +661,72 @@ fn gen_bytes_frame<W: GenOut>(x: W, frame: &BytesFrame, int_as_blobstring: bool)
     },
     BytesFrame::BigNumber { data, attributes } => gen_bignumber(x, data, attributes.as_deref(), int_as_blobstring),
     BytesFrame::ChunkedString(b) => gen_chunked_string(x, b),
+  }
+}
+
+/// Other ways `extend_encode` could reserve space, kept so `benches/reserve.rs` can compare them with the current
+/// approach. This is compiled only with `--cfg redis_protocol_bench` and isn't part of the public interface.
+#[cfg(all(feature = "bytes", redis_protocol_bench))]
+#[doc(hidden)]
+pub mod reserve_strategies {
+  use super::*;
+  use crate::utils;
+  use alloc::boxed::Box;
+
+  /// Reserve the exact encoded length before encoding. This was the behavior before 7.0.
+  pub fn extend_encode_exact(
+    buf: &mut BytesMut,
+    frame: &BytesFrame,
+    flag: bool,
+  ) -> Result<usize, RedisProtocolError> {
+    utils::extend_with(buf, frame.encode_len(flag), |buf| {
+      gen_bytes_frame(buf, frame, flag).map(|_| ())
+    })
+  }
+
+  /// Reserve a cheap over-estimate before encoding.
+  pub fn extend_encode_estimate(
+    buf: &mut BytesMut,
+    frame: &BytesFrame,
+    flag: bool,
+  ) -> Result<usize, RedisProtocolError> {
+    utils::extend_with(buf, estimate(frame), |buf| {
+      gen_bytes_frame(buf, frame, flag).map(|_| ())
+    })
+  }
+
+  /// Estimate the encoded length without counting digits or formatting doubles. Every length prefix and integer is
+  /// assumed to need 20 digits, and every double 32 bytes.
+  fn estimate(frame: &BytesFrame) -> usize {
+    use BytesFrame::*;
+
+    let attributes = |attributes: &Option<Box<BytesAttributes>>| match attributes {
+      Some(attributes) => 23 + attributes.iter().map(|(k, v)| estimate(k) + estimate(v)).sum::<usize>(),
+      None => 0,
+    };
+    match frame {
+      BlobString { data, attributes: a } | BlobError { data, attributes: a } | BigNumber { data, attributes: a } => {
+        data.len() + 25 + attributes(a)
+      },
+      VerbatimString {
+        data, attributes: a, ..
+      } => data.len() + 29 + attributes(a),
+      SimpleString { data, attributes: a } => data.len() + 3 + attributes(a),
+      SimpleError { data, attributes: a } => data.len() + 3 + attributes(a),
+      Number { attributes: a, .. } => 30 + attributes(a),
+      Double { attributes: a, .. } => 32 + attributes(a),
+      Boolean { attributes: a, .. } => 4 + attributes(a),
+      Null => 3,
+      Array { data, attributes: a } | Push { data, attributes: a } => {
+        23 + data.iter().map(estimate).sum::<usize>() + attributes(a)
+      },
+      Set { data, attributes: a } => 23 + data.iter().map(estimate).sum::<usize>() + attributes(a),
+      Map { data, attributes: a } => {
+        23 + data.iter().map(|(k, v)| estimate(k) + estimate(v)).sum::<usize>() + attributes(a)
+      },
+      Hello { .. } => frame.encode_len(false),
+      ChunkedString(data) => data.len() + 25,
+    }
   }
 }
 
@@ -772,7 +852,7 @@ pub mod complete {
       .map_err(|e| e.into())
   }
 
-  /// Attempt to encode a frame at the end of `buf`, extending the buffer before encoding.
+  /// Attempt to encode a frame at the end of `buf`, which grows as needed.
   ///
   /// Returns the number of bytes encoded.
   #[cfg(feature = "bytes")]
@@ -782,12 +862,19 @@ pub mod complete {
     frame: &BytesFrame,
     int_as_blobstring: bool,
   ) -> Result<usize, RedisProtocolError> {
-    utils::extend_with(buf, frame.encode_len(int_as_blobstring), |buf| {
-      gen_bytes_frame(buf, frame, int_as_blobstring).map(|_| ())
-    })
+    // the buffer grows as needed, which benchmarks showed is faster than computing `encode_len` first
+    let amt = utils::extend_with(buf, 0, |buf| gen_bytes_frame(buf, frame, int_as_blobstring).map(|_| ()))?;
+    // every test that encodes a frame also checks `encode_len`, which the slice-based functions rely on
+    #[cfg(test)]
+    assert_eq!(
+      amt,
+      frame.encode_len(int_as_blobstring),
+      "encoded length doesn't match encode_len"
+    );
+    Ok(amt)
   }
 
-  /// Attempt to encode a borrowed frame at the end of `buf`, extending the buffer before encoding.
+  /// Attempt to encode a borrowed frame at the end of `buf`, which grows as needed.
   ///
   /// Returns the number of bytes encoded.
   #[cfg(feature = "bytes")]
@@ -797,9 +884,18 @@ pub mod complete {
     frame: &BorrowedFrame,
     int_as_blobstring: bool,
   ) -> Result<usize, RedisProtocolError> {
-    utils::extend_with(buf, frame.encode_len(int_as_blobstring), |buf| {
+    // the buffer grows as needed, which benchmarks showed is faster than computing `encode_len` first
+    let amt = utils::extend_with(buf, 0, |buf| {
       gen_borrowed_frame(buf, frame, int_as_blobstring).map(|_| ())
-    })
+    })?;
+    // every test that encodes a frame also checks `encode_len`, which the slice-based functions rely on
+    #[cfg(test)]
+    assert_eq!(
+      amt,
+      frame.encode_len(int_as_blobstring),
+      "encoded length doesn't match encode_len"
+    );
+    Ok(amt)
   }
 }
 

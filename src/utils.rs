@@ -127,22 +127,23 @@ pub fn zero_extend(buf: &mut BytesMut, amt: usize) {
   buf.resize(buf.len() + amt, 0);
 }
 
-/// Append an encoded frame to `buf`, reserving `amt` bytes first.
+/// Append an encoded frame to `buf`, reserving `reserve` bytes first.
+///
+/// The `extend_encode` functions pass `0` and let `buf` grow as the frame is written. Reserving the exact length up
+/// front means walking the frame an extra time to compute `encode_len`, and benchmarks showed that costs more than
+/// the occasional extra growth. See `benches/reserve.rs` for the numbers.
 ///
 /// Returns the number of bytes encoded. If encoding fails, `buf` is restored to its original length.
 #[cfg(all(feature = "bytes", any(feature = "resp2", feature = "resp3")))]
-pub(crate) fn extend_with<F>(buf: &mut BytesMut, amt: usize, encode: F) -> Result<usize, RedisProtocolError>
+pub(crate) fn extend_with<F>(buf: &mut BytesMut, reserve: usize, encode: F) -> Result<usize, RedisProtocolError>
 where
   F: FnOnce(&mut BytesMut) -> Result<(), crate::gen::GenError>,
 {
   let start = buf.len();
-  buf.reserve(amt);
+  buf.reserve(reserve);
 
   match encode(buf) {
-    Ok(()) => {
-      debug_assert_eq!(buf.len() - start, amt, "encoded length doesn't match encode_len");
-      Ok(buf.len() - start)
-    },
+    Ok(()) => Ok(buf.len() - start),
     Err(e) => {
       buf.truncate(start);
       Err(e.into())

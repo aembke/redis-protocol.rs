@@ -69,3 +69,12 @@ required-features = ["resp2", "resp3"]
 name = "encode"
 harness = false
 required-features = ["resp2", "resp3"]
+
+# compares the ways `extend_encode` could reserve space. run with `RUSTFLAGS="--cfg redis_protocol_bench"`.
+[[bench]]
+name = "reserve"
+harness = false
+required-features = ["resp2", "resp3", "bytes"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(redis_protocol_bench)"] }
