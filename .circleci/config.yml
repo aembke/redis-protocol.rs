@@ -58,6 +58,15 @@ jobs:
       - run:
           name: Clippy
           command: cargo clippy --features "bytes convert codec std resp2 resp3" --lib --tests --benches -- -Dwarnings
+      - run:
+          name: Clippy with all features
+          command: cargo clippy --all-features --lib --tests --benches -- -Dwarnings
+      - run:
+          name: Clippy with index-map
+          command: cargo clippy --no-default-features --features "index-map resp2 resp3 convert" --lib --tests -- -Dwarnings
+      - run:
+          name: Clippy without std
+          command: cargo clippy --no-default-features --features "hashbrown resp2 resp3 convert bytes" --lib -- -Dwarnings
   build-no-std:
     docker:
       - image: cimg/rust:1.88
@@ -69,6 +78,37 @@ jobs:
       - run:
           name: Verifies successful build for no_std target
           command: cargo build --release --no-default-features --features resp2,resp3,convert,hashbrown,bytes --target=thumbv7m-none-eabi
+  tests-doc:
+    docker:
+      - image: cimg/rust:1.88
+    steps:
+      - checkout
+      - run:
+          name: Run doc tests
+          command: cargo test --doc --all-features
+  check-features:
+    docker:
+      - image: cimg/rust:1.88
+    steps:
+      - checkout
+      - run:
+          name: Install cargo-hack
+          command: curl -LsSf https://github.com/taiki-e/cargo-hack/releases/latest/download/cargo-hack-x86_64-unknown-linux-gnu.tar.gz | tar xzf - -C ~/.cargo/bin
+      - run:
+          name: Check feature combinations that include a RESP3 map type
+          # `resp3` without one of `std`, `hashbrown`, or `index-map` is an intentional `compile_error!`
+          command: cargo hack check --feature-powerset --no-dev-deps --exclude-features default --at-least-one-of resp2,resp3 --at-least-one-of std,hashbrown,index-map
+      - run:
+          name: Check RESP2 feature combinations without std or a map type
+          command: cargo hack check --feature-powerset --no-dev-deps --include-features bytes,convert,decode-logs --features resp2
+  check-fuzz:
+    docker:
+      - image: cimg/rust:1.88
+    steps:
+      - checkout
+      - run:
+          name: Check fuzz targets
+          command: cd fuzz && cargo check --bins
 
 workflows:
   version: 2
@@ -81,3 +121,6 @@ workflows:
       - build-no-std
       - clippy-lint
       - build-docs
+      - tests-doc
+      - check-features
+      - check-fuzz
