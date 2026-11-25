@@ -266,9 +266,7 @@ pub trait Resp2Frame: Debug + Hash + Eq {
   #[cfg_attr(docsrs, doc(cfg(feature = "convert")))]
   fn is_single_element_vec(&self) -> bool;
 
-  /// Pop an element from the inner array or return the original frame.
-  ///
-  /// This function is intended to be used with [Self::is_single_element_vec] and may panic.
+  /// Return the only element of a single-element array, or the original frame otherwise.
   #[cfg(feature = "convert")]
   #[cfg_attr(docsrs, doc(cfg(feature = "convert")))]
   fn pop_or_take(self) -> Self;
@@ -490,10 +488,9 @@ impl Resp2Frame for OwnedFrame {
   #[cfg(feature = "convert")]
   #[cfg_attr(docsrs, doc(cfg(feature = "convert")))]
   fn pop_or_take(self) -> Self {
-    if let OwnedFrame::Array(mut values) = self {
-      values.pop().unwrap().pop_or_take()
-    } else {
-      self
+    match self {
+      OwnedFrame::Array(mut values) if values.len() == 1 => values.swap_remove(0),
+      _ => self,
     }
   }
 }
@@ -654,10 +651,9 @@ impl Resp2Frame for BytesFrame {
   #[cfg(feature = "convert")]
   #[cfg_attr(docsrs, doc(cfg(feature = "convert")))]
   fn pop_or_take(self) -> Self {
-    if let BytesFrame::Array(mut values) = self {
-      values.pop().unwrap().pop_or_take()
-    } else {
-      self
+    match self {
+      BytesFrame::Array(mut values) if values.len() == 1 => values.swap_remove(0),
+      _ => self,
     }
   }
 }
@@ -748,6 +744,23 @@ impl<B: Into<Bytes>> TryFrom<(FrameKind, B)> for BytesFrame {
 #[cfg(feature = "bytes")]
 mod tests {
   use super::*;
+
+  #[test]
+  #[cfg(feature = "convert")]
+  fn should_only_unwrap_single_element_arrays() {
+    let nested_empty = OwnedFrame::Array(vec![OwnedFrame::Array(vec![])]);
+    assert!(nested_empty.clone().convert::<String>().is_err());
+    assert!(nested_empty.convert::<Option<i64>>().is_err());
+
+    let nested = BytesFrame::Array(vec![BytesFrame::Array(vec![
+      BytesFrame::BulkString("a".into()),
+      BytesFrame::BulkString("b".into()),
+    ])]);
+    assert!(nested.convert::<String>().is_err());
+
+    let single = BytesFrame::Array(vec![BytesFrame::BulkString("a".into())]);
+    assert_eq!(single.convert::<String>().unwrap(), "a");
+  }
 
   #[test]
   fn should_parse_pattern_pubsub_message() {

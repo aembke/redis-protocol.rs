@@ -964,9 +964,7 @@ pub trait Resp3Frame: Debug + Hash + Eq + Sized {
   #[cfg_attr(docsrs, doc(cfg(feature = "convert")))]
   fn is_single_element_vec(&self) -> bool;
 
-  /// Pop an element from the inner array or return the original frame.
-  ///
-  /// This function is intended to be used with [Self::is_single_element_vec] and may panic.
+  /// Return the only element of a single-element array or push frame, or the original frame otherwise.
   #[cfg(feature = "convert")]
   #[cfg_attr(docsrs, doc(cfg(feature = "convert")))]
   fn pop_or_take(self) -> Self;
@@ -1438,7 +1436,9 @@ impl Resp3Frame for OwnedFrame {
   #[cfg_attr(docsrs, doc(cfg(feature = "convert")))]
   fn pop_or_take(self) -> Self {
     match self {
-      OwnedFrame::Array { mut data, .. } | OwnedFrame::Push { mut data, .. } => data.pop().unwrap(),
+      OwnedFrame::Array { mut data, .. } | OwnedFrame::Push { mut data, .. } if data.len() == 1 => {
+        data.swap_remove(0)
+      },
       _ => self,
     }
   }
@@ -2066,7 +2066,9 @@ impl Resp3Frame for BytesFrame {
   #[cfg_attr(docsrs, doc(cfg(feature = "convert")))]
   fn pop_or_take(self) -> Self {
     match self {
-      BytesFrame::Array { mut data, .. } | BytesFrame::Push { mut data, .. } => data.pop().unwrap(),
+      BytesFrame::Array { mut data, .. } | BytesFrame::Push { mut data, .. } if data.len() == 1 => {
+        data.swap_remove(0)
+      },
       _ => self,
     }
   }
