@@ -58,7 +58,7 @@ mod resp3 {
   ///   println!("GET foo: {:?}", response);
   /// }
   /// ```
-  #[derive(Debug, Default)]
+  #[derive(Clone, Debug, Default)]
   pub struct Resp3 {
     streaming:         Option<StreamedFrame<Resp3Frame>>,
     scanner:           FrameScanner,
@@ -100,7 +100,12 @@ mod resp3 {
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
       loop {
         let buffered = src.len();
-        match self.decode_next(src)? {
+        let result = self.decode_next(src).inspect_err(|_| {
+          // the frame that caused the error may be partially consumed, so start over with the next frame
+          self.streaming = None;
+          self.scanner.reset();
+        });
+        match result? {
           Some(frame) => return Ok(Some(frame)),
           // the decoder consumed part of a streamed frame. `Framed` waits for more data after `None`, so keep
           // decoding in case the rest of the stream is already buffered.
@@ -131,30 +136,29 @@ mod resp3 {
         ));
       }
 
-      let result = if let Some(ref mut state) = self.streaming {
+      if let Some(ref mut state) = self.streaming {
         // we started receiving streamed data earlier
         state.add_frame(parsed.into_complete_frame()?);
 
         if state.is_finished() {
-          Some(state.take()?)
+          // clear the stream before building the frame so an error doesn't leave a stale stream behind
+          let mut state = self.streaming.take().expect("missing streamed frame");
+          Ok(Some(state.take()?))
         } else {
-          None
+          Ok(None)
         }
+      } else if parsed.is_streaming() {
+        self.streaming = Some(parsed.into_streaming_frame()?);
+        Ok(None)
       } else {
-        // we're processing a complete frame or starting a new streamed frame
-        if parsed.is_streaming() {
-          self.streaming = Some(parsed.into_streaming_frame()?);
-          None
-        } else {
-          // we're not in the middle of a stream and we found a complete frame
-          Some(parsed.into_complete_frame()?)
+        match parsed.into_complete_frame()? {
+          Resp3Frame::ChunkedString(_) => Err(RedisProtocolError::new(
+            RedisProtocolErrorKind::DecodeError,
+            "Unexpected chunked string outside of a streamed frame.",
+          )),
+          frame => Ok(Some(frame)),
         }
-      };
-
-      if result.is_some() {
-        let _ = self.streaming.take();
       }
-      Ok(result)
     }
   }
 
@@ -200,6 +204,36 @@ mod resp3 {
 
         assert!(buf.is_empty(), "chunk size {chunk_size}");
         assert_eq!(frames, expected, "chunk size {chunk_size}");
+      }
+    }
+
+    #[test]
+    fn should_return_errors_for_invalid_streamed_frames() {
+      let ok = Resp3Frame::SimpleString {
+        data:       "OK".into(),
+        attributes: None,
+      };
+
+      for bytes in [
+        // an aggregate as a set member or map key
+        &b"~?\r\n*0\r\n.\r\n"[..],
+        b"%?\r\n*1\r\n:1\r\n:2\r\n.\r\n",
+        // a map with a key and no value
+        b"%?\r\n+a\r\n.\r\n",
+        // a frame other than a chunk in a streamed string
+        b"$?\r\n:1\r\n;0\r\n",
+        // chunks outside of a streamed frame
+        b";3\r\nfoo\r\n",
+        b".\r\n",
+      ] {
+        let mut codec = Resp3::default();
+        let mut buf = BytesMut::from(bytes);
+        assert!(codec.decode(&mut buf).is_err(), "{bytes:?}");
+
+        // the codec can be used again after an error
+        buf.clear();
+        buf.extend_from_slice(b"+OK\r\n");
+        assert_eq!(codec.decode(&mut buf).unwrap(), Some(ok.clone()), "{bytes:?}");
       }
     }
   }

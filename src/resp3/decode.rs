@@ -38,11 +38,24 @@ where
     .map_err(|e| RedisParseError::new_custom("parse_as", format!("{e:?}")))
 }
 
-fn to_isize<T>(s: &[u8]) -> Result<isize, RedisParseError<T>> {
+/// The length prefix of a blob string or aggregate frame.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PrefixLen {
+  /// `?`, the header of a streamed frame.
+  Streamed,
+  /// `-1`, which RESP2 uses for null bulk strings and arrays.
+  Null,
+  Len(usize),
+}
+
+fn to_prefix_len<T>(s: &[u8]) -> Result<PrefixLen, RedisParseError<T>> {
   if s == b"?" {
-    Ok(-1)
-  } else {
-    utils::parse_isize(s).ok_or_else(|| RedisParseError::new_custom("to_isize", "Invalid integer."))
+    return Ok(PrefixLen::Streamed);
+  }
+  match utils::parse_isize(s) {
+    Some(-1) => Ok(PrefixLen::Null),
+    Some(len) if len >= 0 => Ok(PrefixLen::Len(len as usize)),
+    _ => Err(RedisParseError::new_custom("to_prefix_len", "Invalid length prefix.")),
   }
 }
 
@@ -129,10 +142,11 @@ fn d_read_prefix_len(input: (&[u8], usize)) -> DResult<'_, usize> {
   Ok(((input, offset), etry!(to_usize(data))))
 }
 
-fn d_read_prefix_len_signed(input: (&[u8], usize)) -> DResult<'_, isize> {
+/// Read a length prefix that may also be `?` or `-1`.
+fn d_read_prefix_len_or_marker(input: (&[u8], usize)) -> DResult<'_, PrefixLen> {
   let ((input, offset), data) = d_read_to_crlf_take(input)?;
   decode_log!("Reading prefix len. Data: {:?}", str::from_utf8(data));
-  Ok(((input, offset), etry!(to_isize(data))))
+  Ok(((input, offset), etry!(to_prefix_len(data))))
 }
 
 fn d_frame_type(input: (&[u8], usize)) -> DResult<'_, FrameKind> {
@@ -272,7 +286,15 @@ fn d_parse_array_frames(input: (&[u8], usize), len: usize, depth: usize) -> DRes
   let mut input = input;
   for _ in 0 .. len {
     let (next, frame) = d_parse_frame_or_attribute(input, depth + 1)?;
-    frames.push(etry!(expect_complete_index_frame::<&[u8]>(frame)));
+    let frame = etry!(expect_complete_index_frame::<&[u8]>(frame));
+    if let RangeFrame::ChunkedString(_) = frame {
+      // chunks and stream terminators only appear at the top level, between the frames of a streamed frame
+      e!(RedisParseError::new_custom(
+        "parse_array_frames",
+        "Unexpected chunked string."
+      ));
+    }
+    frames.push(frame);
     input = next;
   }
 
@@ -366,16 +388,17 @@ fn d_parse_hello(input: (&[u8], usize)) -> DResult<'_, RangeFrame> {
 
 /// Parse a blob string, or the prefix bytes of a streamed blob string.
 fn d_parse_blobstring_or_streaming(input: (&[u8], usize)) -> DResult<'_, DecodedRangeFrame> {
-  let (input, len) = d_read_prefix_len_signed(input)?;
-  if len == -1 {
-    Ok((
+  match d_read_prefix_len_or_marker(input)? {
+    (input, PrefixLen::Streamed) => Ok((
       input,
       DecodedRangeFrame::Streaming(StreamedRangeFrame::new(FrameKind::BlobString)),
-    ))
-  } else {
-    let len = etry!(utils::isize_to_usize(len));
-    let (input, frame) = d_parse_blobstring(input, len)?;
-    Ok((input, DecodedRangeFrame::Complete(frame)))
+    )),
+    // RESP3 servers send `_` instead, but RESP2 servers and proxies may send `$-1`
+    (input, PrefixLen::Null) => Ok((input, DecodedRangeFrame::Complete(RangeFrame::Null))),
+    (input, PrefixLen::Len(len)) => {
+      let (input, frame) = d_parse_blobstring(input, len)?;
+      Ok((input, DecodedRangeFrame::Complete(frame)))
+    },
   }
 }
 
@@ -383,11 +406,18 @@ fn d_parse_blobstring_or_streaming(input: (&[u8], usize)) -> DResult<'_, Decoded
 ///
 /// This function is on the recursive parsing path, so it should use as little stack space as possible.
 fn d_parse_aggregate(input: (&[u8], usize), kind: FrameKind, depth: usize) -> DResult<'_, DecodedRangeFrame> {
-  let (input, len) = d_read_prefix_len_signed(input)?;
-  if len == -1 && kind != FrameKind::Push {
-    return Ok((input, DecodedRangeFrame::Streaming(StreamedRangeFrame::new(kind))));
-  }
-  let len = etry!(utils::isize_to_usize(len));
+  let (input, len) = match d_read_prefix_len_or_marker(input)? {
+    (input, PrefixLen::Streamed) if kind != FrameKind::Push => {
+      return Ok((input, DecodedRangeFrame::Streaming(StreamedRangeFrame::new(kind))));
+    },
+    (_, PrefixLen::Streamed) => e!(RedisParseError::new_custom(
+      "parse_aggregate",
+      "Push frames cannot be streamed."
+    )),
+    // RESP3 servers send `_` instead, but RESP2 servers and proxies may send `*-1`
+    (input, PrefixLen::Null) => return Ok((input, DecodedRangeFrame::Complete(RangeFrame::Null))),
+    (input, PrefixLen::Len(len)) => (input, len),
+  };
   let len = if kind == FrameKind::Map {
     len.saturating_mul(2)
   } else {
@@ -867,29 +897,33 @@ impl FrameScanner {
         kind,
         FrameKind::Array | FrameKind::Set | FrameKind::Map | FrameKind::Push
       ) {
-        let ((_, next), len) = match d_read_prefix_len_signed(input) {
+        let ((_, next), len) = match d_read_prefix_len_or_marker(input) {
           Ok(result) => result,
           Err(NomErr::Incomplete(_)) => return Scan::Incomplete,
           Err(_) => return self.finish(Scan::Invalid),
         };
 
-        if len == -1 && kind != FrameKind::Push {
+        let len = match len {
+          PrefixLen::Streamed if kind == FrameKind::Push => return self.finish(Scan::Invalid),
           // the header of a streamed aggregate is decoded as a separate frame, which can't be inside another frame
-          return if depth == 0 {
-            self.finish(Scan::Complete(next))
-          } else {
-            self.finish(Scan::Invalid)
-          };
-        } else if len < 0 {
-          return self.finish(Scan::Invalid);
-        }
-
-        self.check_key(kind);
+          PrefixLen::Streamed if depth == 0 => return self.finish(Scan::Complete(next)),
+          PrefixLen::Streamed => return self.finish(Scan::Invalid),
+          // decoded as a null frame, which can't have attributes
+          PrefixLen::Null if after_attribute => return self.finish(Scan::Invalid),
+          PrefixLen::Null => {
+            self.check_key(FrameKind::Null);
+            0
+          },
+          PrefixLen::Len(len) => {
+            self.check_key(kind);
+            len
+          },
+        };
         self.advance(next);
         let len = if kind == FrameKind::Map {
-          (len as usize).saturating_mul(2)
+          len.saturating_mul(2)
         } else {
-          len as usize
+          len
         };
         if len > 0 {
           self.stack.push(OpenAggregate {
@@ -914,6 +948,9 @@ impl FrameScanner {
         match frame {
           DecodedRangeFrame::Streaming(_) if depth == 0 => return self.finish(Scan::Complete(next)),
           DecodedRangeFrame::Streaming(_) => return self.finish(Scan::Invalid),
+          DecodedRangeFrame::Complete(RangeFrame::ChunkedString(_)) if depth > 0 => {
+            return self.finish(Scan::Invalid)
+          },
           DecodedRangeFrame::Complete(frame) => self.check_key(frame.kind()),
         }
         self.advance(next);
@@ -1012,6 +1049,72 @@ pub mod owned_tests {
     );
     let (frame, _) = complete::decode(set).unwrap().unwrap();
     assert_eq!(frame.len(), 2);
+  }
+
+  #[test]
+  fn should_decode_resp2_nulls_as_null() {
+    for bytes in [&b"$-1\r\n"[..], b"*-1\r\n", b"%-1\r\n", b"~-1\r\n", b">-1\r\n"] {
+      let expected = (OwnedFrame::Null, bytes.len());
+      assert_eq!(complete::decode(bytes).unwrap(), Some(expected.clone()), "{bytes:?}");
+      let (frame, amt) = stream_decode(bytes).unwrap().unwrap();
+      assert_eq!((frame.into_complete_frame().unwrap(), amt), expected, "{bytes:?}");
+    }
+
+    // a null inside an aggregate, followed by another frame
+    let bytes = b"*3\r\n$-1\r\n*-1\r\n+OK\r\n:1\r\n";
+    let expected = OwnedFrame::Array {
+      data:       vec![OwnedFrame::Null, OwnedFrame::Null, OwnedFrame::SimpleString {
+        data:       b"OK".to_vec(),
+        attributes: None,
+      }],
+      attributes: None,
+    };
+    assert_eq!(complete::decode(bytes).unwrap(), Some((expected, bytes.len() - 4)));
+
+    // other negative lengths are still invalid, and nulls can't have attributes
+    for bytes in [&b"$-2\r\n"[..], b"*-2\r\n", b"|1\r\n+a\r\n+b\r\n*-1\r\n"] {
+      assert!(complete::decode(bytes).is_err(), "{bytes:?}");
+    }
+  }
+
+  #[test]
+  fn should_reject_chunks_inside_aggregates() {
+    for bytes in [
+      &b"*2\r\n;3\r\nfoo\r\n.\r\n"[..],
+      b"%1\r\n;3\r\nfoo\r\n:1\r\n",
+      b"~1\r\n.\r\n",
+      b">1\r\n;0\r\n",
+    ] {
+      assert!(complete::decode(bytes).is_err(), "{bytes:?}");
+      assert!(stream_decode(bytes).is_err(), "{bytes:?}");
+      assert_eq!(FrameScanner::new().scan(bytes), Scan::Invalid, "{bytes:?}");
+    }
+  }
+
+  #[test]
+  fn should_reject_invalid_streamed_aggregates() {
+    let build = |kind: FrameKind, frames: Vec<OwnedFrame>| {
+      let mut streamed = StreamedFrame::new(kind);
+      for frame in frames {
+        streamed.add_frame(frame);
+      }
+      streamed.add_frame(OwnedFrame::new_end_stream());
+      streamed.take()
+    };
+    let number = |data| OwnedFrame::Number { data, attributes: None };
+    let array = || OwnedFrame::Array {
+      data:       vec![number(1)],
+      attributes: None,
+    };
+
+    assert!(build(FrameKind::Map, vec![array(), number(1)]).is_err());
+    assert!(build(FrameKind::Map, vec![number(1), number(2), number(3)]).is_err());
+    assert!(build(FrameKind::Set, vec![number(1), array()]).is_err());
+    assert!(build(FrameKind::Array, vec![OwnedFrame::ChunkedString(b"foo".to_vec())]).is_err());
+
+    // values can be aggregates
+    assert!(build(FrameKind::Map, vec![number(1), array()]).is_ok());
+    assert!(build(FrameKind::Array, vec![array(), number(1)]).is_ok());
   }
 
   fn decode_and_verify_some(bytes: &[u8], expected: &(Option<OwnedFrame>, usize)) {
@@ -3456,7 +3559,8 @@ mod scan_tests {
       0 => out.extend_from_slice(b"+OK\r\n"),
       1 => out.extend_from_slice(b"-ERR wrong type\r\n"),
       2 => out.extend_from_slice(format!(":{}\r\n", rng.next() as i64).as_bytes()),
-      3 => out.extend_from_slice(b"_\r\n"),
+      // RESP2 nulls, which decode as null frames
+      3 => out.extend_from_slice([&b"_\r\n"[..], b"$-1\r\n", b"*-1\r\n", b"%-1\r\n"][rng.below(4) as usize]),
       4 => out.extend_from_slice(if rng.one_in(2) { b"#t\r\n" } else { b"#f\r\n" }),
       5 => out.extend_from_slice(b",3.14159\r\n"),
       6 => out.extend_from_slice(b"(3492890328409238509324850943850943825024385\r\n"),
@@ -3471,7 +3575,7 @@ mod scan_tests {
       },
       10 => out.extend_from_slice(b"HELLO 3 AUTH default password\r\n"),
       11 => {
-        // a chunk of a streamed string, which the decoder also accepts inside an aggregate
+        // a chunk of a streamed string, which the decoder rejects inside an aggregate
         let len = rng.below(50) as usize;
         out.extend_from_slice(format!(";{len}\r\n").as_bytes());
         if len > 0 {

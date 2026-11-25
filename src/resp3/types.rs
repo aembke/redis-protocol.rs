@@ -833,6 +833,36 @@ impl DecodedRangeFrame {
   }
 }
 
+/// Check the frames buffered from a streamed aggregate before building the aggregate, since the decoder parses each
+/// element separately.
+fn check_streamed_aggregate<T: Resp3Frame>(target: FrameKind, data: &[T]) -> Result<(), RedisProtocolError> {
+  let error = |details: &'static str| Err(RedisProtocolError::new(RedisProtocolErrorKind::DecodeError, details));
+
+  if data
+    .iter()
+    .any(|frame| matches!(frame.kind(), FrameKind::ChunkedString | FrameKind::EndStream))
+  {
+    return error("Unexpected chunked string in streamed aggregate.");
+  }
+  let is_key = |idx: usize| match target {
+    FrameKind::Map => idx % 2 == 0,
+    FrameKind::Set => true,
+    _ => false,
+  };
+
+  if target == FrameKind::Map && data.len() % 2 != 0 {
+    error("Streamed map has an odd number of elements.")
+  } else if data
+    .iter()
+    .enumerate()
+    .any(|(idx, frame)| is_key(idx) && !frame.kind().can_hash())
+  {
+    error("Invalid map key or set member in streamed frame.")
+  } else {
+    Ok(())
+  }
+}
+
 /// Generic operations on a RESP3 frame.
 pub trait Resp3Frame: Debug + Hash + Eq + Sized {
   type Attributes;
@@ -1093,18 +1123,27 @@ impl Resp3Frame for OwnedFrame {
 
         OwnedFrame::BlobString { data: buf, attributes }
       },
-      FrameKind::Map => OwnedFrame::Map {
-        attributes,
-        data: data
-          .chunks_exact_mut(2)
-          .map(|chunk| (chunk[0].take(), chunk[1].take()))
-          .collect(),
+      FrameKind::Map => {
+        check_streamed_aggregate(target, &data)?;
+        OwnedFrame::Map {
+          attributes,
+          data: data
+            .chunks_exact_mut(2)
+            .map(|chunk| (chunk[0].take(), chunk[1].take()))
+            .collect(),
+        }
       },
-      FrameKind::Set => OwnedFrame::Set {
-        attributes,
-        data: data.into_iter().collect(),
+      FrameKind::Set => {
+        check_streamed_aggregate(target, &data)?;
+        OwnedFrame::Set {
+          attributes,
+          data: data.into_iter().collect(),
+        }
       },
-      FrameKind::Array => OwnedFrame::Array { attributes, data },
+      FrameKind::Array => {
+        check_streamed_aggregate(target, &data)?;
+        OwnedFrame::Array { attributes, data }
+      },
       _ => {
         return Err(RedisProtocolError::new(
           RedisProtocolErrorKind::DecodeError,
@@ -1705,18 +1744,27 @@ impl Resp3Frame for BytesFrame {
           attributes,
         }
       },
-      FrameKind::Map => BytesFrame::Map {
-        attributes,
-        data: data
-          .chunks_exact_mut(2)
-          .map(|chunk| (chunk[0].take(), chunk[1].take()))
-          .collect(),
+      FrameKind::Map => {
+        check_streamed_aggregate(target, &data)?;
+        BytesFrame::Map {
+          attributes,
+          data: data
+            .chunks_exact_mut(2)
+            .map(|chunk| (chunk[0].take(), chunk[1].take()))
+            .collect(),
+        }
       },
-      FrameKind::Set => BytesFrame::Set {
-        attributes,
-        data: data.into_iter().collect(),
+      FrameKind::Set => {
+        check_streamed_aggregate(target, &data)?;
+        BytesFrame::Set {
+          attributes,
+          data: data.into_iter().collect(),
+        }
       },
-      FrameKind::Array => BytesFrame::Array { attributes, data },
+      FrameKind::Array => {
+        check_streamed_aggregate(target, &data)?;
+        BytesFrame::Array { attributes, data }
+      },
       _ => {
         return Err(RedisProtocolError::new(
           RedisProtocolErrorKind::DecodeError,
@@ -2120,7 +2168,7 @@ impl<T: Resp3Frame> DecodedFrame<T> {
 ///   println!("{:?}", result); // OwnedFrame::Array { data: [1, 2], attributes: None }
 /// }
 /// ```
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StreamedFrame<T: Resp3Frame> {
   /// The internal buffer of frames and attributes.
   buffer:          VecDeque<T>,
