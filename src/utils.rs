@@ -188,7 +188,7 @@ fn crc16_xmodem(key: &[u8]) -> u16 {
 
 /// Map a key to the corresponding cluster key slot.
 ///
-/// ```ignore
+/// ```text
 /// $ redis-cli cluster keyslot "8xjx7vWrfPq54mKfFD3Y1CcjjofpnAcQ"
 /// (integer) 5458
 /// ```

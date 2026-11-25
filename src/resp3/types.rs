@@ -1703,7 +1703,7 @@ impl From<f64> for OwnedFrame {
   }
 }
 
-/// A RESP3 frame that uses [Bytes](bytes::Bytes) and [Str](bytes_utils::Str) as the underlying buffer type.
+/// A RESP3 frame that uses [Bytes] and [Str] as the underlying buffer type.
 ///
 /// <https://github.com/antirez/RESP3/blob/master/spec.md>
 #[cfg(feature = "bytes")]

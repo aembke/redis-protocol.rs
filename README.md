@@ -84,7 +84,7 @@ different use cases:
 
 * `OwnedFrame` types use `core` container types to implement owned frame variants. This is the easiest frame
   interface to use, but often requires moving or copying the underlying buffer contents when decoding.
-* `BytesFrame` types use [Bytes](https://docs.rs/bytes/1.5.0/bytes/struct.Bytes.html) as the backing container.
+* `BytesFrame` types use [Bytes](https://docs.rs/bytes/latest/bytes/struct.Bytes.html) as the backing container.
   The `bytes` feature flag enables this frame type and a set of associated functions that avoid moving or
   copying `BytesMut` contents.
 * `RangeFrame` types represent ranges into an associated buffer and are typically used to implement forms of zero-copy
@@ -104,21 +104,21 @@ complete. The codecs in the `codec` module use a scanner internally.
 use bytes::BytesMut;
 use redis_protocol::resp2::decode::{decode_bytes_mut, FrameScanner};
 
-fn example() {
-  let mut scanner = FrameScanner::new();
-  let mut buf = BytesMut::from("*2\r\n$3\r\nfoo\r\n$3\r\nb");
-  assert!(scanner.decode_with(&mut buf, decode_bytes_mut).unwrap().is_none());
+let mut scanner = FrameScanner::new();
+let mut buf = BytesMut::from("*2\r\n$3\r\nfoo\r\n$3\r\nb");
+assert!(scanner.decode_with(&mut buf, decode_bytes_mut).unwrap().is_none());
 
-  // the next call reads only the new bytes
-  buf.extend_from_slice(b"ar\r\n");
-  let (frame, _, _) = scanner.decode_with(&mut buf, decode_bytes_mut).unwrap().unwrap();
-  println!("Decoded {:?}", frame);
-}
+// the next call reads only the new bytes
+buf.extend_from_slice(b"ar\r\n");
+let (frame, _, _) = scanner.decode_with(&mut buf, decode_bytes_mut).unwrap().unwrap();
+println!("Decoded {:?}", frame);
+assert!(buf.is_empty());
 ```
 
 ### RESP2 `OwnedFrame` Decoding Example
 
-Simple array decoding example adapted from the tests
+Simple array decoding example adapted from the tests. Note that RESP2 has two null values: a null bulk string
+(`$-1\r\n`) decodes to `Null`, and a null array (`*-1\r\n`) decodes to `NullArray`.
 
 ```rust
 use redis_protocol::resp2::{
@@ -126,18 +126,19 @@ use redis_protocol::resp2::{
   types::{OwnedFrame, Resp2Frame}
 };
 
-fn should_decode_array() {
-  // ["Foo", nil, "Bar"]
-  let buf: &[u8] = b"*3\r\n$3\r\nFoo\r\n$-1\r\n$3\r\nBar\r\n";
+// ["Foo", nil, "Bar"]
+let buf: &[u8] = b"*3\r\n$3\r\nFoo\r\n$-1\r\n$3\r\nBar\r\n";
 
-  let (frame, amt) = decode(&buf).unwrap().unwrap();
-  assert_eq!(frame, OwnedFrame::Array(vec![
-    OwnedFrame::BulkString("Foo".into()),
-    OwnedFrame::Null,
-    OwnedFrame::BulkString("Bar".into())
-  ]));
-  assert_eq!(amt, buf.len());
-}
+let (frame, amt) = decode(&buf).unwrap().unwrap();
+assert_eq!(frame, OwnedFrame::Array(vec![
+  OwnedFrame::BulkString("Foo".into()),
+  OwnedFrame::Null,
+  OwnedFrame::BulkString("Bar".into())
+]));
+assert_eq!(amt, buf.len());
+
+let (frame, _) = decode(b"*-1\r\n").unwrap().unwrap();
+assert_eq!(frame, OwnedFrame::NullArray);
 ```
 
 ### RESP2 `BytesFrame` Decoding Example
@@ -151,28 +152,26 @@ use redis_protocol::resp2::{
 };
 use bytes::BytesMut;
 
-fn should_decode_array_no_nulls() {
-  let expected = (
-    BytesFrame::Array(vec![
-      BytesFrame::SimpleString("Foo".into()),
-      BytesFrame::SimpleString("Bar".into()),
-    ]),
-    16,
-  );
-  let mut bytes: BytesMut = "*2\r\n+Foo\r\n+Bar\r\n".into();
-  let total_len = bytes.len();
+let expected = (
+  BytesFrame::Array(vec![
+    BytesFrame::SimpleString("Foo".into()),
+    BytesFrame::SimpleString("Bar".into()),
+  ]),
+  16,
+);
+let mut bytes: BytesMut = "*2\r\n+Foo\r\n+Bar\r\n".into();
+let total_len = bytes.len();
 
-  let (frame, amt, buf) = match decode_bytes_mut(&mut bytes) {
-    Ok(Some(result)) => result,
-    Ok(None) => panic!("Expected complete frame"),
-    Err(e) => panic!("{:?}", e)
-  };
+let (frame, amt, buf) = match decode_bytes_mut(&mut bytes) {
+  Ok(Some(result)) => result,
+  Ok(None) => panic!("Expected complete frame"),
+  Err(e) => panic!("{:?}", e)
+};
 
-  assert_eq!(frame, expected.0, "decoded frame matched");
-  assert_eq!(amt, expected.1, "decoded frame len matched");
-  assert_eq!(buf.len(), expected.1, "output buffer len matched");
-  assert_eq!(buf.len() + bytes.len(), total_len, "total len matched");
-}
+assert_eq!(frame, expected.0, "decoded frame matched");
+assert_eq!(amt, expected.1, "decoded frame len matched");
+assert_eq!(buf.len(), expected.1, "output buffer len matched");
+assert_eq!(buf.len() + bytes.len(), total_len, "total len matched");
 ```
 
 ### RESP2 `RangeFrame` Decoding Example
@@ -203,6 +202,12 @@ fn decode_borrowed(buf: &[u8]) -> Option<MyBorrowedFrame> {
     _ => None,
   }
 }
+
+let buf = b"$3\r\nfoo\r\n";
+assert!(matches!(decode_borrowed(buf), Some(MyBorrowedFrame::BulkString(b"foo"))));
+let buf = b"+bar\r\n";
+assert!(matches!(decode_borrowed(buf), Some(MyBorrowedFrame::SimpleString("bar"))));
+assert!(decode_borrowed(b":1\r\n").is_none());
 ```
 
 ## Encoding
@@ -210,9 +215,9 @@ fn decode_borrowed(buf: &[u8]) -> Option<MyBorrowedFrame> {
 Similar to the decoding interface, there are 3 frame types available to callers for encoding use cases.
 
 * `OwnedFrame` - See above. Callers that use this interface often have to allocate additional containers on the heap,
-  and often have to move or copy the contents into these frame types from other types, such as `RedisValue` in `fred`.
+  and often have to move or copy the contents into these frame types from other types, such as `Value` in [fred](https://crates.io/crates/fred).
 * `BytesFrame` - See above. This frame type often avoids the need to copy or move the contents from upstream types such
-  as `RedisValue`, but still requires callers to allocate containers on the heap (i.e. the `Vec` in the `Array`
+  as `Value`, but still requires callers to allocate containers on the heap (i.e. the `Vec` in the `Array`
   variant).
 * `BorrowedFrame` - This frame type serves a similar purpose to the `RangeFrame` type in the decoding interface in that
   it can be used when callers want to entirely avoid heap allocations. In practice this often requires the caller to
@@ -261,7 +266,6 @@ fn main() {
   let len = encode::extend_encode_borrowed(&mut buf, &frame, false).expect("Error encoding frame");
   println!("Encoded {} bytes into buffer with contents {:?}", len, buf);
 }
-
 ```
 
 ## Benchmarks
