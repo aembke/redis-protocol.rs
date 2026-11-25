@@ -1,7 +1,7 @@
 use crate::{
   error::RedisProtocolError,
   resp2::types::{OwnedFrame, RangeFrame},
-  utils::digits_in_usize,
+  utils::{digits_in_i64, digits_in_usize},
 };
 use alloc::{borrow::ToOwned, string::String, vec::Vec};
 
@@ -26,7 +26,8 @@ pub fn error_encode_len(s: &str) -> usize {
 
 pub fn integer_encode_len(i: i64, int_as_bulkstring: bool) -> usize {
   let prefix = if i < 0 { 1 } else { 0 };
-  let digits = digits_in_usize(i.unsigned_abs() as usize);
+  // count the digits as a u64, since `usize` is 32 bits on some targets
+  let digits = digits_in_i64(i) - prefix;
 
   if int_as_bulkstring {
     1 + digits_in_usize(digits + prefix) + 2 + prefix + digits + 2

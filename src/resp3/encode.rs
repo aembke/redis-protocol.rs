@@ -12,10 +12,7 @@ use crate::{
   },
   types::CRLF,
 };
-use alloc::{
-  boxed::Box,
-  string::{String, ToString},
-};
+use alloc::{boxed::Box, string::String};
 
 #[cfg(feature = "bytes")]
 use crate::utils;
@@ -567,6 +564,7 @@ fn gen_chunked_string<W: GenOut>(x: W, data: &[u8]) -> Result<W, GenError> {
 }
 
 fn gen_owned_frame<W: GenOut>(x: W, frame: &OwnedFrame, int_as_blobstring: bool) -> Result<W, GenError> {
+  #[cfg(feature = "decode-logs")]
   log::trace!("Encode {:?}", frame.kind());
 
   match frame {
@@ -600,6 +598,7 @@ fn gen_owned_frame<W: GenOut>(x: W, frame: &OwnedFrame, int_as_blobstring: bool)
 }
 
 fn gen_borrowed_frame<W: GenOut>(x: W, frame: &BorrowedFrame, int_as_blobstring: bool) -> Result<W, GenError> {
+  #[cfg(feature = "decode-logs")]
   log::trace!("Encode {:?}", frame.kind());
 
   match frame {
@@ -632,6 +631,7 @@ fn gen_borrowed_frame<W: GenOut>(x: W, frame: &BorrowedFrame, int_as_blobstring:
 
 #[cfg(feature = "bytes")]
 fn gen_bytes_frame<W: GenOut>(x: W, frame: &BytesFrame, int_as_blobstring: bool) -> Result<W, GenError> {
+  #[cfg(feature = "decode-logs")]
   log::trace!("Encode {:?}", frame.kind());
 
   match frame {
@@ -979,17 +979,6 @@ pub mod streaming {
     )
   }
 
-  fn gen_streaming_string_chunk<W: GenOut>(x: W, data: &[u8]) -> Result<W, GenError> {
-    do_gen!(
-      x,
-      gen_be_u8!(CHUNKED_STRING_BYTE)
-        >> gen_slice!(data.len().to_string().as_bytes())
-        >> gen_slice!(CRLF.as_bytes())
-        >> gen_slice!(data)
-        >> gen_slice!(CRLF.as_bytes())
-    )
-  }
-
   fn gen_end_streaming_string<W: GenOut>(x: W) -> Result<W, GenError> {
     do_gen!(x, gen_slice!(END_STREAM_STRING_BYTES.as_bytes()))
   }
@@ -1079,9 +1068,15 @@ pub mod streaming {
   ///
   /// Returns the new offset in `buf`.
   pub fn encode_string_chunk(buf: &mut [u8], offset: usize, data: &[u8]) -> Result<usize, RedisProtocolError> {
-    encode_checks!(buf, offset, resp3_utils::blobstring_encode_len(data));
+    // an empty chunk is the same as the end of the stream, `;0\r\n`, which doesn't have a trailing CRLF
+    let required = if data.is_empty() {
+      END_STREAM_STRING_BYTES.len()
+    } else {
+      resp3_utils::blobstring_encode_len(data)
+    };
+    encode_checks!(buf, offset, required);
 
-    gen_streaming_string_chunk((buf, offset), data)
+    gen_chunked_string((buf, offset), data)
       .map(|(_, l)| l)
       .map_err(|e| e.into())
   }
@@ -1836,6 +1831,27 @@ mod owned_tests {
 
     assert_eq!(offset, expected.as_bytes().len());
     assert_eq!(buf, expected.as_bytes());
+  }
+
+  #[test]
+  fn should_encode_empty_chunk_as_end_of_stream() {
+    let expected = "$?\r\n;3\r\nfoo\r\n;0\r\n";
+    let mut buf = vec![0; expected.len()];
+
+    let mut offset = streaming::encode_start_string(&mut buf, 0).unwrap();
+    offset = streaming::encode_string_chunk(&mut buf, offset, b"foo").unwrap();
+    offset = streaming::encode_string_chunk(&mut buf, offset, b"").unwrap();
+
+    assert_eq!(offset, expected.len());
+    assert_eq!(buf, expected.as_bytes());
+  }
+
+  #[test]
+  fn should_return_error_for_offset_past_buffer() {
+    let mut buf = [0u8; 4];
+    assert!(streaming::encode_end_aggregate_type(&mut buf, 10).is_err());
+    assert!(streaming::encode_string_chunk(&mut buf, usize::MAX, b"foo").is_err());
+    assert!(streaming::encode_string_chunk(&mut buf, usize::MAX, b"").is_err());
   }
 
   #[test]

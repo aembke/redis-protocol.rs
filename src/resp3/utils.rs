@@ -1,7 +1,7 @@
 use crate::{
   error::{RedisProtocolError, RedisProtocolErrorKind},
   resp3::types::*,
-  utils::digits_in_usize,
+  utils::{digits_in_i64, digits_in_usize},
 };
 use alloc::{
   boxed::Box,
@@ -83,7 +83,8 @@ pub fn verbatimstring_encode_len(format: &VerbatimStringFormat, data: &[u8]) -> 
 
 pub fn number_encode_len(i: i64, int_as_blobstring: bool) -> usize {
   let prefix = if i < 0 { 1 } else { 0 };
-  let digits = digits_in_usize(i.unsigned_abs() as usize);
+  // count the digits as a u64, since `usize` is 32 bits on some targets
+  let digits = digits_in_i64(i) - prefix;
 
   if int_as_blobstring {
     1 + digits_in_usize(digits + prefix) + 2 + prefix + digits + 2

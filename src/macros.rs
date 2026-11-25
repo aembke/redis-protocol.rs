@@ -1,7 +1,8 @@
 macro_rules! encode_checks(
   ($buf:ident, $offset:expr, $required:expr) => {
     let required = $required;
-    let remaining = $buf.len() - $offset;
+    // an offset past the end of the buffer leaves no room
+    let remaining = $buf.len().saturating_sub($offset);
 
     if required > remaining {
       return Err(RedisProtocolError::from(crate::gen::GenError::BufferTooSmall(required - remaining)));

@@ -32,10 +32,14 @@ impl GenOut for (&mut [u8], usize) {
   #[inline]
   fn gen_slice(self, data: &[u8]) -> Result<Self, GenError> {
     let (buf, offset) = self;
-    let end = offset + data.len();
-    if end > buf.len() {
-      return Err(GenError::BufferTooSmall(end - buf.len()));
-    }
+    let end = match offset.checked_add(data.len()) {
+      Some(end) if end <= buf.len() => end,
+      end => {
+        return Err(GenError::BufferTooSmall(
+          end.unwrap_or(usize::MAX).saturating_sub(buf.len()),
+        ))
+      },
+    };
 
     buf[offset .. end].copy_from_slice(data);
     Ok((buf, end))
