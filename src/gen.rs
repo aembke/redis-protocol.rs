@@ -6,13 +6,39 @@
 use bytes::BytesMut;
 
 /// Errors returned by the internal serialization functions.
+///
+/// This must stay small enough that `Result<&mut BytesMut, GenError>` fits in two registers. A third variant made it
+/// 24 bytes, which slowed down encoding into a `BytesMut` by 30-50%, so new errors use `CustomError` codes instead.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum GenError {
   /// The output buffer is too small. The argument is the number of additional bytes required.
   BufferTooSmall(usize),
-  /// Allocated for custom errors.
-  #[cfg_attr(not(feature = "resp3"), allow(dead_code))]
+  /// Allocated for custom errors. See `From<GenError> for RedisProtocolError` for the codes.
   CustomError(u32),
+}
+
+/// The `CustomError` code for a simple string, simple error, or big number that contains a CR or LF byte.
+pub(crate) const INVALID_LINE: u32 = 4;
+
+#[cfg(feature = "bytes")]
+const _: () = assert!(core::mem::size_of::<Result<&mut BytesMut, GenError>>() == 2 * core::mem::size_of::<usize>());
+
+/// Check that the contents of a frame that ends at the next CRLF, such as a simple string, don't contain CR or LF.
+///
+/// Otherwise the receiver would read the rest of the contents as another frame.
+#[inline]
+pub(crate) fn check_line(data: &[u8]) -> Result<(), GenError> {
+  // simple strings are usually short, where memchr's setup costs more than a loop
+  let found = if data.len() < 32 {
+    data.iter().any(|b| matches!(b, b'\r' | b'\n'))
+  } else {
+    memchr::memchr2(b'\r', b'\n', data).is_some()
+  };
+  if found {
+    Err(GenError::CustomError(INVALID_LINE))
+  } else {
+    Ok(())
+  }
 }
 
 /// A destination for encoded bytes.

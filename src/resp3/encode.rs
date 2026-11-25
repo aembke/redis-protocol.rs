@@ -4,7 +4,7 @@
 
 use crate::{
   error::RedisProtocolError,
-  gen::{GenError, GenOut},
+  gen::{check_line, GenError, GenOut},
   int2dec,
   resp3::{
     types::*,
@@ -49,6 +49,7 @@ fn gen_simplestring<'b, W: GenOut, A: Into<BorrowedAttrs<'b>>>(
   attributes: Option<A>,
   int_as_blobstring: bool,
 ) -> Result<W, GenError> {
+  check_line(data)?;
   encode_attributes!(x, attributes, int_as_blobstring);
 
   do_gen!(
@@ -63,6 +64,7 @@ fn gen_simpleerror<'b, W: GenOut, A: Into<BorrowedAttrs<'b>>>(
   attributes: Option<A>,
   int_as_blobstring: bool,
 ) -> Result<W, GenError> {
+  check_line(data.as_bytes())?;
   encode_attributes!(x, attributes, int_as_blobstring);
 
   do_gen!(
@@ -139,6 +141,7 @@ fn gen_bignumber<'b, W: GenOut, A: Into<BorrowedAttrs<'b>>>(
   attributes: Option<A>,
   int_as_blobstring: bool,
 ) -> Result<W, GenError> {
+  check_line(data)?;
   encode_attributes!(x, attributes, int_as_blobstring);
 
   // reserve the whole blob, so a large payload doesn't grow the buffer to exactly its size and then again for the
@@ -2340,6 +2343,28 @@ mod bytes_tests {
     encode_and_verify_non_empty(&input, expected);
     encode_and_verify_empty_with_attributes(&input, expected);
     encode_and_verify_non_empty_with_attributes(&input, expected);
+  }
+
+  #[test]
+  fn should_reject_crlf_in_line_frames() {
+    for frame in [
+      BytesFrame::SimpleString {
+        data:       "OK\r\n:1".into(),
+        attributes: None,
+      },
+      BytesFrame::SimpleError {
+        data:       "ERR a\nb".into(),
+        attributes: None,
+      },
+      BytesFrame::BigNumber {
+        data:       "1\r\n".into(),
+        attributes: None,
+      },
+    ] {
+      let mut buf = BytesMut::from("foo");
+      assert!(complete::extend_encode(&mut buf, &frame, false).is_err(), "{frame:?}");
+      assert_eq!(buf, "foo");
+    }
   }
 
   #[test]

@@ -12,6 +12,10 @@ use redis_protocol::{
   },
 };
 
+fn has_cr_or_lf(data: &[u8]) -> bool {
+  data.iter().any(|b| *b == b'\r' || *b == b'\n')
+}
+
 /// Whether the frame, or anything nested inside it, can't be expected to round-trip exactly.
 fn skip(frame: &BytesFrame) -> bool {
   let attributes = frame
@@ -21,8 +25,11 @@ fn skip(frame: &BytesFrame) -> bool {
 
   attributes
     || match frame {
-      // `nan != nan`, so a frame containing a NaN never equals itself
+      // the sign and payload of a NaN aren't kept when it's encoded as `nan`
       BytesFrame::Double { data, .. } => data.is_nan(),
+      // the decoder accepts a lone CR or LF in a line, but the encoder rejects both
+      BytesFrame::SimpleString { data, .. } | BytesFrame::BigNumber { data, .. } => has_cr_or_lf(data),
+      BytesFrame::SimpleError { data, .. } => has_cr_or_lf(data.as_bytes()),
       // HELLO isn't length-prefixed, so the encoded form isn't always parsed back the same way (e.g. arguments with
       // spaces). it's also only sent by clients.
       BytesFrame::Hello { .. } => true,

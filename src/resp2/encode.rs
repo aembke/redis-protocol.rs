@@ -4,7 +4,7 @@
 
 use crate::{
   error::RedisProtocolError,
-  gen::{GenError, GenOut},
+  gen::{check_line, GenError, GenOut},
   int2dec,
   resp2::types::*,
   types::CRLF,
@@ -17,6 +17,7 @@ use crate::utils;
 use bytes::BytesMut;
 
 fn gen_simplestring<W: GenOut>(x: W, data: &[u8]) -> Result<W, GenError> {
+  check_line(data)?;
   do_gen!(
     x,
     gen_be_u8!(FrameKind::SimpleString.to_byte()) >> gen_slice!(data) >> gen_slice!(CRLF.as_bytes())
@@ -24,6 +25,7 @@ fn gen_simplestring<W: GenOut>(x: W, data: &[u8]) -> Result<W, GenError> {
 }
 
 fn gen_error<W: GenOut>(x: W, data: &str) -> Result<W, GenError> {
+  check_line(data.as_bytes())?;
   do_gen!(
     x,
     gen_be_u8!(FrameKind::Error.to_byte()) >> gen_slice!(data.as_bytes()) >> gen_slice!(CRLF.as_bytes())
@@ -680,6 +682,20 @@ mod bytes_tests {
 
     encode_and_verify_empty(&input, expected);
     encode_and_verify_non_empty(&input, expected);
+  }
+
+  #[test]
+  fn should_reject_crlf_in_simple_strings_and_errors() {
+    for frame in [
+      BytesFrame::SimpleString("OK\r\n:1".into()),
+      BytesFrame::Error("ERR a\nb".into()),
+      BytesFrame::Array(vec![BytesFrame::Integer(1), BytesFrame::SimpleString("a\rb".into())]),
+    ] {
+      let mut buf = BytesMut::from("foo");
+      assert!(extend_encode(&mut buf, &frame, false).is_err(), "{frame:?}");
+      // a partially encoded frame is removed
+      assert_eq!(buf, "foo");
+    }
   }
 
   #[test]

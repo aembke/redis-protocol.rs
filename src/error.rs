@@ -126,8 +126,11 @@ impl From<GenError> for RedisProtocolError {
     match e {
       GenError::CustomError(i) => match i {
         1 => RedisProtocolError::new(RedisProtocolErrorKind::EncodeError, "Invalid frame kind."),
-        2 => RedisProtocolError::new(RedisProtocolErrorKind::EncodeError, "Cannot encode NaN."),
         3 => RedisProtocolError::new(RedisProtocolErrorKind::EncodeError, "Cannot stream non aggregate type."),
+        crate::gen::INVALID_LINE => RedisProtocolError::new(
+          RedisProtocolErrorKind::EncodeError,
+          "Simple strings, simple errors, and big numbers cannot contain CR or LF.",
+        ),
         _ => RedisProtocolError::new_empty(),
       },
       GenError::BufferTooSmall(b) => RedisProtocolError::buffer_too_small(b),

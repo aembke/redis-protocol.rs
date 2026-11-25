@@ -8,9 +8,21 @@ use redis_protocol::{
   resp2::{
     decode::decode_bytes,
     encode::{encode_bytes, extend_encode},
-    types::Resp2Frame,
+    types::{BytesFrame, Resp2Frame},
   },
 };
+
+/// Whether the frame contains a simple string or error with a lone CR or LF, which the decoder accepts but the
+/// encoder rejects.
+fn has_cr_or_lf(frame: &BytesFrame) -> bool {
+  let line = |data: &[u8]| data.iter().any(|b| *b == b'\r' || *b == b'\n');
+  match frame {
+    BytesFrame::SimpleString(data) => line(data),
+    BytesFrame::Error(data) => line(data.as_bytes()),
+    BytesFrame::Array(data) => data.iter().any(has_cr_or_lf),
+    _ => false,
+  }
+}
 
 fuzz_target!(|data: &[u8]| {
   let _ = pretty_env_logger::try_init();
@@ -19,6 +31,9 @@ fuzz_target!(|data: &[u8]| {
     Ok(Some((frame, _))) => frame,
     _ => return,
   };
+  if has_cr_or_lf(&frame) {
+    return;
+  }
 
   for int_as_bulkstring in [false, true] {
     let encode_len = frame.encode_len(int_as_bulkstring);
