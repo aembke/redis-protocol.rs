@@ -98,6 +98,22 @@ mod resp3 {
     type Item = Resp3Frame;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+      loop {
+        let buffered = src.len();
+        match self.decode_next(src)? {
+          Some(frame) => return Ok(Some(frame)),
+          // the decoder consumed part of a streamed frame. `Framed` waits for more data after `None`, so keep
+          // decoding in case the rest of the stream is already buffered.
+          None if !src.is_empty() && src.len() < buffered => continue,
+          None => return Ok(None),
+        }
+      }
+    }
+  }
+
+  impl Resp3 {
+    /// Decode the next frame, which may be part of a streamed frame.
+    fn decode_next(&mut self, src: &mut BytesMut) -> Result<Option<Resp3Frame>, RedisProtocolError> {
       if src.is_empty() {
         return Ok(None);
       }
@@ -139,6 +155,52 @@ mod resp3 {
         let _ = self.streaming.take();
       }
       Ok(result)
+    }
+  }
+
+  #[cfg(test)]
+  mod tests {
+    use super::*;
+
+    #[test]
+    fn should_decode_buffered_streamed_frames() {
+      let bytes = b"$?\r\n;4\r\nHell\r\n;6\r\no worl\r\n;1\r\nd\r\n;0\r\n*?\r\n:1\r\n+two\r\n.\r\n_\r\n";
+      let expected = [
+        Resp3Frame::BlobString {
+          data:       "Hello world".into(),
+          attributes: None,
+        },
+        Resp3Frame::Array {
+          data:       vec![
+            Resp3Frame::Number {
+              data:       1,
+              attributes: None,
+            },
+            Resp3Frame::SimpleString {
+              data:       "two".into(),
+              attributes: None,
+            },
+          ],
+          attributes: None,
+        },
+        Resp3Frame::Null,
+      ];
+
+      // decode after each read, like `Framed`, which only calls `decode` again after `None` once more data arrives
+      for chunk_size in [1, 2, 5, bytes.len()] {
+        let mut codec = Resp3::default();
+        let mut buf = BytesMut::new();
+        let mut frames = Vec::new();
+        for chunk in bytes.chunks(chunk_size) {
+          buf.extend_from_slice(chunk);
+          while let Some(frame) = codec.decode(&mut buf).unwrap() {
+            frames.push(frame);
+          }
+        }
+
+        assert!(buf.is_empty(), "chunk size {chunk_size}");
+        assert_eq!(frames, expected, "chunk size {chunk_size}");
+      }
     }
   }
 }
