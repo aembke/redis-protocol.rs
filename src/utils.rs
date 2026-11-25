@@ -36,6 +36,26 @@ pub(crate) fn find_crlf(buf: &[u8]) -> Result<(&[u8], &[u8]), nom::Err<RedisPars
   Err(nom::Err::Incomplete(nom::Needed::Unknown))
 }
 
+/// Split the `len` bytes of a blob from the front of `buf`, checking that the CRLF that ends the blob follows them.
+///
+/// Returns the bytes after the CRLF and the contents of the blob, or `Incomplete` if the blob and CRLF aren't
+/// buffered yet.
+#[cfg(any(feature = "resp2", feature = "resp3"))]
+#[inline]
+pub(crate) fn take_blob(buf: &[u8], len: usize) -> Result<(&[u8], &[u8]), nom::Err<RedisParseError<&[u8]>>> {
+  // lengths are at most `isize::MAX`, so this can't overflow
+  let end = len + 2;
+  match buf.get(len .. end) {
+    // compare the bytes directly rather than with nom's `tag`, which is measurably slower on this hot path
+    Some(b"\r\n") => Ok((&buf[end ..], &buf[.. len])),
+    Some(_) => Err(nom::Err::Failure(RedisParseError::new_custom(
+      "take_blob",
+      "Expected CRLF after blob.",
+    ))),
+    None => Err(nom::Err::Incomplete(nom::Needed::new(end - buf.len()))),
+  }
+}
+
 /// Whether `buf[start..]` contains a CRLF, resuming the search from `*searched` (the buffer length at the end of the
 /// last unsuccessful search) so that a line arriving in many small reads is only searched once.
 #[cfg(any(feature = "resp2", feature = "resp3"))]
@@ -112,6 +132,7 @@ pub(crate) fn parse_usize(s: &[u8]) -> Option<usize> {
   Some(out)
 }
 
+#[cfg(feature = "resp2")]
 pub fn isize_to_usize<T>(val: isize) -> Result<usize, RedisParseError<T>> {
   if val >= 0 {
     Ok(val as usize)

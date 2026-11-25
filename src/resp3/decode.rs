@@ -7,7 +7,7 @@ use crate::{
 use alloc::{boxed::Box, format, vec::Vec};
 use core::{fmt::Debug, mem::size_of, str, str::FromStr};
 use nom::{
-  bytes::streaming::take as nom_take,
+  bytes::streaming::{tag as nom_tag, take as nom_take},
   combinator::map as nom_map,
   number::streaming::be_u8 as nom_be_u8,
   sequence::terminated as nom_terminated,
@@ -227,7 +227,7 @@ fn d_parse_null(input: (&[u8], usize)) -> DResult<'_, RangeFrame> {
 
 fn d_parse_blobstring(input: (&[u8], usize), len: usize) -> DResult<'_, RangeFrame> {
   let offset = input.1;
-  let (input, data) = nom_terminated(nom_take(len), nom_take(2_usize)).parse(input.0)?;
+  let (input, data) = utils::take_blob(input.0, len)?;
 
   Ok(((input, offset + len + 2), RangeFrame::BlobString {
     data:       (offset, offset + data.len()),
@@ -237,7 +237,7 @@ fn d_parse_blobstring(input: (&[u8], usize), len: usize) -> DResult<'_, RangeFra
 
 fn d_parse_bloberror(input: (&[u8], usize)) -> DResult<'_, RangeFrame> {
   let ((input, offset), len) = d_read_prefix_len(input)?;
-  let (input, data) = nom_terminated(nom_take(len), nom_take(2_usize)).parse(input)?;
+  let (input, data) = utils::take_blob(input, len)?;
 
   Ok(((input, offset + len + 2), RangeFrame::BlobError {
     data:       (offset, offset + data.len()),
@@ -247,14 +247,15 @@ fn d_parse_bloberror(input: (&[u8], usize)) -> DResult<'_, RangeFrame> {
 
 fn d_parse_verbatimstring(input: (&[u8], usize)) -> DResult<'_, RangeFrame> {
   let ((input, prefix_offset), len) = d_read_prefix_len(input)?;
-  let (input, format_bytes) = nom_terminated(nom_take(3_usize), nom_take(1_usize)).parse(input)?;
   if len < 4 {
+    // the contents start with the format and a colon, such as `txt:`
     e!(RedisParseError::new_custom(
       "parse_verbatimstring",
       "Invalid prefix length."
     ));
   }
-  let (input, _) = nom_terminated(nom_take(len - 4), nom_take(2_usize)).parse(input)?;
+  let (input, format_bytes) = nom_terminated(nom_take(3_usize), nom_tag(&b":"[..])).parse(input)?;
+  let (input, _) = utils::take_blob(input, len - 4)?;
 
   Ok((
     (input, prefix_offset.saturating_add(len).saturating_add(2)),
@@ -451,7 +452,7 @@ fn d_parse_chunked_string(input: (&[u8], usize)) -> DResult<'_, DecodedRangeFram
     (input, RangeFrame::new_end_stream())
   } else {
     let offset = input.1;
-    let (input, contents) = nom_terminated(nom_take(len), nom_take(2_usize)).parse(input.0)?;
+    let (input, contents) = utils::take_blob(input.0, len)?;
 
     (
       (input, offset + contents.len() + 2),
@@ -1075,6 +1076,26 @@ pub mod owned_tests {
     for bytes in [&b"$-2\r\n"[..], b"*-2\r\n", b"|1\r\n+a\r\n+b\r\n*-1\r\n"] {
       assert!(complete::decode(bytes).is_err(), "{bytes:?}");
     }
+  }
+
+  #[test]
+  fn should_require_crlf_after_blob_contents() {
+    for bytes in [&b"$3\r\nfooXY"[..], b"!3\r\nfooXY", b"=7\r\ntxt:fooXY", b";3\r\nfooXY"] {
+      assert!(complete::decode(bytes).is_err(), "{bytes:?}");
+      assert!(stream_decode(bytes).is_err(), "{bytes:?}");
+      assert_eq!(FrameScanner::new().scan(bytes), Scan::Invalid, "{bytes:?}");
+    }
+    // a partial CRLF is incomplete
+    assert_eq!(complete::decode(b"$3\r\nfoo\r").unwrap(), None);
+  }
+
+  #[test]
+  fn should_validate_verbatim_string_prefix() {
+    for bytes in [&b"=7\r\ntxtXfoo\r\n"[..], b"=0\r\n+OK\r\n", b"=3\r\ntxt\r\n"] {
+      assert!(complete::decode(bytes).is_err(), "{bytes:?}");
+      assert_eq!(FrameScanner::new().scan(bytes), Scan::Invalid, "{bytes:?}");
+    }
+    assert!(complete::decode(b"=4\r\ntxt:\r\n").unwrap().is_some());
   }
 
   #[test]

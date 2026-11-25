@@ -10,13 +10,7 @@ use crate::{
 };
 use alloc::vec::Vec;
 use core::mem::size_of;
-use nom::{
-  bytes::streaming::take as nom_take,
-  number::streaming::be_u8,
-  sequence::terminated as nom_terminated,
-  Err as NomErr,
-  Parser,
-};
+use nom::{number::streaming::be_u8, Err as NomErr};
 
 #[cfg(feature = "bytes")]
 use crate::resp2::utils::{build_bytes_frame, freeze_parse};
@@ -98,7 +92,7 @@ fn d_parse_error(input: (&[u8], usize)) -> DResult<'_, RangeFrame> {
 
 fn d_parse_bulkstring(input: (&[u8], usize), len: usize) -> DResult<'_, RangeFrame> {
   let offset = input.1;
-  let (input, data) = nom_terminated(nom_take(len), nom_take(2_usize)).parse(input.0)?;
+  let (input, data) = utils::take_blob(input.0, len)?;
   Ok((
     (input, offset + len + 2),
     RangeFrame::BulkString((offset, offset + data.len())),
@@ -463,6 +457,15 @@ mod owned_tests {
 
     assert!(frame.is_none());
     assert_eq!(len, 0);
+  }
+
+  #[test]
+  fn should_require_crlf_after_bulk_strings() {
+    assert!(decode(b"$3\r\nfooXY").is_err());
+    assert!(decode(b"*1\r\n$3\r\nfoo\n\r").is_err());
+    assert_eq!(FrameScanner::new().scan(b"$3\r\nfooXY"), Scan::Invalid);
+    // a partial CRLF is incomplete
+    decode_and_verify_none(b"$3\r\nfoo\r");
   }
 
   #[test]
