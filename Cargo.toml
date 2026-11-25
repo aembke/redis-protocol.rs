@@ -2,12 +2,13 @@
 authors = ["Alec Embke <aembke@gmail.com>"]
 description = "An implementation of the RESP2 and RESP3 protocols."
 keywords = ["redis", "protocol", "RESP", "no_std"]
-license = "MIT"
+license = "MIT OR Apache-2.0"
 name = "redis-protocol"
 readme = "README.md"
 repository = "https://github.com/aembke/redis-protocol.rs"
 version = "6.1.0"
 edition = "2021"
+rust-version = "1.88"
 exclude = ["fuzz", ".circleci", "benches"]
 
 [package.metadata.docs.rs]
@@ -26,10 +27,10 @@ bytes = { version = "1.1", default-features = false, optional = true }
 bytes-utils = { version = "0.1", default-features = false, optional = true }
 crc16 = { version = "0.4" }
 memchr = { version = "2", default-features = false }
-indexmap = { version = "2.2", optional = true }
+indexmap = { version = "2.2", default-features = false, optional = true }
 log = "0.4"
 nom = { version = "8.0", default-features = false }
-hashbrown = { version = "0.15", optional = true }
+hashbrown = { version = "0.17", optional = true }
 tokio-util = { version = "0.7", features = ["codec"], optional = true }
 
 [dev-dependencies]
@@ -44,15 +45,14 @@ criterion = { version = "0.8", features = ["html_reports"] }
 default = ["std", "resp2", "resp3"]
 resp2 = []
 resp3 = []
-index-map = ["indexmap"]
-bytes = ["dep:bytes", "bytes-utils"]
+# `IndexMap` only has a default hasher with `indexmap/std`, so this requires `std`.
+index-map = ["dep:indexmap", "indexmap/std", "std"]
+hashbrown = ["dep:hashbrown"]
+bytes = ["dep:bytes", "dep:bytes-utils"]
 decode-logs = []
-alloc = ["nom/alloc"]
-std = ["nom/default"]
-codec = ["tokio-util", "bytes"]
+std = ["nom/std", "memchr/std"]
+codec = ["dep:tokio-util", "bytes", "std"]
 convert = []
-# Deprecated: no longer used. Retained for backwards compatibility.
-libm = []
 
 [lib]
 doc = true

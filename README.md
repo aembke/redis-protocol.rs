@@ -1,8 +1,7 @@
 Redis Protocol
 ==============
 
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 [![CircleCI](https://circleci.com/gh/aembke/redis-protocol.rs/tree/main.svg?style=svg)](https://circleci.com/gh/aembke/redis-protocol.rs/tree/main)
 [![Crates.io](https://img.shields.io/crates/v/redis-protocol.svg)](https://crates.io/crates/redis-protocol)
 [![API docs](https://docs.rs/redis-protocol/badge.svg)](https://docs.rs/redis-protocol)
@@ -48,20 +47,19 @@ fn main() {
 
 | Name          | Default | Description                                                                                                                                  |
 |---------------|---------|----------------------------------------------------------------------------------------------------------------------------------------------|
-| `std`         | x       | Enable stdlib features and most dependency default features.                                                                                 |
+| `std`         | x       | Enable stdlib features and the `std` features of dependencies.                                                                               |
 | `resp2`       | x       | Enable the RESP2 interface.                                                                                                                  |
 | `resp3`       | x       | Enable the RESP3 interface.                                                                                                                  |
 | `bytes`       |         | Enable the zero-copy parsing interface via [Bytes](https://crates.io/crates/bytes) types.                                                    |
 | `decode-logs` |         | Enable extra debugging TRACE logs during the frame decoding process.                                                                         |
-| `codec`       |         | Enable a RESP2 and RESP3 [Tokio codec](https://docs.rs/tokio-util/latest/tokio_util/codec/index.html) interface.                             |
+| `codec`       |         | Enable a RESP2 and RESP3 [Tokio codec](https://docs.rs/tokio-util/latest/tokio_util/codec/index.html) interface. Implies `std` and `bytes`.  |
 | `convert`     |         | Enable the `FromResp2` and `FromResp3` trait interfaces.                                                                                     |
-| `index-map`   |         | Use [IndexMap](https://crates.io/crates/indexmap) types instead of `HashMap`. This is useful for testing and may also be useful for callers. |
-| `hashbrown`   |         | Use [hashbrown](https://crates.io/crates/hashbrown) types instead of `std::collections` types. Takes precedence over `std`.                 |
-| `alloc`       |         | Enable `alloc` support in dependencies. Used with `no_std` builds.                                                                           |
-| `libm`        |         | Deprecated. This feature no longer has any effect.                                                                                           |
+| `index-map`   |         | Use [IndexMap](https://crates.io/crates/indexmap) types, which keep wire order, instead of `HashMap`. Implies `std`.                         |
+| `hashbrown`   |         | Use [hashbrown](https://crates.io/crates/hashbrown) types instead of `std::collections` types. Works with `no_std`.                          |
 
 The `resp3` feature requires one of `std`, `hashbrown`, or `index-map` to provide the map and set types used by RESP3
-frames.
+frames (`FrameMap` and `FrameSet`). If more than one is enabled, `index-map` takes precedence over `hashbrown`, which takes
+precedence over `std::collections`.
 
 ## Untrusted Input
 
@@ -71,11 +69,12 @@ deep, returning an error rather than risking a stack overflow.
 
 ## no_std
 
-`no_std` builds are supported by disabling the `std` feature. RESP3 frames require a map implementation, so the
-`hashbrown` feature should be enabled as a substitute for `std::collections`.
+`no_std` builds are supported by disabling the `std` feature. The crate still requires `alloc`. RESP3 frames require a
+map implementation, so the `hashbrown` feature should be enabled as a substitute for `std::collections`. The `codec` and
+`index-map` features require `std`.
 
 ```TOML
-redis-protocol = { version = "X.X.X", default-features = false, features = ["resp2", "resp3", "hashbrown", "alloc"] }
+redis-protocol = { version = "X.X.X", default-features = false, features = ["resp2", "resp3", "hashbrown"] }
 ```
 
 ## Decoding
@@ -270,3 +269,12 @@ fn main() {
 ```bash
 cargo bench --features bytes
 ```
+
+## License
+
+Licensed under either of
+
+* Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or <https://www.apache.org/licenses/LICENSE-2.0>)
+* MIT license ([LICENSE-MIT](LICENSE-MIT) or <https://opensource.org/licenses/MIT>)
+
+at your option.

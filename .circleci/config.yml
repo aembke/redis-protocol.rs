@@ -64,15 +64,11 @@ jobs:
     steps:
       - checkout
       - run:
-          name: Switch to nightly for using unstable feature avoid-dev-deps
-          command: rustup default nightly
-      - run:
           name: Add cross compile target
           command: rustup target add thumbv7m-none-eabi
       - run:
           name: Verifies successful build for no_std target
-          command: cargo clean && cargo build -Z avoid-dev-deps --release --no-default-features --features resp2,resp3,convert,libm,hashbrown,alloc --target=thumbv7m-none-eabi
-
+          command: cargo build --release --no-default-features --features resp2,resp3,convert,hashbrown,bytes --target=thumbv7m-none-eabi
 
 workflows:
   version: 2
