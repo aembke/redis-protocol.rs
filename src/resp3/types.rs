@@ -5,6 +5,7 @@ use crate::{
   utils,
 };
 use alloc::{
+  boxed::Box,
   collections::VecDeque,
   format,
   string::{String, ToString},
@@ -576,55 +577,55 @@ pub enum RangeFrame {
   /// A blob of bytes.
   BlobString {
     data:       _Range,
-    attributes: Option<RangeAttributes>,
+    attributes: Option<Box<RangeAttributes>>,
   },
   /// A blob representing an error.
   BlobError {
     data:       _Range,
-    attributes: Option<RangeAttributes>,
+    attributes: Option<Box<RangeAttributes>>,
   },
   /// A small string.
   SimpleString {
     data:       _Range,
-    attributes: Option<RangeAttributes>,
+    attributes: Option<Box<RangeAttributes>>,
   },
   /// A small string representing an error.
   SimpleError {
     data:       _Range,
-    attributes: Option<RangeAttributes>,
+    attributes: Option<Box<RangeAttributes>>,
   },
   /// A boolean type.
   Boolean {
     data:       bool,
-    attributes: Option<RangeAttributes>,
+    attributes: Option<Box<RangeAttributes>>,
   },
   /// A null type.
   Null,
   /// A signed 64-bit integer.
   Number {
     data:       i64,
-    attributes: Option<RangeAttributes>,
+    attributes: Option<Box<RangeAttributes>>,
   },
   /// A signed 64-bit floating point number.
   Double {
     data:       f64,
-    attributes: Option<RangeAttributes>,
+    attributes: Option<Box<RangeAttributes>>,
   },
   /// A large number not representable as a `Number` or `Double`.
   BigNumber {
     data:       _Range,
-    attributes: Option<RangeAttributes>,
+    attributes: Option<Box<RangeAttributes>>,
   },
   /// A string to be displayed without any escaping or filtering.
   VerbatimString {
     data:       _Range,
     format:     VerbatimStringFormat,
-    attributes: Option<RangeAttributes>,
+    attributes: Option<Box<RangeAttributes>>,
   },
   /// An array of frames.
   Array {
     data:       Vec<RangeFrame>,
-    attributes: Option<RangeAttributes>,
+    attributes: Option<Box<RangeAttributes>>,
   },
   /// A map of key-value pairs, in the order they were received.
   ///
@@ -632,27 +633,27 @@ pub enum RangeFrame {
   /// wins.
   Map {
     data:       Vec<(RangeFrame, RangeFrame)>,
-    attributes: Option<RangeAttributes>,
+    attributes: Option<Box<RangeAttributes>>,
   },
   /// A collection of frames, in the order they were received.
   ///
   /// Duplicate values are kept here and removed when building a [BytesFrame] or [OwnedFrame].
   Set {
     data:       Vec<RangeFrame>,
-    attributes: Option<RangeAttributes>,
+    attributes: Option<Box<RangeAttributes>>,
   },
   /// Out-of-band data.
   Push {
     data:       Vec<RangeFrame>,
-    attributes: Option<RangeAttributes>,
+    attributes: Option<Box<RangeAttributes>>,
   },
   /// A special frame type used when first connecting to the server to describe the protocol version and optional
   /// credentials.
   Hello {
-    version:  RespVersion,
-    username: Option<_Range>,
-    password: Option<_Range>,
-    setname:  Option<_Range>,
+    version: RespVersion,
+    /// The username and password ranges.
+    auth:    Option<Box<(_Range, _Range)>>,
+    setname: Option<_Range>,
   },
   /// One chunk of a streaming blob.
   ChunkedString(_Range),
@@ -740,7 +741,7 @@ impl RangeFrame {
     if let Some(_attributes) = _attributes.as_mut() {
       _attributes.extend(attributes);
     } else {
-      *_attributes = Some(attributes);
+      *_attributes = Some(Box::new(attributes));
     }
 
     Ok(())
@@ -781,7 +782,7 @@ impl Hash for RangeFrame {
 #[derive(Debug)]
 pub struct StreamedRangeFrame {
   pub kind:       FrameKind,
-  pub attributes: Option<RangeAttributes>,
+  pub attributes: Option<Box<RangeAttributes>>,
 }
 
 impl StreamedRangeFrame {
@@ -795,7 +796,7 @@ impl StreamedRangeFrame {
     if let Some(_attributes) = self.attributes.as_mut() {
       _attributes.extend(attributes);
     } else {
-      self.attributes = Some(attributes);
+      self.attributes = Some(Box::new(attributes));
     }
   }
 }
@@ -949,12 +950,12 @@ pub enum OwnedFrame {
   /// A blob of bytes.
   BlobString {
     data:       Vec<u8>,
-    attributes: Option<OwnedAttributes>,
+    attributes: Option<Box<OwnedAttributes>>,
   },
   /// A blob representing an error.
   BlobError {
     data:       Vec<u8>,
-    attributes: Option<OwnedAttributes>,
+    attributes: Option<Box<OwnedAttributes>>,
   },
   /// A small string.
   ///
@@ -962,47 +963,47 @@ pub enum OwnedFrame {
   /// stream.
   SimpleString {
     data:       Vec<u8>,
-    attributes: Option<OwnedAttributes>,
+    attributes: Option<Box<OwnedAttributes>>,
   },
   /// A small string representing an error.
   SimpleError {
     data:       String,
-    attributes: Option<OwnedAttributes>,
+    attributes: Option<Box<OwnedAttributes>>,
   },
   /// A boolean type.
   Boolean {
     data:       bool,
-    attributes: Option<OwnedAttributes>,
+    attributes: Option<Box<OwnedAttributes>>,
   },
   /// A null type.
   Null,
   /// A signed 64-bit integer.
   Number {
     data:       i64,
-    attributes: Option<OwnedAttributes>,
+    attributes: Option<Box<OwnedAttributes>>,
   },
   /// A signed 64-bit floating point number.
   Double {
     data:       f64,
-    attributes: Option<OwnedAttributes>,
+    attributes: Option<Box<OwnedAttributes>>,
   },
   /// A large number not representable as a `Number` or `Double`.
   ///
   /// This library does not attempt to parse this.
   BigNumber {
     data:       Vec<u8>,
-    attributes: Option<OwnedAttributes>,
+    attributes: Option<Box<OwnedAttributes>>,
   },
   /// A string to be displayed without any escaping or filtering.
   VerbatimString {
     data:       Vec<u8>,
     format:     VerbatimStringFormat,
-    attributes: Option<OwnedAttributes>,
+    attributes: Option<Box<OwnedAttributes>>,
   },
   /// An array of frames.
   Array {
     data:       Vec<OwnedFrame>,
-    attributes: Option<OwnedAttributes>,
+    attributes: Option<Box<OwnedAttributes>>,
   },
   /// An unordered map of key-value pairs.
   ///
@@ -1011,23 +1012,24 @@ pub enum OwnedFrame {
   /// detect this.
   Map {
     data:       FrameMap<OwnedFrame, OwnedFrame>,
-    attributes: Option<OwnedAttributes>,
+    attributes: Option<Box<OwnedAttributes>>,
   },
   /// An unordered collection of other frames with a uniqueness constraint.
   Set {
     data:       FrameSet<OwnedFrame>,
-    attributes: Option<OwnedAttributes>,
+    attributes: Option<Box<OwnedAttributes>>,
   },
   /// Out-of-band data.
   Push {
     data:       Vec<OwnedFrame>,
-    attributes: Option<OwnedAttributes>,
+    attributes: Option<Box<OwnedAttributes>>,
   },
   /// A special frame type used when first connecting to the server to describe the protocol version and optional
   /// credentials.
   Hello {
     version: RespVersion,
-    auth:    Option<(String, String)>,
+    /// The username and password.
+    auth:    Option<Box<(String, String)>>,
     setname: Option<String>,
   },
   /// One chunk of a streaming blob.
@@ -1070,6 +1072,7 @@ impl Resp3Frame for OwnedFrame {
     attributes: Option<Self::Attributes>,
   ) -> Result<Self, RedisProtocolError> {
     let mut data: Vec<_> = buf.into_iter().collect();
+    let attributes = attributes.map(Box::new);
 
     Ok(match target {
       FrameKind::BlobString => {
@@ -1137,7 +1140,7 @@ impl Resp3Frame for OwnedFrame {
     if let Some(_attributes) = _attributes.as_mut() {
       _attributes.extend(attributes);
     } else {
-      *_attributes = Some(attributes);
+      *_attributes = Some(Box::new(attributes));
     }
 
     Ok(())
@@ -1161,7 +1164,7 @@ impl Resp3Frame for OwnedFrame {
       OwnedFrame::Null | OwnedFrame::ChunkedString(_) | OwnedFrame::Hello { .. } => return None,
     };
 
-    attributes.as_ref()
+    attributes.as_deref()
   }
 
   fn attributes_mut(&mut self) -> Option<&mut Self::Attributes> {
@@ -1182,7 +1185,7 @@ impl Resp3Frame for OwnedFrame {
       OwnedFrame::Null | OwnedFrame::ChunkedString(_) | OwnedFrame::Hello { .. } => return None,
     };
 
-    attributes.as_mut()
+    attributes.as_deref_mut()
   }
 
   fn take_attributes(&mut self) -> Option<Self::Attributes> {
@@ -1203,7 +1206,7 @@ impl Resp3Frame for OwnedFrame {
       OwnedFrame::Null | OwnedFrame::ChunkedString(_) | OwnedFrame::Hello { .. } => return None,
     };
 
-    attributes.take()
+    attributes.take().map(|attributes| *attributes)
   }
 
   fn new_end_stream() -> Self {
@@ -1485,12 +1488,12 @@ pub enum BytesFrame {
   /// A blob of bytes.
   BlobString {
     data:       Bytes,
-    attributes: Option<BytesAttributes>,
+    attributes: Option<Box<BytesAttributes>>,
   },
   /// A blob representing an error.
   BlobError {
     data:       Bytes,
-    attributes: Option<BytesAttributes>,
+    attributes: Option<Box<BytesAttributes>>,
   },
   /// A small string.
   ///
@@ -1498,47 +1501,47 @@ pub enum BytesFrame {
   /// stream.
   SimpleString {
     data:       Bytes,
-    attributes: Option<BytesAttributes>,
+    attributes: Option<Box<BytesAttributes>>,
   },
   /// A small string representing an error.
   SimpleError {
     data:       Str,
-    attributes: Option<BytesAttributes>,
+    attributes: Option<Box<BytesAttributes>>,
   },
   /// A boolean type.
   Boolean {
     data:       bool,
-    attributes: Option<BytesAttributes>,
+    attributes: Option<Box<BytesAttributes>>,
   },
   /// A null type.
   Null,
   /// A signed 64-bit integer.
   Number {
     data:       i64,
-    attributes: Option<BytesAttributes>,
+    attributes: Option<Box<BytesAttributes>>,
   },
   /// A signed 64-bit floating point number.
   Double {
     data:       f64,
-    attributes: Option<BytesAttributes>,
+    attributes: Option<Box<BytesAttributes>>,
   },
   /// A large number not representable as a `Number` or `Double`.
   ///
   /// This library does not attempt to parse this.
   BigNumber {
     data:       Bytes,
-    attributes: Option<BytesAttributes>,
+    attributes: Option<Box<BytesAttributes>>,
   },
   /// A string to be displayed without any escaping or filtering.
   VerbatimString {
     data:       Bytes,
     format:     VerbatimStringFormat,
-    attributes: Option<BytesAttributes>,
+    attributes: Option<Box<BytesAttributes>>,
   },
   /// An array of frames.
   Array {
     data:       Vec<BytesFrame>,
-    attributes: Option<BytesAttributes>,
+    attributes: Option<Box<BytesAttributes>>,
   },
   /// An unordered map of key-value pairs.
   ///
@@ -1547,23 +1550,24 @@ pub enum BytesFrame {
   /// detect this.
   Map {
     data:       FrameMap<BytesFrame, BytesFrame>,
-    attributes: Option<BytesAttributes>,
+    attributes: Option<Box<BytesAttributes>>,
   },
   /// An unordered collection of other frames with a uniqueness constraint.
   Set {
     data:       FrameSet<BytesFrame>,
-    attributes: Option<BytesAttributes>,
+    attributes: Option<Box<BytesAttributes>>,
   },
   /// Out-of-band data.
   Push {
     data:       Vec<BytesFrame>,
-    attributes: Option<BytesAttributes>,
+    attributes: Option<Box<BytesAttributes>>,
   },
   /// A special frame type used when first connecting to the server to describe the protocol version and optional
   /// credentials.
   Hello {
     version: RespVersion,
-    auth:    Option<(Str, Str)>,
+    /// The username and password.
+    auth:    Option<Box<(Str, Str)>>,
     setname: Option<Str>,
   },
   /// One chunk of a streaming blob.
@@ -1677,6 +1681,7 @@ impl Resp3Frame for BytesFrame {
     attributes: Option<Self::Attributes>,
   ) -> Result<Self, RedisProtocolError> {
     let mut data: Vec<_> = buf.into_iter().collect();
+    let attributes = attributes.map(Box::new);
 
     Ok(match target {
       FrameKind::BlobString => {
@@ -1739,7 +1744,7 @@ impl Resp3Frame for BytesFrame {
       BytesFrame::Null | BytesFrame::ChunkedString(_) | BytesFrame::Hello { .. } => return None,
     };
 
-    attributes.as_ref()
+    attributes.as_deref()
   }
 
   fn take_attributes(&mut self) -> Option<Self::Attributes> {
@@ -1760,7 +1765,7 @@ impl Resp3Frame for BytesFrame {
       BytesFrame::Null | BytesFrame::ChunkedString(_) | BytesFrame::Hello { .. } => return None,
     };
 
-    attributes.take()
+    attributes.take().map(|attributes| *attributes)
   }
 
   fn attributes_mut(&mut self) -> Option<&mut Self::Attributes> {
@@ -1781,7 +1786,7 @@ impl Resp3Frame for BytesFrame {
       BytesFrame::Null | BytesFrame::ChunkedString(_) | BytesFrame::Hello { .. } => return None,
     };
 
-    attributes.as_mut()
+    attributes.as_deref_mut()
   }
 
   /// Attempt to add attributes to the frame, extending the existing attributes if needed.
@@ -1811,7 +1816,7 @@ impl Resp3Frame for BytesFrame {
     if let Some(_attributes) = _attributes.as_mut() {
       _attributes.extend(attributes);
     } else {
-      *_attributes = Some(attributes);
+      *_attributes = Some(Box::new(attributes));
     }
 
     Ok(())

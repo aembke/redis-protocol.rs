@@ -4,7 +4,7 @@ use crate::{
   types::{DResult, Scan, MAX_DECODE_DEPTH, MAX_INITIAL_CAPACITY_BYTES},
   utils,
 };
-use alloc::{format, vec::Vec};
+use alloc::{boxed::Box, format, vec::Vec};
 use core::{fmt::Debug, mem::size_of, str, str::FromStr};
 use nom::{
   bytes::streaming::take as nom_take,
@@ -359,8 +359,7 @@ fn d_parse_hello(input: (&[u8], usize)) -> DResult<'_, RangeFrame> {
 
   Ok(((input, offset), RangeFrame::Hello {
     version,
-    username,
-    password,
+    auth: username.zip(password).map(Box::new),
     setname,
   }))
 }
@@ -1774,7 +1773,7 @@ pub mod owned_tests {
             attributes: None,
           },
         ],
-        attributes: Some(expected_attrs),
+        attributes: Some(Box::new(expected_attrs)),
       }),
       81,
     );
@@ -1814,7 +1813,7 @@ pub mod owned_tests {
           },
           OwnedFrame::Number {
             data:       3,
-            attributes: Some(expected_attrs),
+            attributes: Some(Box::new(expected_attrs)),
           },
         ],
         attributes: None,
@@ -2133,7 +2132,7 @@ pub mod owned_tests {
     let expected = (
       Some(OwnedFrame::Hello {
         version: RespVersion::RESP3,
-        auth:    Some(("foo".into(), "bar".into())),
+        auth:    Some(Box::new(("foo".into(), "bar".into()))),
         setname: None,
       }),
       22,
@@ -2165,7 +2164,7 @@ pub mod owned_tests {
     let expected = (
       Some(OwnedFrame::Hello {
         version: RespVersion::RESP3,
-        auth:    Some(("foo".into(), "bar".into())),
+        auth:    Some(Box::new(("foo".into(), "bar".into()))),
         setname: Some("baz".into()),
       }),
       34,
@@ -2948,7 +2947,7 @@ pub mod bytes_tests {
             attributes: None,
           },
         ],
-        attributes: Some(expected_attrs),
+        attributes: Some(Box::new(expected_attrs)),
       }),
       81,
     );
@@ -2988,7 +2987,7 @@ pub mod bytes_tests {
           },
           BytesFrame::Number {
             data:       3,
-            attributes: Some(expected_attrs),
+            attributes: Some(Box::new(expected_attrs)),
           },
         ],
         attributes: None,
@@ -3307,7 +3306,7 @@ pub mod bytes_tests {
     let expected = (
       Some(BytesFrame::Hello {
         version: RespVersion::RESP3,
-        auth:    Some(("foo".into(), "bar".into())),
+        auth:    Some(Box::new(("foo".into(), "bar".into()))),
         setname: None,
       }),
       22,
@@ -3339,7 +3338,7 @@ pub mod bytes_tests {
     let expected = (
       Some(BytesFrame::Hello {
         version: RespVersion::RESP3,
-        auth:    Some(("foo".into(), "bar".into())),
+        auth:    Some(Box::new(("foo".into(), "bar".into()))),
         setname: Some("baz".into()),
       }),
       34,

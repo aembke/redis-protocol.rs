@@ -4,6 +4,7 @@ use crate::{
   utils::digits_in_usize,
 };
 use alloc::{
+  boxed::Box,
   string::{String, ToString},
   vec::Vec,
 };
@@ -169,9 +170,9 @@ pub fn bytes_set_encode_len(set: &FrameSet<BytesFrame>, int_as_blobstring: bool)
 }
 
 #[cfg(feature = "bytes")]
-pub fn bytes_hello_encode_len(auth: &Option<(Str, Str)>, setname: &Option<Str>) -> usize {
-  let username = auth.as_ref().map(|(u, _)| &**u);
-  let password = auth.as_ref().map(|(_, p)| &**p);
+pub fn bytes_hello_encode_len(auth: &Option<Box<(Str, Str)>>, setname: &Option<Str>) -> usize {
+  let username = auth.as_deref().map(|(u, _)| &**u);
+  let password = auth.as_deref().map(|(_, p)| &**p);
   let setname_len = if let Some(setname) = setname.as_ref() {
     1 + SETNAME.as_bytes().len() + 1 + setname.as_bytes().len()
   } else {
@@ -181,9 +182,9 @@ pub fn bytes_hello_encode_len(auth: &Option<(Str, Str)>, setname: &Option<Str>) 
   HELLO.as_bytes().len() + 1 + 1 + auth_encode_len(username, password) + setname_len + 2
 }
 
-pub fn owned_hello_encode_len(auth: &Option<(String, String)>, setname: &Option<String>) -> usize {
-  let username = auth.as_ref().map(|(u, _)| &**u);
-  let password = auth.as_ref().map(|(_, p)| &**p);
+pub fn owned_hello_encode_len(auth: &Option<Box<(String, String)>>, setname: &Option<String>) -> usize {
+  let username = auth.as_deref().map(|(u, _)| &**u);
+  let password = auth.as_deref().map(|(_, p)| &**p);
   let setname_len = if let Some(setname) = setname.as_ref() {
     1 + SETNAME.as_bytes().len() + 1 + setname.as_bytes().len()
   } else {
@@ -296,49 +297,52 @@ pub fn bytes_encode_len(data: &BytesFrame, int_as_blobstring: bool) -> usize {
   match data {
     Array { data, attributes } => {
       bytes_array_or_push_encode_len(data, int_as_blobstring)
-        + bytes_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+        + bytes_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     Push { data, attributes } => {
       bytes_array_or_push_encode_len(data, int_as_blobstring)
-        + bytes_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+        + bytes_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     BlobString { data, attributes } => {
-      blobstring_encode_len(data) + bytes_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+      blobstring_encode_len(data) + bytes_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     BlobError { data, attributes } => {
-      blobstring_encode_len(data) + bytes_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+      blobstring_encode_len(data) + bytes_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     SimpleString { data, attributes } => {
-      simplestring_encode_len(data) + bytes_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+      simplestring_encode_len(data) + bytes_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     SimpleError { data, attributes } => {
-      simplestring_encode_len(data.as_bytes()) + bytes_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+      simplestring_encode_len(data.as_bytes()) + bytes_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     Number { data, attributes } => {
-      number_encode_len(*data, int_as_blobstring) + bytes_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+      number_encode_len(*data, int_as_blobstring)
+        + bytes_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     Double { data, attributes } => {
-      double_encode_len(*data) + bytes_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+      double_encode_len(*data) + bytes_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     Boolean { attributes, .. } => {
-      BOOLEAN_ENCODE_LEN + bytes_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+      BOOLEAN_ENCODE_LEN + bytes_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     VerbatimString {
       data,
       attributes,
       format,
       ..
-    } => verbatimstring_encode_len(format, data) + bytes_attribute_encode_len(attributes.as_ref(), int_as_blobstring),
+    } => {
+      verbatimstring_encode_len(format, data) + bytes_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
+    },
     Map { data, attributes } => {
       bytes_map_encode_len(data, int_as_blobstring)
-        + bytes_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+        + bytes_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     Set { data, attributes } => {
       bytes_set_encode_len(data, int_as_blobstring)
-        + bytes_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+        + bytes_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     BigNumber { data, attributes } => {
-      bignumber_encode_len(data) + bytes_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+      bignumber_encode_len(data) + bytes_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     Hello { auth, setname, .. } => bytes_hello_encode_len(auth, setname),
     ChunkedString(data) => {
@@ -359,49 +363,52 @@ pub fn owned_encode_len(data: &OwnedFrame, int_as_blobstring: bool) -> usize {
   match data {
     Array { data, attributes } => {
       owned_array_or_push_encode_len(data, int_as_blobstring)
-        + owned_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+        + owned_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     Push { data, attributes } => {
       owned_array_or_push_encode_len(data, int_as_blobstring)
-        + owned_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+        + owned_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     BlobString { data, attributes } => {
-      blobstring_encode_len(data) + owned_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+      blobstring_encode_len(data) + owned_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     BlobError { data, attributes } => {
-      blobstring_encode_len(data) + owned_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+      blobstring_encode_len(data) + owned_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     SimpleString { data, attributes } => {
-      simplestring_encode_len(data) + owned_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+      simplestring_encode_len(data) + owned_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     SimpleError { data, attributes } => {
-      simplestring_encode_len(data.as_bytes()) + owned_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+      simplestring_encode_len(data.as_bytes()) + owned_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     Number { data, attributes } => {
-      number_encode_len(*data, int_as_blobstring) + owned_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+      number_encode_len(*data, int_as_blobstring)
+        + owned_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     Double { data, attributes } => {
-      double_encode_len(*data) + owned_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+      double_encode_len(*data) + owned_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     Boolean { attributes, .. } => {
-      BOOLEAN_ENCODE_LEN + owned_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+      BOOLEAN_ENCODE_LEN + owned_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     VerbatimString {
       data,
       attributes,
       format,
       ..
-    } => verbatimstring_encode_len(format, data) + owned_attribute_encode_len(attributes.as_ref(), int_as_blobstring),
+    } => {
+      verbatimstring_encode_len(format, data) + owned_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
+    },
     Map { data, attributes } => {
       owned_map_encode_len(data, int_as_blobstring)
-        + owned_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+        + owned_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     Set { data, attributes } => {
       owned_set_encode_len(data, int_as_blobstring)
-        + owned_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+        + owned_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     BigNumber { data, attributes } => {
-      bignumber_encode_len(data) + owned_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+      bignumber_encode_len(data) + owned_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     Hello { auth, setname, .. } => owned_hello_encode_len(auth, setname),
     ChunkedString(data) => {
@@ -420,44 +427,44 @@ pub fn owned_encode_len(data: &OwnedFrame, int_as_blobstring: bool) -> usize {
 pub fn bytes_to_owned_frame(frame: &BytesFrame) -> OwnedFrame {
   match frame {
     BytesFrame::Array { data, attributes } => OwnedFrame::Array {
-      attributes: attributes.as_ref().map(bytes_to_owned_attrs),
+      attributes: attributes.as_deref().map(|a| Box::new(bytes_to_owned_attrs(a))),
       data:       data.iter().map(bytes_to_owned_frame).collect(),
     },
     BytesFrame::Push { data, attributes } => OwnedFrame::Push {
-      attributes: attributes.as_ref().map(bytes_to_owned_attrs),
+      attributes: attributes.as_deref().map(|a| Box::new(bytes_to_owned_attrs(a))),
       data:       data.iter().map(bytes_to_owned_frame).collect(),
     },
     BytesFrame::BlobString { data, attributes } => OwnedFrame::BlobString {
-      attributes: attributes.as_ref().map(bytes_to_owned_attrs),
+      attributes: attributes.as_deref().map(|a| Box::new(bytes_to_owned_attrs(a))),
       data:       data.to_vec(),
     },
     BytesFrame::BlobError { data, attributes } => OwnedFrame::BlobError {
-      attributes: attributes.as_ref().map(bytes_to_owned_attrs),
+      attributes: attributes.as_deref().map(|a| Box::new(bytes_to_owned_attrs(a))),
       data:       data.to_vec(),
     },
     BytesFrame::BigNumber { data, attributes } => OwnedFrame::BigNumber {
-      attributes: attributes.as_ref().map(bytes_to_owned_attrs),
+      attributes: attributes.as_deref().map(|a| Box::new(bytes_to_owned_attrs(a))),
       data:       data.to_vec(),
     },
     BytesFrame::ChunkedString(data) => OwnedFrame::ChunkedString(data.to_vec()),
     BytesFrame::SimpleString { data, attributes } => OwnedFrame::SimpleString {
-      attributes: attributes.as_ref().map(bytes_to_owned_attrs),
+      attributes: attributes.as_deref().map(|a| Box::new(bytes_to_owned_attrs(a))),
       data:       data.to_vec(),
     },
     BytesFrame::SimpleError { data, attributes } => OwnedFrame::SimpleError {
-      attributes: attributes.as_ref().map(bytes_to_owned_attrs),
+      attributes: attributes.as_deref().map(|a| Box::new(bytes_to_owned_attrs(a))),
       data:       data.to_string(),
     },
     BytesFrame::Number { data, attributes } => OwnedFrame::Number {
-      attributes: attributes.as_ref().map(bytes_to_owned_attrs),
+      attributes: attributes.as_deref().map(|a| Box::new(bytes_to_owned_attrs(a))),
       data:       *data,
     },
     BytesFrame::Double { data, attributes } => OwnedFrame::Double {
-      attributes: attributes.as_ref().map(bytes_to_owned_attrs),
+      attributes: attributes.as_deref().map(|a| Box::new(bytes_to_owned_attrs(a))),
       data:       *data,
     },
     BytesFrame::Boolean { data, attributes } => OwnedFrame::Boolean {
-      attributes: attributes.as_ref().map(bytes_to_owned_attrs),
+      attributes: attributes.as_deref().map(|a| Box::new(bytes_to_owned_attrs(a))),
       data:       *data,
     },
     BytesFrame::Null => OwnedFrame::Null,
@@ -467,23 +474,23 @@ pub fn bytes_to_owned_frame(frame: &BytesFrame) -> OwnedFrame {
       format,
     } => OwnedFrame::VerbatimString {
       format:     format.clone(),
-      attributes: attributes.as_ref().map(bytes_to_owned_attrs),
+      attributes: attributes.as_deref().map(|a| Box::new(bytes_to_owned_attrs(a))),
       data:       data.to_vec(),
     },
     BytesFrame::Map { data, attributes } => OwnedFrame::Map {
-      attributes: attributes.as_ref().map(bytes_to_owned_attrs),
+      attributes: attributes.as_deref().map(|a| Box::new(bytes_to_owned_attrs(a))),
       data:       data
         .iter()
         .map(|(k, v)| (bytes_to_owned_frame(k), bytes_to_owned_frame(v)))
         .collect(),
     },
     BytesFrame::Set { data, attributes } => OwnedFrame::Set {
-      attributes: attributes.as_ref().map(bytes_to_owned_attrs),
+      attributes: attributes.as_deref().map(|a| Box::new(bytes_to_owned_attrs(a))),
       data:       data.iter().map(bytes_to_owned_frame).collect(),
     },
     BytesFrame::Hello { version, auth, setname } => OwnedFrame::Hello {
       version: version.clone(),
-      auth:    auth.as_ref().map(|(u, p)| (u.to_string(), p.to_string())),
+      auth:    auth.as_deref().map(|(u, p)| Box::new((u.to_string(), p.to_string()))),
       setname: setname.as_ref().map(|name| name.to_string()),
     },
   }
@@ -503,44 +510,44 @@ pub fn bytes_to_owned_attrs(attributes: &BytesAttributes) -> OwnedAttributes {
 pub fn owned_to_bytes_frame(frame: OwnedFrame) -> BytesFrame {
   match frame {
     OwnedFrame::Array { data, attributes } => BytesFrame::Array {
-      attributes: attributes.map(owned_to_bytes_attrs),
+      attributes: attributes.map(|a| Box::new(owned_to_bytes_attrs(*a))),
       data:       data.into_iter().map(owned_to_bytes_frame).collect(),
     },
     OwnedFrame::Push { data, attributes } => BytesFrame::Push {
-      attributes: attributes.map(owned_to_bytes_attrs),
+      attributes: attributes.map(|a| Box::new(owned_to_bytes_attrs(*a))),
       data:       data.into_iter().map(owned_to_bytes_frame).collect(),
     },
     OwnedFrame::BlobString { data, attributes } => BytesFrame::BlobString {
-      attributes: attributes.map(owned_to_bytes_attrs),
+      attributes: attributes.map(|a| Box::new(owned_to_bytes_attrs(*a))),
       data:       data.into(),
     },
     OwnedFrame::BlobError { data, attributes } => BytesFrame::BlobError {
-      attributes: attributes.map(owned_to_bytes_attrs),
+      attributes: attributes.map(|a| Box::new(owned_to_bytes_attrs(*a))),
       data:       data.into(),
     },
     OwnedFrame::BigNumber { data, attributes } => BytesFrame::BigNumber {
-      attributes: attributes.map(owned_to_bytes_attrs),
+      attributes: attributes.map(|a| Box::new(owned_to_bytes_attrs(*a))),
       data:       data.into(),
     },
     OwnedFrame::ChunkedString(data) => BytesFrame::ChunkedString(data.into()),
     OwnedFrame::SimpleString { data, attributes } => BytesFrame::SimpleString {
-      attributes: attributes.map(owned_to_bytes_attrs),
+      attributes: attributes.map(|a| Box::new(owned_to_bytes_attrs(*a))),
       data:       data.into(),
     },
     OwnedFrame::SimpleError { data, attributes } => BytesFrame::SimpleError {
-      attributes: attributes.map(owned_to_bytes_attrs),
+      attributes: attributes.map(|a| Box::new(owned_to_bytes_attrs(*a))),
       data:       data.into(),
     },
     OwnedFrame::Number { data, attributes } => BytesFrame::Number {
-      attributes: attributes.map(owned_to_bytes_attrs),
+      attributes: attributes.map(|a| Box::new(owned_to_bytes_attrs(*a))),
       data,
     },
     OwnedFrame::Double { data, attributes } => BytesFrame::Double {
-      attributes: attributes.map(owned_to_bytes_attrs),
+      attributes: attributes.map(|a| Box::new(owned_to_bytes_attrs(*a))),
       data,
     },
     OwnedFrame::Boolean { data, attributes } => BytesFrame::Boolean {
-      attributes: attributes.map(owned_to_bytes_attrs),
+      attributes: attributes.map(|a| Box::new(owned_to_bytes_attrs(*a))),
       data,
     },
     OwnedFrame::Null => BytesFrame::Null,
@@ -550,23 +557,23 @@ pub fn owned_to_bytes_frame(frame: OwnedFrame) -> BytesFrame {
       format,
     } => BytesFrame::VerbatimString {
       format,
-      attributes: attributes.map(owned_to_bytes_attrs),
+      attributes: attributes.map(|a| Box::new(owned_to_bytes_attrs(*a))),
       data: data.into(),
     },
     OwnedFrame::Map { data, attributes } => BytesFrame::Map {
-      attributes: attributes.map(owned_to_bytes_attrs),
+      attributes: attributes.map(|a| Box::new(owned_to_bytes_attrs(*a))),
       data:       data
         .into_iter()
         .map(|(k, v)| (owned_to_bytes_frame(k), owned_to_bytes_frame(v)))
         .collect(),
     },
     OwnedFrame::Set { data, attributes } => BytesFrame::Set {
-      attributes: attributes.map(owned_to_bytes_attrs),
+      attributes: attributes.map(|a| Box::new(owned_to_bytes_attrs(*a))),
       data:       data.into_iter().map(owned_to_bytes_frame).collect(),
     },
     OwnedFrame::Hello { version, auth, setname } => BytesFrame::Hello {
       version,
-      auth: auth.as_ref().map(|(u, p)| (u.into(), p.into())),
+      auth: auth.as_deref().map(|(u, p)| Box::new((u.into(), p.into()))),
       setname: setname.as_ref().map(|s| s.into()),
     },
   }
@@ -636,41 +643,60 @@ pub fn hash_f64<H: Hasher>(state: &mut H, data: f64) {
   data.to_bits().hash(state);
 }
 
+#[inline]
 fn build_owned_attributes(
   buf: &[u8],
   attributes: Option<&RangeAttributes>,
-) -> Result<Option<OwnedAttributes>, RedisProtocolError> {
-  if let Some(attributes) = attributes {
-    let mut out = new_map(attributes.len());
-    for (key, value) in attributes {
-      let key = build_owned_frame(buf, key)?;
-      let value = build_owned_frame(buf, value)?;
-      out.insert(key, value);
-    }
+) -> Result<Option<Box<OwnedAttributes>>, RedisProtocolError> {
+  match attributes {
+    // most frames don't have attributes
+    None => Ok(None),
+    Some(attributes) => build_owned_attributes_slow(buf, attributes).map(Some),
+  }
+}
 
-    Ok(Some(out))
-  } else {
-    Ok(None)
+#[cold]
+fn build_owned_attributes_slow(
+  buf: &[u8],
+  attributes: &RangeAttributes,
+) -> Result<Box<OwnedAttributes>, RedisProtocolError> {
+  let mut out = new_map(attributes.len());
+  for (key, value) in attributes {
+    let key = build_owned_frame(buf, key)?;
+    let value = build_owned_frame(buf, value)?;
+    out.insert(key, value);
+  }
+
+  Ok(Box::new(out))
+}
+
+#[cfg(feature = "bytes")]
+#[inline]
+fn build_bytes_attributes(
+  buf: &Bytes,
+  attributes: Option<&RangeAttributes>,
+) -> Result<Option<Box<BytesAttributes>>, RedisProtocolError> {
+  match attributes {
+    // most frames don't have attributes
+    None => Ok(None),
+    Some(attributes) => build_bytes_attributes_slow(buf, attributes).map(Some),
   }
 }
 
 #[cfg(feature = "bytes")]
-fn build_bytes_attributes(
+#[cold]
+fn build_bytes_attributes_slow(
   buf: &Bytes,
-  attributes: Option<&RangeAttributes>,
-) -> Result<Option<BytesAttributes>, RedisProtocolError> {
-  if let Some(attributes) = attributes {
-    let mut out = new_map(attributes.len());
-    for (key, value) in attributes {
-      let key = build_bytes_frame(buf, key)?;
-      let value = build_bytes_frame(buf, value)?;
-      out.insert(key, value);
-    }
-
-    Ok(Some(out))
-  } else {
-    Ok(None)
+  attributes: &RangeAttributes,
+) -> Result<Box<BytesAttributes>, RedisProtocolError> {
+  let mut out = new_map(attributes.len());
+  for (key, value) in attributes {
+    let key = build_bytes_frame(buf, key)?;
+    let value = build_bytes_frame(buf, value)?;
+    out.insert(key, value);
   }
+
+  Ok(Box::new(out))
 }
 
 /// Move or copy the contents of `buf` based on the ranges in the provided frame.
@@ -678,31 +704,31 @@ pub fn build_owned_frame(buf: &[u8], frame: &RangeFrame) -> Result<OwnedFrame, R
   Ok(match frame {
     RangeFrame::SimpleString { data, attributes } => OwnedFrame::SimpleString {
       data:       buf[data.0 .. data.1].to_vec(),
-      attributes: build_owned_attributes(buf, attributes.as_ref())?,
+      attributes: build_owned_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::SimpleError { data, attributes } => OwnedFrame::SimpleError {
       data:       str::from_utf8(&buf[data.0 .. data.1])?.to_string(),
-      attributes: build_owned_attributes(buf, attributes.as_ref())?,
+      attributes: build_owned_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::BlobString { data, attributes } => OwnedFrame::BlobString {
       data:       buf[data.0 .. data.1].to_vec(),
-      attributes: build_owned_attributes(buf, attributes.as_ref())?,
+      attributes: build_owned_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::BlobError { data, attributes } => OwnedFrame::BlobError {
       data:       buf[data.0 .. data.1].to_vec(),
-      attributes: build_owned_attributes(buf, attributes.as_ref())?,
+      attributes: build_owned_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::Number { data, attributes } => OwnedFrame::Number {
       data:       *data,
-      attributes: build_owned_attributes(buf, attributes.as_ref())?,
+      attributes: build_owned_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::Double { data, attributes } => OwnedFrame::Double {
       data:       *data,
-      attributes: build_owned_attributes(buf, attributes.as_ref())?,
+      attributes: build_owned_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::Boolean { data, attributes } => OwnedFrame::Boolean {
       data:       *data,
-      attributes: build_owned_attributes(buf, attributes.as_ref())?,
+      attributes: build_owned_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::Null => OwnedFrame::Null,
     RangeFrame::VerbatimString {
@@ -712,31 +738,21 @@ pub fn build_owned_frame(buf: &[u8], frame: &RangeFrame) -> Result<OwnedFrame, R
     } => OwnedFrame::VerbatimString {
       data:       buf[data.0 .. data.1].to_vec(),
       format:     format.clone(),
-      attributes: build_owned_attributes(buf, attributes.as_ref())?,
+      attributes: build_owned_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::BigNumber { data, attributes } => OwnedFrame::BigNumber {
       data:       buf[data.0 .. data.1].to_vec(),
-      attributes: build_owned_attributes(buf, attributes.as_ref())?,
+      attributes: build_owned_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::ChunkedString(data) => OwnedFrame::ChunkedString(buf[data.0 .. data.1].to_vec()),
-    RangeFrame::Hello {
-      version,
-      username,
-      password,
-      setname,
-    } => OwnedFrame::Hello {
+    RangeFrame::Hello { version, auth, setname } => OwnedFrame::Hello {
       version: version.clone(),
-      auth:    if let Some(username) = username {
-        if let Some(password) = password {
-          Some((
-            String::from_utf8(buf[username.0 .. username.1].to_vec())?,
-            String::from_utf8(buf[password.0 .. password.1].to_vec())?,
-          ))
-        } else {
-          None
-        }
-      } else {
-        None
+      auth:    match auth.as_deref() {
+        Some((username, password)) => Some(Box::new((
+          String::from_utf8(buf[username.0 .. username.1].to_vec())?,
+          String::from_utf8(buf[password.0 .. password.1].to_vec())?,
+        ))),
+        None => None,
       },
       setname: if let Some(setname) = setname {
         Some(String::from_utf8(buf[setname.0 .. setname.1].to_vec())?)
@@ -749,14 +765,14 @@ pub fn build_owned_frame(buf: &[u8], frame: &RangeFrame) -> Result<OwnedFrame, R
         .iter()
         .map(|f| build_owned_frame(buf, f))
         .collect::<Result<Vec<OwnedFrame>, RedisProtocolError>>()?,
-      attributes: build_owned_attributes(buf, attributes.as_ref())?,
+      attributes: build_owned_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::Push { data, attributes } => OwnedFrame::Push {
       data:       data
         .iter()
         .map(|f| build_owned_frame(buf, f))
         .collect::<Result<Vec<OwnedFrame>, RedisProtocolError>>()?,
-      attributes: build_owned_attributes(buf, attributes.as_ref())?,
+      attributes: build_owned_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::Set { data, attributes } => OwnedFrame::Set {
       data:       data
@@ -774,7 +790,7 @@ pub fn build_owned_frame(buf: &[u8], frame: &RangeFrame) -> Result<OwnedFrame, R
           }
         })
         .collect::<Result<FrameSet<OwnedFrame>, RedisProtocolError>>()?,
-      attributes: build_owned_attributes(buf, attributes.as_ref())?,
+      attributes: build_owned_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::Map { data, attributes } => OwnedFrame::Map {
       data:       data
@@ -793,7 +809,7 @@ pub fn build_owned_frame(buf: &[u8], frame: &RangeFrame) -> Result<OwnedFrame, R
           }
         })
         .collect::<Result<FrameMap<OwnedFrame, OwnedFrame>, RedisProtocolError>>()?,
-      attributes: build_owned_attributes(buf, attributes.as_ref())?,
+      attributes: build_owned_attributes(buf, attributes.as_deref())?,
     },
   })
 }
@@ -804,31 +820,31 @@ pub fn build_bytes_frame(buf: &Bytes, frame: &RangeFrame) -> Result<BytesFrame, 
   Ok(match frame {
     RangeFrame::SimpleString { data, attributes } => BytesFrame::SimpleString {
       data:       buf.slice(data.0 .. data.1),
-      attributes: build_bytes_attributes(buf, attributes.as_ref())?,
+      attributes: build_bytes_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::SimpleError { data, attributes } => BytesFrame::SimpleError {
       data:       Str::from_inner(buf.slice(data.0 .. data.1))?,
-      attributes: build_bytes_attributes(buf, attributes.as_ref())?,
+      attributes: build_bytes_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::BlobString { data, attributes } => BytesFrame::BlobString {
       data:       buf.slice(data.0 .. data.1),
-      attributes: build_bytes_attributes(buf, attributes.as_ref())?,
+      attributes: build_bytes_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::BlobError { data, attributes } => BytesFrame::BlobError {
       data:       buf.slice(data.0 .. data.1),
-      attributes: build_bytes_attributes(buf, attributes.as_ref())?,
+      attributes: build_bytes_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::Number { data, attributes } => BytesFrame::Number {
       data:       *data,
-      attributes: build_bytes_attributes(buf, attributes.as_ref())?,
+      attributes: build_bytes_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::Double { data, attributes } => BytesFrame::Double {
       data:       *data,
-      attributes: build_bytes_attributes(buf, attributes.as_ref())?,
+      attributes: build_bytes_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::Boolean { data, attributes } => BytesFrame::Boolean {
       data:       *data,
-      attributes: build_bytes_attributes(buf, attributes.as_ref())?,
+      attributes: build_bytes_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::Null => BytesFrame::Null,
     RangeFrame::VerbatimString {
@@ -838,31 +854,21 @@ pub fn build_bytes_frame(buf: &Bytes, frame: &RangeFrame) -> Result<BytesFrame, 
     } => BytesFrame::VerbatimString {
       data:       buf.slice(data.0 .. data.1),
       format:     format.clone(),
-      attributes: build_bytes_attributes(buf, attributes.as_ref())?,
+      attributes: build_bytes_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::BigNumber { data, attributes } => BytesFrame::BigNumber {
       data:       buf.slice(data.0 .. data.1),
-      attributes: build_bytes_attributes(buf, attributes.as_ref())?,
+      attributes: build_bytes_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::ChunkedString(data) => BytesFrame::ChunkedString(buf.slice(data.0 .. data.1)),
-    RangeFrame::Hello {
-      version,
-      username,
-      password,
-      setname,
-    } => BytesFrame::Hello {
+    RangeFrame::Hello { version, auth, setname } => BytesFrame::Hello {
       version: version.clone(),
-      auth:    if let Some(username) = username {
-        if let Some(password) = password {
-          Some((
-            Str::from_inner(buf.slice(username.0 .. username.1))?,
-            Str::from_inner(buf.slice(password.0 .. password.1))?,
-          ))
-        } else {
-          None
-        }
-      } else {
-        None
+      auth:    match auth.as_deref() {
+        Some((username, password)) => Some(Box::new((
+          Str::from_inner(buf.slice(username.0 .. username.1))?,
+          Str::from_inner(buf.slice(password.0 .. password.1))?,
+        ))),
+        None => None,
       },
       setname: if let Some(setname) = setname {
         Some(Str::from_inner(buf.slice(setname.0 .. setname.1))?)
@@ -875,14 +881,14 @@ pub fn build_bytes_frame(buf: &Bytes, frame: &RangeFrame) -> Result<BytesFrame, 
         .iter()
         .map(|f| build_bytes_frame(buf, f))
         .collect::<Result<Vec<_>, RedisProtocolError>>()?,
-      attributes: build_bytes_attributes(buf, attributes.as_ref())?,
+      attributes: build_bytes_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::Push { data, attributes } => BytesFrame::Push {
       data:       data
         .iter()
         .map(|f| build_bytes_frame(buf, f))
         .collect::<Result<Vec<_>, RedisProtocolError>>()?,
-      attributes: build_bytes_attributes(buf, attributes.as_ref())?,
+      attributes: build_bytes_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::Set { data, attributes } => BytesFrame::Set {
       data:       data
@@ -900,7 +906,7 @@ pub fn build_bytes_frame(buf: &Bytes, frame: &RangeFrame) -> Result<BytesFrame, 
           }
         })
         .collect::<Result<FrameSet<_>, RedisProtocolError>>()?,
-      attributes: build_bytes_attributes(buf, attributes.as_ref())?,
+      attributes: build_bytes_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::Map { data, attributes } => BytesFrame::Map {
       data:       data
@@ -919,7 +925,7 @@ pub fn build_bytes_frame(buf: &Bytes, frame: &RangeFrame) -> Result<BytesFrame, 
           }
         })
         .collect::<Result<FrameMap<_, _>, RedisProtocolError>>()?,
-      attributes: build_bytes_attributes(buf, attributes.as_ref())?,
+      attributes: build_bytes_attributes(buf, attributes.as_deref())?,
     },
   })
 }
@@ -945,11 +951,11 @@ pub fn build_owned_streaming_frame(
   buf: &[u8],
   frame: &StreamedRangeFrame,
 ) -> Result<StreamedFrame<OwnedFrame>, RedisProtocolError> {
-  let attributes = build_owned_attributes(buf, frame.attributes.as_ref())?;
+  let attributes = build_owned_attributes(buf, frame.attributes.as_deref())?;
   let mut streamed = StreamedFrame::new(frame.kind);
 
   if let Some(attributes) = attributes {
-    streamed.add_attributes(attributes)?;
+    streamed.add_attributes(*attributes)?;
   }
   Ok(streamed)
 }
@@ -960,11 +966,11 @@ pub fn build_bytes_streaming_frame(
   buf: &Bytes,
   frame: &StreamedRangeFrame,
 ) -> Result<StreamedFrame<BytesFrame>, RedisProtocolError> {
-  let attributes = build_bytes_attributes(buf, frame.attributes.as_ref())?;
+  let attributes = build_bytes_attributes(buf, frame.attributes.as_deref())?;
   let mut streamed = StreamedFrame::new(frame.kind);
 
   if let Some(attributes) = attributes {
-    streamed.add_attributes(attributes)?;
+    streamed.add_attributes(*attributes)?;
   }
   Ok(streamed)
 }
@@ -1103,7 +1109,7 @@ mod tests {
 
     let expected = BytesFrame::BlobString {
       data:       "foobarbaz".as_bytes().into(),
-      attributes: Some(attributes),
+      attributes: Some(Box::new(attributes)),
     };
     assert_eq!(streamed_frame.take().unwrap(), expected);
   }
@@ -1151,7 +1157,7 @@ mod tests {
     });
     streamed_frame.add_frame(BytesFrame::Number {
       data:       42,
-      attributes: Some(attributes.clone()),
+      attributes: Some(Box::new(attributes.clone())),
     });
     streamed_frame.add_frame(BytesFrame::Boolean {
       data:       true,
@@ -1167,14 +1173,14 @@ mod tests {
         },
         BytesFrame::Number {
           data:       42,
-          attributes: Some(attributes.clone()),
+          attributes: Some(Box::new(attributes.clone())),
         },
         BytesFrame::Boolean {
           data:       true,
           attributes: None,
         },
       ],
-      attributes: Some(attributes),
+      attributes: Some(Box::new(attributes)),
     };
     assert_eq!(streamed_frame.take().unwrap(), expected);
   }
@@ -1228,7 +1234,7 @@ mod tests {
     expected.insert(k2.clone(), v2.clone());
     let expected = BytesFrame::Map {
       data:       expected,
-      attributes: Some(attributes),
+      attributes: Some(Box::new(attributes)),
     };
     assert_eq!(streamed_frame.take().unwrap(), expected);
   }
@@ -1286,7 +1292,7 @@ mod tests {
     expected.insert(v4);
     let expected = BytesFrame::Set {
       data:       expected,
-      attributes: Some(attributes),
+      attributes: Some(Box::new(attributes)),
     };
     assert_eq!(streamed_frame.take().unwrap(), expected);
   }
@@ -1361,14 +1367,14 @@ mod tests {
         BytesFrame::Null,
         BytesFrame::BigNumber {
           data:       "123456789".as_bytes().into(),
-          attributes: Some(attributes.clone()),
+          attributes: Some(Box::new(attributes.clone())),
         },
       ],
       attributes: None,
     });
     streamed_frame.add_frame(BytesFrame::Boolean {
       data:       true,
-      attributes: Some(attributes.clone()),
+      attributes: Some(Box::new(attributes.clone())),
     });
     streamed_frame.add_attributes(attributes.clone()).unwrap();
 
@@ -1387,17 +1393,17 @@ mod tests {
             BytesFrame::Null,
             BytesFrame::BigNumber {
               data:       "123456789".as_bytes().into(),
-              attributes: Some(attributes.clone()),
+              attributes: Some(Box::new(attributes.clone())),
             },
           ],
           attributes: None,
         },
         BytesFrame::Boolean {
           data:       true,
-          attributes: Some(attributes.clone()),
+          attributes: Some(Box::new(attributes.clone())),
         },
       ],
-      attributes: Some(attributes),
+      attributes: Some(Box::new(attributes)),
     };
     assert_eq!(streamed_frame.take().unwrap(), expected);
   }
@@ -1468,7 +1474,7 @@ mod tests {
     expected.insert(k2.clone(), v2.clone());
     let expected = BytesFrame::Map {
       data:       expected,
-      attributes: Some(attributes),
+      attributes: Some(Box::new(attributes)),
     };
     assert_eq!(streamed_frame.take().unwrap(), expected);
   }
@@ -1692,7 +1698,7 @@ mod tests {
 
     let frame = BytesFrame::Hello {
       version: RespVersion::RESP3,
-      auth:    Some(("foo".into(), "bar".into())),
+      auth:    Some(Box::new(("foo".into(), "bar".into()))),
       setname: None,
     };
     // HELLO 3 AUTH foo bar\r\n
@@ -1701,7 +1707,7 @@ mod tests {
 
     let frame = BytesFrame::Hello {
       version: RespVersion::RESP3,
-      auth:    Some(("foo".into(), "bar".into())),
+      auth:    Some(Box::new(("foo".into(), "bar".into()))),
       setname: Some("baz".into()),
     };
     // HELLO 3 AUTH foo bar SETNAME baz\r\n

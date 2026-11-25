@@ -12,7 +12,10 @@ use crate::{
   },
   types::CRLF,
 };
-use alloc::string::{String, ToString};
+use alloc::{
+  boxed::Box,
+  string::{String, ToString},
+};
 
 #[cfg(feature = "bytes")]
 use crate::utils;
@@ -21,13 +24,13 @@ use bytes::BytesMut;
 #[cfg(feature = "bytes")]
 use bytes_utils::Str;
 
-fn map_owned_auth(auth: &Option<(String, String)>) -> Option<(&str, &str)> {
-  auth.as_ref().map(|(u, p)| (u.as_str(), p.as_str()))
+fn map_owned_auth(auth: &Option<Box<(String, String)>>) -> Option<(&str, &str)> {
+  auth.as_deref().map(|(u, p)| (u.as_str(), p.as_str()))
 }
 
 #[cfg(feature = "bytes")]
-fn map_bytes_auth(auth: &Option<(Str, Str)>) -> Option<(&str, &str)> {
-  auth.as_ref().map(|(u, p)| (&**u, &**p))
+fn map_bytes_auth(auth: &Option<Box<(Str, Str)>>) -> Option<(&str, &str)> {
+  auth.as_deref().map(|(u, p)| (&**u, &**p))
 }
 
 macro_rules! encode_attributes (
@@ -553,29 +556,31 @@ fn gen_owned_frame<W: GenOut>(x: W, frame: &OwnedFrame, int_as_blobstring: bool)
   log::trace!("Encode {:?}", frame.kind());
 
   match frame {
-    OwnedFrame::Array { data, attributes } => gen_owned_array(x, data, attributes.as_ref(), int_as_blobstring),
-    OwnedFrame::BlobString { data, attributes } => gen_blobstring(x, data, attributes.as_ref(), int_as_blobstring),
+    OwnedFrame::Array { data, attributes } => gen_owned_array(x, data, attributes.as_deref(), int_as_blobstring),
+    OwnedFrame::BlobString { data, attributes } => gen_blobstring(x, data, attributes.as_deref(), int_as_blobstring),
     OwnedFrame::SimpleString { data, attributes } => {
-      gen_simplestring(x, data, attributes.as_ref(), int_as_blobstring)
+      gen_simplestring(x, data, attributes.as_deref(), int_as_blobstring)
     },
-    OwnedFrame::SimpleError { data, attributes } => gen_simpleerror(x, data, attributes.as_ref(), int_as_blobstring),
-    OwnedFrame::Number { data, attributes } => gen_number(x, *data, attributes.as_ref(), int_as_blobstring),
+    OwnedFrame::SimpleError { data, attributes } => {
+      gen_simpleerror(x, data, attributes.as_deref(), int_as_blobstring)
+    },
+    OwnedFrame::Number { data, attributes } => gen_number(x, *data, attributes.as_deref(), int_as_blobstring),
     OwnedFrame::Null => gen_null(x),
-    OwnedFrame::Double { data, attributes } => gen_double(x, *data, attributes.as_ref(), int_as_blobstring),
-    OwnedFrame::BlobError { data, attributes } => gen_bloberror(x, data, attributes.as_ref(), int_as_blobstring),
+    OwnedFrame::Double { data, attributes } => gen_double(x, *data, attributes.as_deref(), int_as_blobstring),
+    OwnedFrame::BlobError { data, attributes } => gen_bloberror(x, data, attributes.as_deref(), int_as_blobstring),
     OwnedFrame::VerbatimString {
       data,
       format,
       attributes,
-    } => gen_verbatimstring(x, data, format, attributes.as_ref(), int_as_blobstring),
-    OwnedFrame::Boolean { data, attributes } => gen_boolean(x, *data, attributes.as_ref(), int_as_blobstring),
-    OwnedFrame::Map { data, attributes } => gen_owned_map(x, data, attributes.as_ref(), int_as_blobstring),
-    OwnedFrame::Set { data, attributes } => gen_owned_set(x, data, attributes.as_ref(), int_as_blobstring),
-    OwnedFrame::Push { data, attributes } => gen_owned_push(x, data, attributes.as_ref(), int_as_blobstring),
+    } => gen_verbatimstring(x, data, format, attributes.as_deref(), int_as_blobstring),
+    OwnedFrame::Boolean { data, attributes } => gen_boolean(x, *data, attributes.as_deref(), int_as_blobstring),
+    OwnedFrame::Map { data, attributes } => gen_owned_map(x, data, attributes.as_deref(), int_as_blobstring),
+    OwnedFrame::Set { data, attributes } => gen_owned_set(x, data, attributes.as_deref(), int_as_blobstring),
+    OwnedFrame::Push { data, attributes } => gen_owned_push(x, data, attributes.as_deref(), int_as_blobstring),
     OwnedFrame::Hello { version, auth, setname } => {
       gen_hello(x, version, map_owned_auth(auth), setname.as_ref().map(|s| s.as_str()))
     },
-    OwnedFrame::BigNumber { data, attributes } => gen_bignumber(x, data, attributes.as_ref(), int_as_blobstring),
+    OwnedFrame::BigNumber { data, attributes } => gen_bignumber(x, data, attributes.as_deref(), int_as_blobstring),
     OwnedFrame::ChunkedString(b) => gen_chunked_string(x, b),
   }
 }
@@ -616,29 +621,31 @@ fn gen_bytes_frame<W: GenOut>(x: W, frame: &BytesFrame, int_as_blobstring: bool)
   log::trace!("Encode {:?}", frame.kind());
 
   match frame {
-    BytesFrame::Array { data, attributes } => gen_bytes_array(x, data, attributes.as_ref(), int_as_blobstring),
-    BytesFrame::BlobString { data, attributes } => gen_blobstring(x, data, attributes.as_ref(), int_as_blobstring),
+    BytesFrame::Array { data, attributes } => gen_bytes_array(x, data, attributes.as_deref(), int_as_blobstring),
+    BytesFrame::BlobString { data, attributes } => gen_blobstring(x, data, attributes.as_deref(), int_as_blobstring),
     BytesFrame::SimpleString { data, attributes } => {
-      gen_simplestring(x, data, attributes.as_ref(), int_as_blobstring)
+      gen_simplestring(x, data, attributes.as_deref(), int_as_blobstring)
     },
-    BytesFrame::SimpleError { data, attributes } => gen_simpleerror(x, data, attributes.as_ref(), int_as_blobstring),
-    BytesFrame::Number { data, attributes } => gen_number(x, *data, attributes.as_ref(), int_as_blobstring),
+    BytesFrame::SimpleError { data, attributes } => {
+      gen_simpleerror(x, data, attributes.as_deref(), int_as_blobstring)
+    },
+    BytesFrame::Number { data, attributes } => gen_number(x, *data, attributes.as_deref(), int_as_blobstring),
     BytesFrame::Null => gen_null(x),
-    BytesFrame::Double { data, attributes } => gen_double(x, *data, attributes.as_ref(), int_as_blobstring),
-    BytesFrame::BlobError { data, attributes } => gen_bloberror(x, data, attributes.as_ref(), int_as_blobstring),
+    BytesFrame::Double { data, attributes } => gen_double(x, *data, attributes.as_deref(), int_as_blobstring),
+    BytesFrame::BlobError { data, attributes } => gen_bloberror(x, data, attributes.as_deref(), int_as_blobstring),
     BytesFrame::VerbatimString {
       data,
       format,
       attributes,
-    } => gen_verbatimstring(x, data, format, attributes.as_ref(), int_as_blobstring),
-    BytesFrame::Boolean { data, attributes } => gen_boolean(x, *data, attributes.as_ref(), int_as_blobstring),
-    BytesFrame::Map { data, attributes } => gen_bytes_map(x, data, attributes.as_ref(), int_as_blobstring),
-    BytesFrame::Set { data, attributes } => gen_bytes_set(x, data, attributes.as_ref(), int_as_blobstring),
-    BytesFrame::Push { data, attributes } => gen_bytes_push(x, data, attributes.as_ref(), int_as_blobstring),
+    } => gen_verbatimstring(x, data, format, attributes.as_deref(), int_as_blobstring),
+    BytesFrame::Boolean { data, attributes } => gen_boolean(x, *data, attributes.as_deref(), int_as_blobstring),
+    BytesFrame::Map { data, attributes } => gen_bytes_map(x, data, attributes.as_deref(), int_as_blobstring),
+    BytesFrame::Set { data, attributes } => gen_bytes_set(x, data, attributes.as_deref(), int_as_blobstring),
+    BytesFrame::Push { data, attributes } => gen_bytes_push(x, data, attributes.as_deref(), int_as_blobstring),
     BytesFrame::Hello { version, auth, setname } => {
       gen_hello(x, version, map_bytes_auth(auth), setname.as_ref().map(|s| &**s))
     },
-    BytesFrame::BigNumber { data, attributes } => gen_bignumber(x, data, attributes.as_ref(), int_as_blobstring),
+    BytesFrame::BigNumber { data, attributes } => gen_bignumber(x, data, attributes.as_deref(), int_as_blobstring),
     BytesFrame::ChunkedString(b) => gen_chunked_string(x, b),
   }
 }
@@ -1694,7 +1701,7 @@ mod owned_tests {
     let expected = "HELLO 3 AUTH default mypassword\r\n";
     let input = OwnedFrame::Hello {
       version: RespVersion::RESP3,
-      auth:    Some(("default".into(), "mypassword".into())),
+      auth:    Some(Box::new(("default".into(), "mypassword".into()))),
       setname: None,
     };
 
@@ -1706,7 +1713,7 @@ mod owned_tests {
     let expected = "HELLO 3 AUTH default mypassword SETNAME myname\r\n";
     let input = OwnedFrame::Hello {
       version: RespVersion::RESP3,
-      auth:    Some(("default".into(), "mypassword".into())),
+      auth:    Some(Box::new(("default".into(), "mypassword".into()))),
       setname: Some("myname".into()),
     };
 
@@ -2657,7 +2664,7 @@ mod bytes_tests {
     let expected = "HELLO 3 AUTH default mypassword\r\n";
     let input = BytesFrame::Hello {
       version: RespVersion::RESP3,
-      auth:    Some(("default".into(), "mypassword".into())),
+      auth:    Some(Box::new(("default".into(), "mypassword".into()))),
       setname: None,
     };
 
@@ -2670,7 +2677,7 @@ mod bytes_tests {
     let expected = "HELLO 3 AUTH default mypassword SETNAME myname\r\n";
     let input = BytesFrame::Hello {
       version: RespVersion::RESP3,
-      auth:    Some(("default".into(), "mypassword".into())),
+      auth:    Some(Box::new(("default".into(), "mypassword".into()))),
       setname: Some("myname".into()),
     };
 

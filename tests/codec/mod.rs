@@ -163,7 +163,7 @@ async fn should_use_resp3_codec_hello() {
 
   let hello = Resp3BytesFrame::Hello {
     version: RespVersion::RESP3,
-    auth:    Some((read_redis_username().into(), read_redis_password().into())),
+    auth:    Some(Box::new((read_redis_username().into(), read_redis_password().into()))),
     setname: None,
   };
   socket.send(hello).await.unwrap();
@@ -175,7 +175,7 @@ async fn should_use_resp3_codec_hello() {
 
   let hello = Resp3BytesFrame::Hello {
     version: RespVersion::RESP3,
-    auth:    Some((read_redis_username().into(), read_redis_password().into())),
+    auth:    Some(Box::new((read_redis_username().into(), read_redis_password().into()))),
     setname: Some("baz".into()),
   };
   socket.send(hello).await.unwrap();

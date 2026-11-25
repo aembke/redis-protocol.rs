@@ -42,7 +42,7 @@ mod resp3 {
   ///
   ///   let hello = BytesFrame::Hello {
   ///     version: RespVersion::RESP3,
-  ///     auth:    Some(("foo".into(), "bar".into())),
+  ///     auth:    Some(Box::new(("foo".into(), "bar".into()))),
   ///     setname: None,
   ///   };
   ///   // or use the shorthand, but this likely only works for simple use cases
