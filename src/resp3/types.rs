@@ -137,7 +137,8 @@ pub type OwnedAttributes = FrameMap<OwnedFrame, OwnedFrame>;
 pub type RangeAttributes = Vec<(RangeFrame, RangeFrame)>;
 
 /// The RESP version used in the `HELLO` request.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[non_exhaustive]
 pub enum RespVersion {
   RESP2,
   RESP3,
@@ -153,15 +154,16 @@ impl RespVersion {
 }
 
 /// The format of a verbatim string frame.
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[non_exhaustive]
 pub enum VerbatimStringFormat {
   Text,
   Markdown,
 }
 
 impl VerbatimStringFormat {
-  pub(crate) fn to_str(&self) -> &'static str {
-    match *self {
+  pub(crate) fn to_str(self) -> &'static str {
+    match self {
       VerbatimStringFormat::Text => "txt",
       VerbatimStringFormat::Markdown => "mkd",
     }
@@ -178,6 +180,7 @@ impl VerbatimStringFormat {
 
 /// The type of frame without any associated data.
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Copy)]
+#[non_exhaustive]
 pub enum FrameKind {
   Array,
   BlobString,
@@ -200,6 +203,11 @@ pub enum FrameKind {
 }
 
 impl FrameKind {
+  /// Whether the frame is an error.
+  pub fn is_error(&self) -> bool {
+    matches!(self, FrameKind::SimpleError | FrameKind::BlobError)
+  }
+
   /// Whether the frame is an aggregate type (array, set, map).
   pub fn is_aggregate_type(&self) -> bool {
     matches!(self, FrameKind::Array | FrameKind::Set | FrameKind::Map)
@@ -316,6 +324,7 @@ impl FrameKind {
 
 /// A borrowed attributes type, typically used with `BorrowedFrame` for encoding use cases.
 #[derive(Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum BorrowedAttrs<'a> {
   Owned(&'a OwnedAttributes),
   #[cfg(feature = "bytes")]
@@ -663,7 +672,7 @@ impl<'a> Clone for BorrowedFrame<'a> {
         attributes,
       } => VerbatimString {
         data,
-        format: format.clone(),
+        format: *format,
         attributes: attributes.clone(),
       },
       ChunkedString(data) => ChunkedString(data),
@@ -672,7 +681,7 @@ impl<'a> Clone for BorrowedFrame<'a> {
         attributes: attributes.clone(),
       },
       Hello { auth, setname, version } => Hello {
-        version: version.clone(),
+        version: *version,
         setname: *setname,
         auth:    *auth,
       },
@@ -956,7 +965,7 @@ impl Hash for RangeFrame {
 
 /// A frame type representing ranges into an associated buffer that contains the starting portion of a streaming
 /// frame.
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct StreamedRangeFrame {
   pub kind:       FrameKind,
   pub attributes: Option<Box<RangeAttributes>>,
@@ -980,7 +989,7 @@ impl StreamedRangeFrame {
 
 /// A reference-free frame type representing ranges into an associated buffer, typically used to implement zero-copy
 /// parsing.
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum DecodedRangeFrame {
   Complete(RangeFrame),
   Streaming(StreamedRangeFrame),

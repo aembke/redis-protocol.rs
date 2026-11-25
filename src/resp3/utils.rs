@@ -461,7 +461,7 @@ pub fn bytes_to_owned_frame(frame: &BytesFrame) -> OwnedFrame {
       attributes,
       format,
     } => OwnedFrame::VerbatimString {
-      format:     format.clone(),
+      format:     *format,
       attributes: attributes.as_deref().map(|a| Box::new(bytes_to_owned_attrs(a))),
       data:       data.to_vec(),
     },
@@ -477,7 +477,7 @@ pub fn bytes_to_owned_frame(frame: &BytesFrame) -> OwnedFrame {
       data:       data.iter().map(bytes_to_owned_frame).collect(),
     },
     BytesFrame::Hello { version, auth, setname } => OwnedFrame::Hello {
-      version: version.clone(),
+      version: *version,
       auth:    auth.as_deref().map(|(u, p)| Box::new((u.to_string(), p.to_string()))),
       setname: setname.as_ref().map(|name| name.to_string()),
     },
@@ -725,7 +725,7 @@ pub fn build_owned_frame(buf: &[u8], frame: &RangeFrame) -> Result<OwnedFrame, R
       format,
     } => OwnedFrame::VerbatimString {
       data:       buf[data.0 .. data.1].to_vec(),
-      format:     format.clone(),
+      format:     *format,
       attributes: build_owned_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::BigNumber { data, attributes } => OwnedFrame::BigNumber {
@@ -734,7 +734,7 @@ pub fn build_owned_frame(buf: &[u8], frame: &RangeFrame) -> Result<OwnedFrame, R
     },
     RangeFrame::ChunkedString(data) => OwnedFrame::ChunkedString(buf[data.0 .. data.1].to_vec()),
     RangeFrame::Hello { version, auth, setname } => OwnedFrame::Hello {
-      version: version.clone(),
+      version: *version,
       auth:    match auth.as_deref() {
         Some((username, password)) => Some(Box::new((
           String::from_utf8(buf[username.0 .. username.1].to_vec())?,
@@ -841,7 +841,7 @@ pub fn build_bytes_frame(buf: &Bytes, frame: &RangeFrame) -> Result<BytesFrame, 
       format,
     } => BytesFrame::VerbatimString {
       data:       buf.slice(data.0 .. data.1),
-      format:     format.clone(),
+      format:     *format,
       attributes: build_bytes_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::BigNumber { data, attributes } => BytesFrame::BigNumber {
@@ -850,7 +850,7 @@ pub fn build_bytes_frame(buf: &Bytes, frame: &RangeFrame) -> Result<BytesFrame, 
     },
     RangeFrame::ChunkedString(data) => BytesFrame::ChunkedString(buf.slice(data.0 .. data.1)),
     RangeFrame::Hello { version, auth, setname } => BytesFrame::Hello {
-      version: version.clone(),
+      version: *version,
       auth:    match auth.as_deref() {
         Some((username, password)) => Some(Box::new((
           Str::from_inner(buf.slice(username.0 .. username.1))?,

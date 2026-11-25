@@ -17,6 +17,7 @@ use std::io::Error as IoError;
 
 /// The kind of error without any associated data.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum RedisProtocolErrorKind {
   /// An error that occurred while encoding data.
   EncodeError,
@@ -138,44 +139,6 @@ impl From<GenError> for RedisProtocolError {
   }
 }
 
-impl From<NomError<nom::error::Error<&[u8]>>> for RedisProtocolError {
-  fn from(e: NomError<nom::error::Error<&[u8]>>) -> Self {
-    if let NomError::Incomplete(Needed::Size(s)) = e {
-      RedisProtocolError {
-        kind:    RedisProtocolErrorKind::BufferTooSmall(s.get()),
-        details: Cow::Borrowed(""),
-      }
-    } else {
-      let desc = match e {
-        NomError::Failure(inner) => format!("Failure: {:?}", inner.code),
-        NomError::Error(inner) => format!("Error: {:?}", inner.code),
-        _ => format!("{e:?}"),
-      };
-
-      RedisProtocolError {
-        kind:    RedisProtocolErrorKind::DecodeError,
-        details: Cow::Owned(desc),
-      }
-    }
-  }
-}
-
-impl From<NomError<&[u8]>> for RedisProtocolError {
-  fn from(e: NomError<&[u8]>) -> Self {
-    if let NomError::Incomplete(Needed::Size(s)) = e {
-      RedisProtocolError {
-        kind:    RedisProtocolErrorKind::BufferTooSmall(s.get()),
-        details: Cow::Borrowed(""),
-      }
-    } else {
-      RedisProtocolError {
-        kind:    RedisProtocolErrorKind::DecodeError,
-        details: Cow::Owned(format!("{e:?}")),
-      }
-    }
-  }
-}
-
 #[cfg(feature = "std")]
 impl From<IoError> for RedisProtocolError {
   fn from(e: IoError) -> Self {
@@ -212,7 +175,7 @@ impl From<Utf8Error> for RedisProtocolError {
 }
 
 /// A struct defining parse errors when decoding frames.
-pub enum RedisParseError<I> {
+pub(crate) enum RedisParseError<I> {
   Custom {
     context: &'static str,
     message: Cow<'static, str>,

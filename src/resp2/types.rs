@@ -47,7 +47,8 @@ pub const NULL: &str = "$-1\r\n";
 pub const NULL_ARRAY: &str = "*-1\r\n";
 
 /// An enum representing the type of RESP frame.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[non_exhaustive]
 pub enum FrameKind {
   SimpleString,
   Error,
@@ -108,7 +109,7 @@ impl FrameKind {
 }
 
 /// A borrowed frame variant, typically used for encoding use cases.
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BorrowedFrame<'a> {
   /// A RESP2 simple string.
   SimpleString(&'a [u8]),
@@ -124,20 +125,6 @@ pub enum BorrowedFrame<'a> {
   Null,
   /// A null array value (`*-1\r\n`).
   NullArray,
-}
-
-impl<'a> Clone for BorrowedFrame<'a> {
-  fn clone(self: &BorrowedFrame<'a>) -> BorrowedFrame<'a> {
-    match self {
-      BorrowedFrame::Null => BorrowedFrame::Null,
-      BorrowedFrame::NullArray => BorrowedFrame::NullArray,
-      BorrowedFrame::Array(a) => BorrowedFrame::Array(a),
-      BorrowedFrame::BulkString(b) => BorrowedFrame::BulkString(b),
-      BorrowedFrame::SimpleString(s) => BorrowedFrame::SimpleString(s),
-      BorrowedFrame::Error(e) => BorrowedFrame::Error(e),
-      BorrowedFrame::Integer(i) => BorrowedFrame::Integer(*i),
-    }
-  }
 }
 
 impl Hash for BorrowedFrame<'_> {
