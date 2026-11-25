@@ -17,7 +17,6 @@ use core::{
 
 #[cfg(feature = "convert")]
 use crate::convert::FromResp2;
-#[cfg(any(feature = "bytes", feature = "convert"))]
 use crate::error::RedisProtocolError;
 #[cfg(feature = "bytes")]
 use crate::error::RedisProtocolErrorKind;
@@ -193,6 +192,32 @@ pub enum RangeFrame {
   Null,
   /// A null array value (`*-1\r\n`).
   NullArray,
+}
+
+impl RangeFrame {
+  /// Build an [OwnedFrame] from the buffer this frame was decoded from.
+  ///
+  /// This copies the contents of each frame out of `buf`, which must be the buffer passed to `decode_range`.
+  ///
+  /// # Panics
+  ///
+  /// Panics if `buf` is shorter than the ranges in the frame.
+  pub fn to_owned_frame(&self, buf: &[u8]) -> Result<OwnedFrame, RedisProtocolError> {
+    crate::resp2::utils::build_owned_frame(buf, self)
+  }
+
+  /// Build a [BytesFrame] from the buffer this frame was decoded from, without copying the contents of each frame.
+  ///
+  /// `buf` must contain the same bytes that were passed to `decode_range`.
+  ///
+  /// # Panics
+  ///
+  /// Panics if `buf` is shorter than the ranges in the frame.
+  #[cfg(feature = "bytes")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
+  pub fn to_bytes_frame(&self, buf: &Bytes) -> Result<BytesFrame, RedisProtocolError> {
+    crate::resp2::utils::build_bytes_frame(buf, self)
+  }
 }
 
 /// Generic operations on a RESP2 frame.

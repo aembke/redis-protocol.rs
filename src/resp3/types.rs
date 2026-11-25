@@ -848,6 +848,30 @@ impl_frame_eq!(RangeFrame);
 impl Eq for RangeFrame {}
 
 impl RangeFrame {
+  /// Build an [OwnedFrame] from the buffer this frame was decoded from.
+  ///
+  /// This copies the contents of each frame out of `buf`, which must be the buffer passed to `decode_range`.
+  ///
+  /// # Panics
+  ///
+  /// Panics if `buf` is shorter than the ranges in the frame.
+  pub fn to_owned_frame(&self, buf: &[u8]) -> Result<OwnedFrame, RedisProtocolError> {
+    crate::resp3::utils::build_owned_frame(buf, self)
+  }
+
+  /// Build a [BytesFrame] from the buffer this frame was decoded from, without copying the contents of each frame.
+  ///
+  /// `buf` must contain the same bytes that were passed to `decode_range`.
+  ///
+  /// # Panics
+  ///
+  /// Panics if `buf` is shorter than the ranges in the frame.
+  #[cfg(feature = "bytes")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
+  pub fn to_bytes_frame(&self, buf: &Bytes) -> Result<BytesFrame, RedisProtocolError> {
+    crate::resp3::utils::build_bytes_frame(buf, self)
+  }
+
   /// Read the associated `FrameKind`.
   pub fn kind(&self) -> FrameKind {
     match self {
@@ -1649,6 +1673,20 @@ impl Resp3Frame for OwnedFrame {
 }
 
 impl OwnedFrame {
+  /// Create a `HELLO` frame.
+  ///
+  /// ```rust
+  /// # use redis_protocol::resp3::types::{OwnedFrame, RespVersion};
+  /// let hello = OwnedFrame::hello(RespVersion::RESP3, Some(("foo", "bar")), Some("my-client"));
+  /// ```
+  pub fn hello<S: Into<String>>(version: RespVersion, auth: Option<(S, S)>, setname: Option<S>) -> Self {
+    OwnedFrame::Hello {
+      version,
+      auth: auth.map(|(username, password)| Box::new((username.into(), password.into()))),
+      setname: setname.map(Into::into),
+    }
+  }
+
   /// Move the frame contents into a new [BytesFrame].
   #[cfg(feature = "bytes")]
   #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
@@ -2296,6 +2334,20 @@ impl Resp3Frame for BytesFrame {
 
 #[cfg(feature = "bytes")]
 impl BytesFrame {
+  /// Create a `HELLO` frame.
+  ///
+  /// ```rust
+  /// # use redis_protocol::resp3::types::{BytesFrame, RespVersion};
+  /// let hello = BytesFrame::hello(RespVersion::RESP3, Some(("foo", "bar")), Some("my-client"));
+  /// ```
+  pub fn hello<S: Into<Str>>(version: RespVersion, auth: Option<(S, S)>, setname: Option<S>) -> Self {
+    BytesFrame::Hello {
+      version,
+      auth: auth.map(|(username, password)| Box::new((username.into(), password.into()))),
+      setname: setname.map(Into::into),
+    }
+  }
+
   /// Copy the frame contents into a new [OwnedFrame].
   pub fn to_owned_frame(&self) -> OwnedFrame {
     resp3_utils::bytes_to_owned_frame(self)

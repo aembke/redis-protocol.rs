@@ -40,11 +40,7 @@ mod resp3 {
   ///   let socket = TcpStream::connect("127.0.0.1:6379").await.unwrap();
   ///   let mut framed = Framed::new(socket, Resp3::default());
   ///
-  ///   let hello = BytesFrame::Hello {
-  ///     version: RespVersion::RESP3,
-  ///     auth:    Some(Box::new(("foo".into(), "bar".into()))),
-  ///     setname: None,
-  ///   };
+  ///   let hello = BytesFrame::hello(RespVersion::RESP3, Some(("foo", "bar")), None);
   ///   // or use the shorthand, but this likely only works for simple use cases
   ///   let get_foo = resp3_encode_command("GET foo");
   ///

@@ -1053,6 +1053,20 @@ pub mod owned_tests {
   }
 
   #[test]
+  fn should_build_frames_from_range_frames() {
+    let buf = b"|1\r\n+a\r\n:1\r\n*3\r\n$3\r\nfoo\r\n%1\r\n+k\r\n,1.5\r\n~1\r\n#t\r\n";
+    let (range, amt) = complete::decode_range(buf).unwrap().unwrap();
+    let (expected, expected_amt) = complete::decode(buf).unwrap().unwrap();
+    assert_eq!(amt, expected_amt);
+    assert_eq!(range.to_owned_frame(buf).unwrap(), expected);
+    #[cfg(feature = "bytes")]
+    assert_eq!(
+      range.to_bytes_frame(&Bytes::from_static(buf)).unwrap().to_owned_frame(),
+      expected
+    );
+  }
+
+  #[test]
   fn should_decode_resp2_nulls_as_null() {
     for bytes in [&b"$-1\r\n"[..], b"*-1\r\n", b"%-1\r\n", b"~-1\r\n", b">-1\r\n"] {
       let expected = (OwnedFrame::Null, bytes.len());

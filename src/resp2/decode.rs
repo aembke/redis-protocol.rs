@@ -460,6 +460,20 @@ mod owned_tests {
   }
 
   #[test]
+  fn should_build_frames_from_range_frames() {
+    let buf = b"*4\r\n+OK\r\n-ERR\r\n:1\r\n$3\r\nfoo\r\n";
+    let (range, amt) = decode_range(buf).unwrap().unwrap();
+    let (expected, expected_amt) = decode(buf).unwrap().unwrap();
+    assert_eq!(amt, expected_amt);
+    assert_eq!(range.to_owned_frame(buf).unwrap(), expected);
+    #[cfg(feature = "bytes")]
+    assert_eq!(
+      range.to_bytes_frame(&Bytes::from_static(buf)).unwrap().to_owned_frame(),
+      expected
+    );
+  }
+
+  #[test]
   fn should_require_crlf_after_bulk_strings() {
     assert!(decode(b"$3\r\nfooXY").is_err());
     assert!(decode(b"*1\r\n$3\r\nfoo\n\r").is_err());

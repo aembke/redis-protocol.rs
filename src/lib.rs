@@ -77,8 +77,3 @@ pub mod convert;
 #[cfg(feature = "bytes")]
 pub use utils::zero_extend;
 pub use utils::{digits_in_i64, digits_in_usize, redis_keyslot, str_to_f64};
-
-#[deprecated(since = "5.1.0", note = "Use `digits_in_usize` instead.")]
-pub fn digits_in_number(d: usize) -> usize {
-  digits_in_usize(d)
-}

@@ -11,8 +11,6 @@ use nom::{
 #[cfg(feature = "bytes")]
 use bytes_utils::string::Utf8Error as BytesUtf8Error;
 #[cfg(feature = "std")]
-use std::error::Error;
-#[cfg(feature = "std")]
 use std::io::Error as IoError;
 
 /// The kind of error without any associated data.
@@ -267,14 +265,10 @@ impl<I> From<Utf8Error> for RedisParseError<I> {
   }
 }
 
-#[cfg(feature = "std")]
-impl std::error::Error for RedisProtocolError {
-  fn description(&self) -> &str {
-    self.details()
-  }
-
-  fn source(&self) -> Option<&(dyn Error + 'static)> {
+impl core::error::Error for RedisProtocolError {
+  fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
     match self.kind {
+      #[cfg(feature = "std")]
       RedisProtocolErrorKind::IO(ref e) => Some(e),
       _ => None,
     }
