@@ -14,7 +14,7 @@ pretty_env_logger = "0.5"
 
 [dependencies.redis-protocol]
 path = ".."
-features = ["std", "bytes", "resp2", "resp3", "decode-logs"]
+features = ["std", "bytes", "codec", "resp2", "resp3", "decode-logs"]
 
 [[bin]]
 name = "resp2_owned"
@@ -54,6 +54,27 @@ bench = false
 [[bin]]
 name = "resp3_scan"
 path = "fuzz_targets/resp3_scan.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "resp2_roundtrip"
+path = "fuzz_targets/resp2_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "resp3_roundtrip"
+path = "fuzz_targets/resp3_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "resp3_codec"
+path = "fuzz_targets/resp3_codec.rs"
 test = false
 doc = false
 bench = false
