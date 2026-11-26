@@ -5,7 +5,7 @@ mod resp3 {
     resp3::{
       decode::{streaming::decode_bytes_mut as resp3_decode, FrameScanner},
       encode::complete::{extend_encode as resp3_encode, extend_encode_borrowed as resp3_encode_borrowed},
-      types::{BorrowedFrame, BytesFrame as Resp3Frame, StreamedFrame},
+      types::{BorrowedFrame, BytesFrame as Resp3Frame, FrameKind, StreamedFrame},
     },
   };
   use bytes::BytesMut;
@@ -118,6 +118,8 @@ mod resp3 {
       if src.is_empty() {
         return Ok(None);
       }
+      // the type byte of the next frame, which is consumed along with the frame
+      let type_byte = src[0];
       // a decoding attempt parses the buffer from the start, so the scanner avoids repeated attempts on partial
       // frames
       let parsed = match self.scanner.decode_with(src, resp3_decode)? {
@@ -134,7 +136,9 @@ mod resp3 {
 
       if let Some(ref mut state) = self.streaming {
         // we started receiving streamed data earlier
-        state.add_frame(parsed.into_complete_frame()?);
+        let frame = parsed.into_complete_frame()?;
+        check_streamed_frame(state.kind, type_byte, &frame)?;
+        state.add_frame(frame);
 
         if state.is_finished() {
           // clear the stream before building the frame so an error doesn't leave a stale stream behind
@@ -155,6 +159,33 @@ mod resp3 {
           frame => Ok(Some(frame)),
         }
       }
+    }
+  }
+
+  /// Check that a frame can be part of a stream of type `kind`.
+  ///
+  /// Streamed strings only contain chunks and end with `;0`, and streamed aggregates don't contain chunks and end
+  /// with `.`. Both terminators decode to the same frame, so this checks the type byte of the frame.
+  fn check_streamed_frame(kind: FrameKind, type_byte: u8, frame: &Resp3Frame) -> Result<(), RedisProtocolError> {
+    let is_valid = match (kind, frame) {
+      (FrameKind::BlobString, Resp3Frame::ChunkedString(_)) => type_byte == FrameKind::ChunkedString.to_byte(),
+      (FrameKind::BlobString, _) => false,
+      (_, Resp3Frame::ChunkedString(data)) => data.is_empty() && type_byte == FrameKind::EndStream.to_byte(),
+      _ => true,
+    };
+
+    if is_valid {
+      Ok(())
+    } else if kind == FrameKind::BlobString {
+      Err(RedisProtocolError::new(
+        RedisProtocolErrorKind::DecodeError,
+        "Expected a chunk or `;0` in a streamed string.",
+      ))
+    } else {
+      Err(RedisProtocolError::new(
+        RedisProtocolErrorKind::DecodeError,
+        "Expected a frame or `.` in a streamed aggregate.",
+      ))
     }
   }
 
@@ -218,6 +249,11 @@ mod resp3 {
         b"%?\r\n+a\r\n.\r\n",
         // a frame other than a chunk in a streamed string
         b"$?\r\n:1\r\n;0\r\n",
+        // a streamed frame with the wrong terminator
+        b"$?\r\n;3\r\nfoo\r\n.\r\n",
+        b"*?\r\n:1\r\n;0\r\n",
+        // a chunk in a streamed aggregate
+        b"*?\r\n;3\r\nfoo\r\n.\r\n",
         // chunks outside of a streamed frame
         b";3\r\nfoo\r\n",
         b".\r\n",
