@@ -1,7 +1,7 @@
 use crate::{
   error::RedisProtocolError,
   resp2::types::{OwnedFrame, RangeFrame},
-  utils::digits_in_usize,
+  utils::{digits_in_i64, digits_in_usize},
 };
 use alloc::{borrow::ToOwned, string::String, vec::Vec};
 
@@ -26,7 +26,8 @@ pub fn error_encode_len(s: &str) -> usize {
 
 pub fn integer_encode_len(i: i64, int_as_bulkstring: bool) -> usize {
   let prefix = if i < 0 { 1 } else { 0 };
-  let digits = digits_in_usize(i.unsigned_abs() as usize);
+  // count the digits as a u64, since `usize` is 32 bits on some targets
+  let digits = digits_in_i64(i) - prefix;
 
   if int_as_bulkstring {
     1 + digits_in_usize(digits + prefix) + 2 + prefix + digits + 2
@@ -43,6 +44,7 @@ pub fn build_owned_frame(buf: &[u8], frame: &RangeFrame) -> Result<OwnedFrame, R
     RangeFrame::BulkString((start, end)) => OwnedFrame::BulkString(buf[*start .. *end].to_owned()),
     RangeFrame::Integer(i) => OwnedFrame::Integer(*i),
     RangeFrame::Null => OwnedFrame::Null,
+    RangeFrame::NullArray => OwnedFrame::NullArray,
     RangeFrame::Array(frames) => {
       // FIXME is there a cleaner way to do this with results?
       let mut out = Vec::with_capacity(frames.len());
@@ -72,6 +74,7 @@ pub fn build_bytes_frame(buf: &Bytes, frame: &RangeFrame) -> Result<BytesFrame, 
     },
     RangeFrame::Integer(i) => BytesFrame::Integer(*i),
     RangeFrame::Null => BytesFrame::Null,
+    RangeFrame::NullArray => BytesFrame::NullArray,
     RangeFrame::Array(frames) => {
       // FIXME is there a cleaner way to do this with results?
       let mut out = Vec::with_capacity(frames.len());

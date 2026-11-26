@@ -1,14 +1,14 @@
 [package]
 authors = ["Alec Embke <aembke@gmail.com>"]
 description = "An implementation of the RESP2 and RESP3 protocols."
-homepage = "https://github.com/aembke/redis-protocol.rs"
 keywords = ["redis", "protocol", "RESP", "no_std"]
-license = "MIT"
+license = "MIT OR Apache-2.0"
 name = "redis-protocol"
 readme = "README.md"
 repository = "https://github.com/aembke/redis-protocol.rs"
-version = "6.0.0"
+version = "7.0.0"
 edition = "2021"
+rust-version = "1.88"
 exclude = ["fuzz", ".circleci", "benches"]
 
 [package.metadata.docs.rs]
@@ -25,33 +25,29 @@ rustdoc-args = ["--cfg", "docsrs"]
 [dependencies]
 bytes = { version = "1.1", default-features = false, optional = true }
 bytes-utils = { version = "0.1", default-features = false, optional = true }
-cookie-factory = { version = "=0.3.2", default-features = false }
 crc16 = { version = "0.4" }
-indexmap = { version = "2.2", optional = true }
-log = "0.4"
-nom = { version = "7.1", default-features = false }
-libm = { version = "0.2", optional = true }
-hashbrown = { version = "0.14", optional = true }
+memchr = { version = "2", default-features = false }
+log = { version = "0.4", optional = true }
+nom = { version = "8.0", default-features = false }
 tokio-util = { version = "0.7", features = ["codec"], optional = true }
 
 [dev-dependencies]
 rand = "0.8"
 tokio = { version = "1.36", features = ["full"] }
 pretty_env_logger = "0.5"
+log = "0.4"
 futures = "0.3"
 itertools = "0.12"
-criterion = { version = "0.4", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 
 [features]
 default = ["std", "resp2", "resp3"]
 resp2 = []
 resp3 = []
-index-map = ["indexmap"]
-bytes = ["dep:bytes", "bytes-utils"]
-decode-logs = []
-alloc = ["nom/alloc"]
-std = ["cookie-factory/default", "nom/default"]
-codec = ["tokio-util", "bytes"]
+bytes = ["dep:bytes", "dep:bytes-utils"]
+decode-logs = ["dep:log"]
+std = ["nom/std", "memchr/std"]
+codec = ["dep:tokio-util", "bytes", "std"]
 convert = []
 
 [lib]
@@ -60,18 +56,21 @@ doctest = true
 name = "redis_protocol"
 test = true
 
-#[[bench]]
-#name = "resp2_decode"
-#harness = false
+[[bench]]
+name = "decode"
+harness = false
+required-features = ["resp2", "resp3"]
 
-#[[bench]]
-#name = "resp2_encode"
-#harness = false
+[[bench]]
+name = "encode"
+harness = false
+required-features = ["resp2", "resp3"]
 
-#[[bench]]
-#name = "resp3_encode"
-#harness = false
+# compares the ways `extend_encode` could reserve space. run with `RUSTFLAGS="--cfg redis_protocol_bench"`.
+[[bench]]
+name = "reserve"
+harness = false
+required-features = ["resp2", "resp3", "bytes"]
 
-#[[bench]]
-#name = "resp3_decode"
-#harness = false
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(redis_protocol_bench)"] }

@@ -42,16 +42,34 @@ fn read_redis_username() -> String {
   read_env_var("REDIS_USERNAME").expect("Failed to read REDIS_USERNAME env")
 }
 
+/// A key that's only used by one test, so tests can run in parallel and failed runs don't leave state behind that
+/// breaks later runs.
+fn test_key(test: &str) -> String {
+  format!("redis-protocol:tests:{test}")
+}
+
+async fn resp2_del(socket: &mut Framed<TcpStream, Resp2>, key: &str) {
+  socket.send(resp2_encode_command(&format!("DEL {key}"))).await.unwrap();
+  let response = socket.next().await.unwrap().unwrap();
+  assert_eq!(response.kind(), Resp2FrameKind::Integer);
+}
+
+async fn resp3_del(socket: &mut Framed<TcpStream, Resp3>, key: &str) {
+  socket.send(resp3_encode_command(&format!("DEL {key}"))).await.unwrap();
+  let response = socket.next().await.unwrap().unwrap();
+  assert_eq!(response.kind(), Resp3FrameKind::Number);
+}
+
 async fn connect_resp2(int_as_bulkstring: bool) -> Framed<TcpStream, Resp2> {
   let addr = format!("{}:{}", read_redis_centralized_host(), read_redis_centralized_port());
-  debug!("Connecting to {}", addr);
+  debug!("Connecting to {addr}");
   let socket = TcpStream::connect(addr).await.unwrap();
   Framed::new(socket, Resp2::new(int_as_bulkstring))
 }
 
 async fn connect_resp3(int_as_blobstring: bool) -> Framed<TcpStream, Resp3> {
   let addr = format!("{}:{}", read_redis_centralized_host(), read_redis_centralized_port());
-  debug!("Connecting to {}", addr);
+  debug!("Connecting to {addr}");
   let socket = TcpStream::connect(addr).await.unwrap();
   Framed::new(socket, Resp3::new(int_as_blobstring))
 }
@@ -71,6 +89,8 @@ async fn should_use_resp2_codec_ping() {
 async fn should_use_resp2_codec_borrowed_ping_incr() {
   let _ = pretty_env_logger::try_init();
   let mut socket = connect_resp2(true).await;
+  let key = test_key("should_use_resp2_codec_borrowed_ping_incr");
+  resp2_del(&mut socket, &key).await;
 
   let inner = vec![Resp2BorrowedFrame::BulkString("PING".as_bytes())];
   let ping = Resp2BorrowedFrame::Array(&inner);
@@ -80,37 +100,41 @@ async fn should_use_resp2_codec_borrowed_ping_incr() {
 
   let inner = vec![
     Resp2BorrowedFrame::BulkString("INCRBY".as_bytes()),
-    Resp2BorrowedFrame::BulkString("baz".as_bytes()),
+    Resp2BorrowedFrame::BulkString(key.as_bytes()),
     Resp2BorrowedFrame::BulkString("2".as_bytes()),
   ];
   let incr = Resp2BorrowedFrame::Array(&inner);
   socket.send(incr).await.unwrap();
   let response = socket.next().await.unwrap().unwrap();
   assert_eq!(response, Resp2BytesFrame::Integer(2));
+
+  resp2_del(&mut socket, &key).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn should_use_resp2_codec_get_set() {
   let _ = pretty_env_logger::try_init();
   let mut socket = connect_resp2(false).await;
+  let key = test_key("should_use_resp2_codec_get_set");
+  resp2_del(&mut socket, &key).await;
 
-  let get_foo = resp2_encode_command("GET foo");
-  socket.send(get_foo).await.unwrap();
+  let get = resp2_encode_command(&format!("GET {key}"));
+  socket.send(get).await.unwrap();
   let response = socket.next().await.unwrap().unwrap();
   assert_eq!(response.kind(), Resp2FrameKind::Null);
 
-  let set_foo = resp2_encode_command("SET foo bar");
-  socket.send(set_foo).await.unwrap();
+  let set = resp2_encode_command(&format!("SET {key} bar"));
+  socket.send(set).await.unwrap();
   let response = socket.next().await.unwrap().unwrap();
   assert_eq!(response.as_str().unwrap(), "OK");
 
-  let get_foo = resp2_encode_command("GET foo");
-  socket.send(get_foo).await.unwrap();
+  let get = resp2_encode_command(&format!("GET {key}"));
+  socket.send(get).await.unwrap();
   let response = socket.next().await.unwrap().unwrap();
   assert_eq!(response.as_str().unwrap(), "bar");
 
-  let del_foo = resp2_encode_command("DEL foo");
-  socket.send(del_foo).await.unwrap();
+  let del = resp2_encode_command(&format!("DEL {key}"));
+  socket.send(del).await.unwrap();
   let response = socket.next().await.unwrap().unwrap();
   assert_eq!(response.to_string().unwrap(), "1");
 }
@@ -119,13 +143,15 @@ async fn should_use_resp2_codec_get_set() {
 async fn should_use_resp2_codec_hgetall() {
   let _ = pretty_env_logger::try_init();
   let mut socket = connect_resp2(false).await;
+  let key = test_key("should_use_resp2_codec_hgetall");
+  resp2_del(&mut socket, &key).await;
 
-  let hmset = resp2_encode_command("HMSET foo a b c d");
+  let hmset = resp2_encode_command(&format!("HMSET {key} a b c d"));
   socket.send(hmset).await.unwrap();
   let response = socket.next().await.unwrap().unwrap();
   assert_eq!(response.as_str().unwrap(), "OK");
 
-  let hgetall = resp2_encode_command("HGETALL foo");
+  let hgetall = resp2_encode_command(&format!("HGETALL {key}"));
   socket.send(hgetall).await.unwrap();
   let response = socket.next().await.unwrap().unwrap();
   assert_eq!(
@@ -138,8 +164,8 @@ async fn should_use_resp2_codec_hgetall() {
     ])
   );
 
-  let del_foo = resp2_encode_command("DEL foo");
-  socket.send(del_foo).await.unwrap();
+  let del = resp2_encode_command(&format!("DEL {key}"));
+  socket.send(del).await.unwrap();
   let response = socket.next().await.unwrap().unwrap();
   assert_eq!(response.to_string().unwrap(), "1");
 }
@@ -163,7 +189,7 @@ async fn should_use_resp3_codec_hello() {
 
   let hello = Resp3BytesFrame::Hello {
     version: RespVersion::RESP3,
-    auth:    Some((read_redis_username().into(), read_redis_password().into())),
+    auth:    Some(Box::new((read_redis_username().into(), read_redis_password().into()))),
     setname: None,
   };
   socket.send(hello).await.unwrap();
@@ -175,7 +201,7 @@ async fn should_use_resp3_codec_hello() {
 
   let hello = Resp3BytesFrame::Hello {
     version: RespVersion::RESP3,
-    auth:    Some((read_redis_username().into(), read_redis_password().into())),
+    auth:    Some(Box::new((read_redis_username().into(), read_redis_password().into()))),
     setname: Some("baz".into()),
   };
   socket.send(hello).await.unwrap();
@@ -184,6 +210,20 @@ async fn should_use_resp3_codec_hello() {
     response.kind(),
     Resp3FrameKind::SimpleError | Resp3FrameKind::BlobError
   ));
+
+  socket.send(resp3_encode_command("CLIENT GETNAME")).await.unwrap();
+  let response = socket.next().await.unwrap().unwrap();
+  assert_eq!(response.as_str().unwrap(), "baz");
+
+  // HELLO is sent as an array of blob strings, so a password with a space is one argument
+  let hello = Resp3BytesFrame::Hello {
+    version: RespVersion::RESP3,
+    auth:    Some(Box::new((read_redis_username().into(), "wrong password".into()))),
+    setname: None,
+  };
+  socket.send(hello).await.unwrap();
+  let response = socket.next().await.unwrap().unwrap();
+  assert!(response.as_str().unwrap().starts_with("WRONGPASS"), "{response:?}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -202,24 +242,26 @@ async fn should_use_resp3_codec_get_set() {
     response.kind(),
     Resp3FrameKind::SimpleError | Resp3FrameKind::BlobError
   ));
+  let key = test_key("should_use_resp3_codec_get_set");
+  resp3_del(&mut socket, &key).await;
 
-  let get_foo = resp3_encode_command("GET foo");
-  socket.send(get_foo).await.unwrap();
+  let get = resp3_encode_command(&format!("GET {key}"));
+  socket.send(get).await.unwrap();
   let response = socket.next().await.unwrap().unwrap();
   assert_eq!(response.kind(), Resp3FrameKind::Null);
 
-  let set_foo = resp3_encode_command("SET foo bar");
-  socket.send(set_foo).await.unwrap();
+  let set = resp3_encode_command(&format!("SET {key} bar"));
+  socket.send(set).await.unwrap();
   let response = socket.next().await.unwrap().unwrap();
   assert_eq!(response.as_str().unwrap(), "OK");
 
-  let get_foo = resp3_encode_command("GET foo");
-  socket.send(get_foo).await.unwrap();
+  let get = resp3_encode_command(&format!("GET {key}"));
+  socket.send(get).await.unwrap();
   let response = socket.next().await.unwrap().unwrap();
   assert_eq!(response.as_str().unwrap(), "bar");
 
-  let del_foo = resp3_encode_command("DEL foo");
-  socket.send(del_foo).await.unwrap();
+  let del = resp3_encode_command(&format!("DEL {key}"));
+  socket.send(del).await.unwrap();
   let response = socket.next().await.unwrap().unwrap();
   assert_eq!(response.to_string().unwrap(), "1");
 }
@@ -240,14 +282,16 @@ async fn should_use_resp3_codec_hgetall() {
     response.kind(),
     Resp3FrameKind::SimpleError | Resp3FrameKind::BlobError
   ));
+  let key = test_key("should_use_resp3_codec_hgetall");
+  resp3_del(&mut socket, &key).await;
 
-  let hmset = resp3_encode_command("HMSET foo a b c d");
+  let hmset = resp3_encode_command(&format!("HMSET {key} a b c d"));
   socket.send(hmset).await.unwrap();
   let response = socket.next().await.unwrap().unwrap();
   assert_eq!(response.as_str().unwrap(), "OK");
 
   let mut expected = FrameMap::new();
-  expected.insert(
+  expected.push((
     Resp3BytesFrame::BlobString {
       data:       "a".into(),
       attributes: None,
@@ -256,8 +300,8 @@ async fn should_use_resp3_codec_hgetall() {
       data:       "b".into(),
       attributes: None,
     },
-  );
-  expected.insert(
+  ));
+  expected.push((
     Resp3BytesFrame::BlobString {
       data:       "c".into(),
       attributes: None,
@@ -266,19 +310,19 @@ async fn should_use_resp3_codec_hgetall() {
       data:       "d".into(),
       attributes: None,
     },
-  );
+  ));
   let expected = Resp3BytesFrame::Map {
     data:       expected,
     attributes: None,
   };
 
-  let hgetall = resp3_encode_command("HGETALL foo");
+  let hgetall = resp3_encode_command(&format!("HGETALL {key}"));
   socket.send(hgetall).await.unwrap();
   let response = socket.next().await.unwrap().unwrap();
   assert_eq!(response, expected);
 
-  let del_foo = resp3_encode_command("DEL foo");
-  socket.send(del_foo).await.unwrap();
+  let del = resp3_encode_command(&format!("DEL {key}"));
+  socket.send(del).await.unwrap();
   let response = socket.next().await.unwrap().unwrap();
   assert_eq!(response.to_string().unwrap(), "1");
 }

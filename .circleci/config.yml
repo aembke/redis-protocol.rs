@@ -3,7 +3,7 @@ version: 2
 jobs:
   build-docs:
     docker:
-      - image: cimg/rust:1.77
+      - image: cimg/rust:1.88
     steps:
       - checkout
       - run:
@@ -26,7 +26,7 @@ jobs:
           command: source tests/environ && tests/codec/runner.sh
   tests-bytes:
     docker:
-      - image: cimg/rust:1.77
+      - image: cimg/rust:1.88
     steps:
       - checkout
       - run:
@@ -34,23 +34,23 @@ jobs:
           command: cargo test --release --features "resp2 resp3 bytes codec convert" --lib
   tests-no-bytes:
     docker:
-      - image: cimg/rust:1.77
+      - image: cimg/rust:1.88
     steps:
       - checkout
       - run:
           name: Run tests without bytes or bytes_utils
           command: cargo test --release --features "resp2 resp3 convert" --lib
-  tests-indexmap:
+  tests-no-std:
     docker:
-      - image: cimg/rust:1.77
+      - image: cimg/rust:1.88
     steps:
       - checkout
       - run:
-          name: Run tests with indexmap features
-          command: cargo test --release --features "index-map resp2 resp3 convert" --lib
+          name: Run tests without std
+          command: cargo test --release --no-default-features --features "resp2 resp3 bytes" --lib
   clippy-lint:
     docker:
-      - image: cimg/rust:1.77
+      - image: cimg/rust:1.88
     environment:
       CARGO_NET_GIT_FETCH_WITH_CLI: true
     steps:
@@ -58,21 +58,50 @@ jobs:
       - run:
           name: Clippy
           command: cargo clippy --features "bytes convert codec std resp2 resp3" --lib --tests --benches -- -Dwarnings
+      - run:
+          name: Clippy with all features
+          command: cargo clippy --all-features --lib --tests --benches -- -Dwarnings
+      - run:
+          name: Clippy without std
+          command: cargo clippy --no-default-features --features "resp2 resp3 convert bytes" --lib -- -Dwarnings
   build-no-std:
     docker:
-      - image: cimg/rust:1.77
+      - image: cimg/rust:1.88
     steps:
       - checkout
-      - run:
-          name: Switch to nightly for using unstable feature avoid-dev-deps
-          command: rustup default nightly
       - run:
           name: Add cross compile target
           command: rustup target add thumbv7m-none-eabi
       - run:
           name: Verifies successful build for no_std target
-          command: cargo clean && cargo build -Z avoid-dev-deps --release --no-default-features --features resp2,resp3,convert,libm,hashbrown,alloc --target=thumbv7m-none-eabi
-
+          command: cargo build --release --no-default-features --features resp2,resp3,convert,bytes --target=thumbv7m-none-eabi
+  tests-doc:
+    docker:
+      - image: cimg/rust:1.88
+    steps:
+      - checkout
+      - run:
+          name: Run doc tests
+          command: cargo test --doc --all-features
+  check-features:
+    docker:
+      - image: cimg/rust:1.88
+    steps:
+      - checkout
+      - run:
+          name: Install cargo-hack
+          command: curl -LsSf https://github.com/taiki-e/cargo-hack/releases/latest/download/cargo-hack-x86_64-unknown-linux-gnu.tar.gz | tar xzf - -C ~/.cargo/bin
+      - run:
+          name: Check feature combinations
+          command: cargo hack check --feature-powerset --no-dev-deps --exclude-features default --at-least-one-of resp2,resp3
+  check-fuzz:
+    docker:
+      - image: cimg/rust:1.88
+    steps:
+      - checkout
+      - run:
+          name: Check fuzz targets
+          command: cd fuzz && cargo check --bins
 
 workflows:
   version: 2
@@ -81,7 +110,10 @@ workflows:
       - tests-bytes
       - tests-no-bytes
       - tests-codec
-      - tests-indexmap
+      - tests-no-std
       - build-no-std
       - clippy-lint
       - build-docs
+      - tests-doc
+      - check-features
+      - check-fuzz

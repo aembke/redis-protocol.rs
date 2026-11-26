@@ -5,6 +5,7 @@ use crate::{
   utils,
 };
 use alloc::{
+  boxed::Box,
   collections::VecDeque,
   format,
   string::{String, ToString},
@@ -23,13 +24,6 @@ use crate::convert::FromResp3;
 use bytes::{Bytes, BytesMut};
 #[cfg(feature = "bytes")]
 use bytes_utils::Str;
-
-#[cfg(feature = "hashbrown")]
-use hashbrown::{HashMap, HashSet};
-#[cfg(feature = "index-map")]
-use indexmap::{IndexMap, IndexSet};
-#[cfg(feature = "std")]
-use std::collections::{HashMap, HashSet};
 
 /// Byte prefix before a simple string type.
 pub const SIMPLE_STRING_BYTE: u8 = b'+';
@@ -98,22 +92,14 @@ pub const AUTH: &str = "AUTH";
 /// Byte representation of `SETNAME`.
 pub const SETNAME: &str = "SETNAME";
 
-/// A map struct for frames that uses either `indexmap::IndexMap`, `hashbrown::HashMap`, or
-/// `std::collections::HashMap` depending on the enabled feature flags.
-#[cfg(not(feature = "index-map"))]
-pub type FrameMap<K, V> = HashMap<K, V>;
-/// A map struct for frames that uses either `indexmap::IndexSet`, `hashbrown::HashSet`, or
-/// `std::collections::HashSet` depending on the enabled feature flags.
-#[cfg(not(feature = "index-map"))]
-pub type FrameSet<T> = HashSet<T>;
-/// A map struct for frames that uses either `indexmap::IndexMap`, `hashbrown::HashMap`, or
-/// `std::collections::HashMap` depending on the enabled feature flags.
-#[cfg(feature = "index-map")]
-pub type FrameMap<K, V> = IndexMap<K, V>;
-/// A map struct for frames that uses either `indexmap::IndexSet`, `hashbrown::HashSet`, or
-/// `std::collections::HashSet` depending on the enabled feature flags.
-#[cfg(feature = "index-map")]
-pub type FrameSet<T> = IndexSet<T>;
+/// The type of map frames' contents: key-value pairs in the order they were received.
+///
+/// Duplicate keys are kept. Converting a frame to a map type, such as `HashMap`, keeps the last value for each key.
+pub type FrameMap<K, V> = Vec<(K, V)>;
+/// The type of set frames' contents: the members in the order they were received.
+///
+/// Duplicate members are kept.
+pub type FrameSet<T> = Vec<T>;
 
 /// Additional information returned alongside a [BytesFrame].
 #[cfg(feature = "bytes")]
@@ -121,11 +107,12 @@ pub type FrameSet<T> = IndexSet<T>;
 pub type BytesAttributes = FrameMap<BytesFrame, BytesFrame>;
 /// Additional information returned alongside an [OwnedFrame].
 pub type OwnedAttributes = FrameMap<OwnedFrame, OwnedFrame>;
-/// Additional information returned alongside an [RangeFrame].
-pub type RangeAttributes = FrameMap<RangeFrame, RangeFrame>;
+/// Additional information returned alongside a [RangeFrame], as key-value pairs in the order they were received.
+pub type RangeAttributes = Vec<(RangeFrame, RangeFrame)>;
 
 /// The RESP version used in the `HELLO` request.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[non_exhaustive]
 pub enum RespVersion {
   RESP2,
   RESP3,
@@ -141,31 +128,55 @@ impl RespVersion {
 }
 
 /// The format of a verbatim string frame.
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+///
+/// The format is any 3 bytes. Redis uses `txt` and `mkd`, which decode as `Text` and `Markdown`, and anything else
+/// decodes as `Other`. Use [from_bytes](Self::from_bytes) to build a format from bytes, so that `txt` and `mkd`
+/// always use the named variants and compare equal to decoded frames.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[non_exhaustive]
 pub enum VerbatimStringFormat {
+  /// `txt`
   Text,
+  /// `mkd`
   Markdown,
+  /// Any other format.
+  Other([u8; 3]),
 }
 
 impl VerbatimStringFormat {
-  pub(crate) fn to_str(&self) -> &'static str {
-    match *self {
-      VerbatimStringFormat::Text => "txt",
-      VerbatimStringFormat::Markdown => "mkd",
+  /// Create a format from its 3 byte encoding, using `Text` or `Markdown` for `txt` or `mkd`.
+  pub const fn from_bytes(bytes: [u8; 3]) -> Self {
+    match &bytes {
+      b"txt" => VerbatimStringFormat::Text,
+      b"mkd" => VerbatimStringFormat::Markdown,
+      _ => VerbatimStringFormat::Other(bytes),
+    }
+  }
+
+  /// Read the 3 byte encoding of the format.
+  pub const fn as_bytes(&self) -> &[u8; 3] {
+    match self {
+      VerbatimStringFormat::Text => b"txt",
+      VerbatimStringFormat::Markdown => b"mkd",
+      VerbatimStringFormat::Other(bytes) => bytes,
     }
   }
 
   pub(crate) fn encode_len(&self) -> usize {
-    match *self {
-      // the trailing colon is included here
-      VerbatimStringFormat::Text => 4,
-      VerbatimStringFormat::Markdown => 4,
-    }
+    // the format and the trailing colon
+    4
+  }
+}
+
+impl From<[u8; 3]> for VerbatimStringFormat {
+  fn from(bytes: [u8; 3]) -> Self {
+    VerbatimStringFormat::from_bytes(bytes)
   }
 }
 
 /// The type of frame without any associated data.
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Copy)]
+#[non_exhaustive]
 pub enum FrameKind {
   Array,
   BlobString,
@@ -188,6 +199,11 @@ pub enum FrameKind {
 }
 
 impl FrameKind {
+  /// Whether the frame is an error.
+  pub fn is_error(&self) -> bool {
+    matches!(self, FrameKind::SimpleError | FrameKind::BlobError)
+  }
+
   /// Whether the frame is an aggregate type (array, set, map).
   pub fn is_aggregate_type(&self) -> bool {
     matches!(self, FrameKind::Array | FrameKind::Set | FrameKind::Map)
@@ -198,28 +214,6 @@ impl FrameKind {
     matches!(
       self,
       FrameKind::Array | FrameKind::Set | FrameKind::Map | FrameKind::BlobString
-    )
-  }
-
-  /// Whether the frame can be used as a key in a `HashMap` or `HashSet`.
-  ///
-  /// Not all frame types can be hashed, and trying to do so can panic. This function can be used to handle this
-  /// gracefully.
-  pub fn can_hash(&self) -> bool {
-    matches!(
-      self,
-      FrameKind::BlobString
-        | FrameKind::BlobError
-        | FrameKind::SimpleString
-        | FrameKind::SimpleError
-        | FrameKind::Number
-        | FrameKind::Double
-        | FrameKind::Boolean
-        | FrameKind::Null
-        | FrameKind::ChunkedString
-        | FrameKind::EndStream
-        | FrameKind::VerbatimString
-        | FrameKind::BigNumber
     )
   }
 
@@ -304,6 +298,7 @@ impl FrameKind {
 
 /// A borrowed attributes type, typically used with `BorrowedFrame` for encoding use cases.
 #[derive(Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum BorrowedAttrs<'a> {
   Owned(&'a OwnedAttributes),
   #[cfg(feature = "bytes")]
@@ -341,8 +336,178 @@ impl<'a> From<&'a BytesAttributes> for BorrowedAttrs<'a> {
   }
 }
 
+/// Compare doubles such that equality agrees with [hash_f64](resp3_utils::hash_f64): `-0.0 == 0.0` and NaN values
+/// with the same bit pattern are equal. This keeps the `Eq` and `Hash` impls on frames consistent.
+#[inline]
+fn f64_frame_eq(lhs: f64, rhs: f64) -> bool {
+  let normalize = |f: f64| if f == 0.0 { 0.0_f64 } else { f };
+  normalize(lhs).to_bits() == normalize(rhs).to_bits()
+}
+
+/// Implement `PartialEq` for a frame type, comparing doubles with [f64_frame_eq].
+///
+/// All frame types share the same variant and field names.
+macro_rules! impl_frame_eq {
+  ($t:ty) => {
+    impl PartialEq for $t {
+      fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+          (
+            Self::BlobString {
+              data: l,
+              attributes: la,
+            },
+            Self::BlobString {
+              data: r,
+              attributes: ra,
+            },
+          )
+          | (
+            Self::BlobError {
+              data: l,
+              attributes: la,
+            },
+            Self::BlobError {
+              data: r,
+              attributes: ra,
+            },
+          )
+          | (
+            Self::SimpleString {
+              data: l,
+              attributes: la,
+            },
+            Self::SimpleString {
+              data: r,
+              attributes: ra,
+            },
+          )
+          | (
+            Self::BigNumber {
+              data: l,
+              attributes: la,
+            },
+            Self::BigNumber {
+              data: r,
+              attributes: ra,
+            },
+          ) => l == r && la == ra,
+          (
+            Self::SimpleError {
+              data: l,
+              attributes: la,
+            },
+            Self::SimpleError {
+              data: r,
+              attributes: ra,
+            },
+          ) => l == r && la == ra,
+          (
+            Self::Boolean {
+              data: l,
+              attributes: la,
+            },
+            Self::Boolean {
+              data: r,
+              attributes: ra,
+            },
+          ) => l == r && la == ra,
+          (Self::Null, Self::Null) => true,
+          (
+            Self::Number {
+              data: l,
+              attributes: la,
+            },
+            Self::Number {
+              data: r,
+              attributes: ra,
+            },
+          ) => l == r && la == ra,
+          (
+            Self::Double {
+              data: l,
+              attributes: la,
+            },
+            Self::Double {
+              data: r,
+              attributes: ra,
+            },
+          ) => f64_frame_eq(*l, *r) && la == ra,
+          (
+            Self::VerbatimString {
+              data: l,
+              format: lf,
+              attributes: la,
+            },
+            Self::VerbatimString {
+              data: r,
+              format: rf,
+              attributes: ra,
+            },
+          ) => l == r && lf == rf && la == ra,
+          (
+            Self::Array {
+              data: l,
+              attributes: la,
+            },
+            Self::Array {
+              data: r,
+              attributes: ra,
+            },
+          )
+          | (
+            Self::Push {
+              data: l,
+              attributes: la,
+            },
+            Self::Push {
+              data: r,
+              attributes: ra,
+            },
+          ) => l == r && la == ra,
+          (
+            Self::Map {
+              data: l,
+              attributes: la,
+            },
+            Self::Map {
+              data: r,
+              attributes: ra,
+            },
+          ) => l == r && la == ra,
+          (
+            Self::Set {
+              data: l,
+              attributes: la,
+            },
+            Self::Set {
+              data: r,
+              attributes: ra,
+            },
+          ) => l == r && la == ra,
+          (
+            Self::Hello {
+              version: lv,
+              auth: la,
+              setname: ls,
+            },
+            Self::Hello {
+              version: rv,
+              auth: ra,
+              setname: rs,
+            },
+          ) => lv == rv && la == ra && ls == rs,
+          (Self::ChunkedString(l), Self::ChunkedString(r)) => l == r,
+          _ => false,
+        }
+      }
+    }
+  };
+}
+
 /// A borrowed frame variant, typically used for encoding use cases.
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
+#[non_exhaustive]
 pub enum BorrowedFrame<'a> {
   /// A blob of bytes.
   BlobString {
@@ -397,14 +562,14 @@ pub enum BorrowedFrame<'a> {
     data:       &'a [BorrowedFrame<'a>],
     attributes: Option<BorrowedAttrs<'a>>,
   },
-  /// An unordered map of key-value pairs.
+  /// A map of key-value pairs, in the order they're encoded.
   Map {
-    data:       &'a FrameMap<BorrowedFrame<'a>, BorrowedFrame<'a>>,
+    data:       &'a [(BorrowedFrame<'a>, BorrowedFrame<'a>)],
     attributes: Option<BorrowedAttrs<'a>>,
   },
-  /// An unordered collection of other frames with a uniqueness constraint.
+  /// A collection of frames, in the order they're encoded.
   Set {
-    data:       &'a FrameSet<BorrowedFrame<'a>>,
+    data:       &'a [BorrowedFrame<'a>],
     attributes: Option<BorrowedAttrs<'a>>,
   },
   /// Out-of-band data.
@@ -414,6 +579,9 @@ pub enum BorrowedFrame<'a> {
   },
   /// A special frame type used when first connecting to the server to describe the protocol version and optional
   /// credentials.
+  ///
+  /// This is encoded as a command, an array of blob strings. The decoder parses the inline form, such as
+  /// `HELLO 3 AUTH foo bar`, so an encoded `Hello` frame decodes as an array.
   Hello {
     version: RespVersion,
     auth:    Option<(&'a str, &'a str)>,
@@ -479,7 +647,7 @@ impl<'a> Clone for BorrowedFrame<'a> {
         attributes,
       } => VerbatimString {
         data,
-        format: format.clone(),
+        format: *format,
         attributes: attributes.clone(),
       },
       ChunkedString(data) => ChunkedString(data),
@@ -488,7 +656,7 @@ impl<'a> Clone for BorrowedFrame<'a> {
         attributes: attributes.clone(),
       },
       Hello { auth, setname, version } => Hello {
-        version: version.clone(),
+        version: *version,
         setname: *setname,
         auth:    *auth,
       },
@@ -496,9 +664,10 @@ impl<'a> Clone for BorrowedFrame<'a> {
   }
 }
 
+impl_frame_eq!(BorrowedFrame<'_>);
 impl Eq for BorrowedFrame<'_> {}
 
-impl<'a> Hash for BorrowedFrame<'a> {
+impl Hash for BorrowedFrame<'_> {
   fn hash<H: Hasher>(&self, state: &mut H) {
     use self::BorrowedFrame::*;
     self.kind().hash_prefix().hash(state);
@@ -509,7 +678,7 @@ impl<'a> Hash for BorrowedFrame<'a> {
       SimpleError { data, .. } => data.hash(state),
       Number { data, .. } => data.hash(state),
       Null => NULL.hash(state),
-      Double { data, .. } => data.to_string().hash(state),
+      Double { data, .. } => resp3_utils::hash_f64(state, *data),
       Boolean { data, .. } => data.hash(state),
       BlobError { data, .. } => data.hash(state),
       VerbatimString { data, format, .. } => {
@@ -518,12 +687,18 @@ impl<'a> Hash for BorrowedFrame<'a> {
       },
       ChunkedString(data) => data.hash(state),
       BigNumber { data, .. } => data.hash(state),
-      _ => panic!("Invalid RESP3 data type to use as hash key."),
+      Array { data, .. } | Push { data, .. } | Set { data, .. } => data.hash(state),
+      Map { data, .. } => data.hash(state),
+      Hello { version, auth, setname } => {
+        version.hash(state);
+        auth.hash(state);
+        setname.hash(state);
+      },
     };
   }
 }
 
-impl<'a> BorrowedFrame<'a> {
+impl BorrowedFrame<'_> {
   /// Read the `FrameKind` value for this frame.
   pub fn kind(&self) -> FrameKind {
     match self {
@@ -560,91 +735,120 @@ impl<'a> BorrowedFrame<'a> {
 
 /// A reference-free frame type representing ranges into an associated buffer, typically used to implement zero-copy
 /// parsing.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
+#[non_exhaustive]
 pub enum RangeFrame {
   /// A blob of bytes.
   BlobString {
     data:       _Range,
-    attributes: Option<RangeAttributes>,
+    attributes: Option<Box<RangeAttributes>>,
   },
   /// A blob representing an error.
   BlobError {
     data:       _Range,
-    attributes: Option<RangeAttributes>,
+    attributes: Option<Box<RangeAttributes>>,
   },
   /// A small string.
   SimpleString {
     data:       _Range,
-    attributes: Option<RangeAttributes>,
+    attributes: Option<Box<RangeAttributes>>,
   },
   /// A small string representing an error.
   SimpleError {
     data:       _Range,
-    attributes: Option<RangeAttributes>,
+    attributes: Option<Box<RangeAttributes>>,
   },
   /// A boolean type.
   Boolean {
     data:       bool,
-    attributes: Option<RangeAttributes>,
+    attributes: Option<Box<RangeAttributes>>,
   },
   /// A null type.
   Null,
   /// A signed 64-bit integer.
   Number {
     data:       i64,
-    attributes: Option<RangeAttributes>,
+    attributes: Option<Box<RangeAttributes>>,
   },
   /// A signed 64-bit floating point number.
   Double {
     data:       f64,
-    attributes: Option<RangeAttributes>,
+    attributes: Option<Box<RangeAttributes>>,
   },
   /// A large number not representable as a `Number` or `Double`.
   BigNumber {
     data:       _Range,
-    attributes: Option<RangeAttributes>,
+    attributes: Option<Box<RangeAttributes>>,
   },
   /// A string to be displayed without any escaping or filtering.
   VerbatimString {
     data:       _Range,
     format:     VerbatimStringFormat,
-    attributes: Option<RangeAttributes>,
+    attributes: Option<Box<RangeAttributes>>,
   },
   /// An array of frames.
   Array {
     data:       Vec<RangeFrame>,
-    attributes: Option<RangeAttributes>,
+    attributes: Option<Box<RangeAttributes>>,
   },
-  /// An unordered map of key-value pairs.
+  /// A map of key-value pairs, in the order they were received.
   Map {
-    data:       FrameMap<RangeFrame, RangeFrame>,
-    attributes: Option<RangeAttributes>,
+    data:       Vec<(RangeFrame, RangeFrame)>,
+    attributes: Option<Box<RangeAttributes>>,
   },
-  /// An unordered collection of other frames with a uniqueness constraint.
+  /// A collection of frames, in the order they were received.
   Set {
-    data:       FrameSet<RangeFrame>,
-    attributes: Option<RangeAttributes>,
+    data:       Vec<RangeFrame>,
+    attributes: Option<Box<RangeAttributes>>,
   },
   /// Out-of-band data.
   Push {
     data:       Vec<RangeFrame>,
-    attributes: Option<RangeAttributes>,
+    attributes: Option<Box<RangeAttributes>>,
   },
   /// A special frame type used when first connecting to the server to describe the protocol version and optional
   /// credentials.
+  ///
+  /// This is encoded as a command, an array of blob strings. The decoder parses the inline form, such as
+  /// `HELLO 3 AUTH foo bar`, so an encoded `Hello` frame decodes as an array.
   Hello {
-    version:  RespVersion,
-    username: Option<_Range>,
-    password: Option<_Range>,
-    setname:  Option<_Range>,
+    version: RespVersion,
+    /// The username and password ranges.
+    auth:    Option<Box<(_Range, _Range)>>,
+    setname: Option<_Range>,
   },
   /// One chunk of a streaming blob.
   ChunkedString(_Range),
 }
 
+impl_frame_eq!(RangeFrame);
 impl Eq for RangeFrame {}
 
 impl RangeFrame {
+  /// Build an [OwnedFrame] from the buffer this frame was decoded from.
+  ///
+  /// This copies the contents of each frame out of `buf`, which must be the buffer passed to `decode_range`.
+  ///
+  /// # Panics
+  ///
+  /// Panics if `buf` is shorter than the ranges in the frame.
+  pub fn to_owned_frame(&self, buf: &[u8]) -> Result<OwnedFrame, RedisProtocolError> {
+    crate::resp3::utils::build_owned_frame(buf, self)
+  }
+
+  /// Build a [BytesFrame] from the buffer this frame was decoded from, without copying the contents of each frame.
+  ///
+  /// `buf` must contain the same bytes that were passed to `decode_range`.
+  ///
+  /// # Panics
+  ///
+  /// Panics if `buf` is shorter than the ranges in the frame.
+  #[cfg(feature = "bytes")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
+  pub fn to_bytes_frame(&self, buf: &Bytes) -> Result<BytesFrame, RedisProtocolError> {
+    crate::resp3::utils::build_bytes_frame(buf, self)
+  }
+
   /// Read the associated `FrameKind`.
   pub fn kind(&self) -> FrameKind {
     match self {
@@ -724,7 +928,7 @@ impl RangeFrame {
     if let Some(_attributes) = _attributes.as_mut() {
       _attributes.extend(attributes);
     } else {
-      *_attributes = Some(attributes);
+      *_attributes = Some(Box::new(attributes));
     }
 
     Ok(())
@@ -746,7 +950,7 @@ impl Hash for RangeFrame {
       SimpleError { data, .. } => resp3_utils::hash_tuple(state, data),
       Number { data, .. } => data.hash(state),
       Null => NULL.hash(state),
-      Double { data, .. } => data.to_string().hash(state),
+      Double { data, .. } => resp3_utils::hash_f64(state, *data),
       Boolean { data, .. } => data.hash(state),
       BlobError { data, .. } => resp3_utils::hash_tuple(state, data),
       VerbatimString { data, format, .. } => {
@@ -755,17 +959,23 @@ impl Hash for RangeFrame {
       },
       ChunkedString(data) => resp3_utils::hash_tuple(state, data),
       BigNumber { data, .. } => resp3_utils::hash_tuple(state, data),
-      _ => panic!("Invalid RESP3 data type to use as hash key."),
+      Array { data, .. } | Push { data, .. } | Set { data, .. } => data.hash(state),
+      Map { data, .. } => data.hash(state),
+      Hello { version, auth, setname } => {
+        version.hash(state);
+        auth.hash(state);
+        setname.hash(state);
+      },
     };
   }
 }
 
 /// A frame type representing ranges into an associated buffer that contains the starting portion of a streaming
 /// frame.
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct StreamedRangeFrame {
   pub kind:       FrameKind,
-  pub attributes: Option<RangeAttributes>,
+  pub attributes: Option<Box<RangeAttributes>>,
 }
 
 impl StreamedRangeFrame {
@@ -779,14 +989,14 @@ impl StreamedRangeFrame {
     if let Some(_attributes) = self.attributes.as_mut() {
       _attributes.extend(attributes);
     } else {
-      self.attributes = Some(attributes);
+      self.attributes = Some(Box::new(attributes));
     }
   }
 }
 
 /// A reference-free frame type representing ranges into an associated buffer, typically used to implement zero-copy
 /// parsing.
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum DecodedRangeFrame {
   Complete(RangeFrame),
   Streaming(StreamedRangeFrame),
@@ -813,6 +1023,24 @@ impl DecodedRangeFrame {
         "Expected complete frame.",
       )),
     }
+  }
+}
+
+/// Check the frames buffered from a streamed aggregate before building the aggregate, since the decoder parses each
+/// element separately.
+fn check_streamed_aggregate<T: Resp3Frame>(target: FrameKind, data: &[T]) -> Result<(), RedisProtocolError> {
+  let error = |details: &'static str| Err(RedisProtocolError::new(RedisProtocolErrorKind::DecodeError, details));
+
+  if data
+    .iter()
+    .any(|frame| matches!(frame.kind(), FrameKind::ChunkedString | FrameKind::EndStream))
+  {
+    return error("Unexpected chunked string in streamed aggregate.");
+  }
+  if target == FrameKind::Map && data.len() % 2 != 0 {
+    error("Streamed map has an odd number of elements.")
+  } else {
+    Ok(())
   }
 }
 
@@ -897,8 +1125,11 @@ pub trait Resp3Frame: Debug + Hash + Eq + Sized {
   }
 
   /// Convert the frame to a double.
+  ///
+  /// Numbers are cast to a double and strings are parsed with [str_to_f64](crate::str_to_f64), which supports
+  /// `inf`, `-inf`, and `nan`.
   fn as_f64(&self) -> Option<f64> {
-    self.as_str().and_then(|s| s.parse::<f64>().ok())
+    self.as_str().and_then(|s| utils::str_to_f64(s).ok())
   }
 
   /// Convert the frame to another type.
@@ -917,9 +1148,7 @@ pub trait Resp3Frame: Debug + Hash + Eq + Sized {
   #[cfg_attr(docsrs, doc(cfg(feature = "convert")))]
   fn is_single_element_vec(&self) -> bool;
 
-  /// Pop an element from the inner array or return the original frame.
-  ///
-  /// This function is intended to be used with [Self::is_single_element_vec] and may panic.
+  /// Return the only element of a single-element array or push frame, or the original frame otherwise.
   #[cfg(feature = "convert")]
   #[cfg_attr(docsrs, doc(cfg(feature = "convert")))]
   fn pop_or_take(self) -> Self;
@@ -928,17 +1157,18 @@ pub trait Resp3Frame: Debug + Hash + Eq + Sized {
 /// An enum describing a RESP3 frame that uses owned byte containers.
 ///
 /// <https://github.com/antirez/RESP3/blob/master/spec.md>
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
+#[non_exhaustive]
 pub enum OwnedFrame {
   /// A blob of bytes.
   BlobString {
     data:       Vec<u8>,
-    attributes: Option<OwnedAttributes>,
+    attributes: Option<Box<OwnedAttributes>>,
   },
   /// A blob representing an error.
   BlobError {
     data:       Vec<u8>,
-    attributes: Option<OwnedAttributes>,
+    attributes: Option<Box<OwnedAttributes>>,
   },
   /// A small string.
   ///
@@ -946,78 +1176,83 @@ pub enum OwnedFrame {
   /// stream.
   SimpleString {
     data:       Vec<u8>,
-    attributes: Option<OwnedAttributes>,
+    attributes: Option<Box<OwnedAttributes>>,
   },
   /// A small string representing an error.
   SimpleError {
     data:       String,
-    attributes: Option<OwnedAttributes>,
+    attributes: Option<Box<OwnedAttributes>>,
   },
   /// A boolean type.
   Boolean {
     data:       bool,
-    attributes: Option<OwnedAttributes>,
+    attributes: Option<Box<OwnedAttributes>>,
   },
   /// A null type.
   Null,
   /// A signed 64-bit integer.
   Number {
     data:       i64,
-    attributes: Option<OwnedAttributes>,
+    attributes: Option<Box<OwnedAttributes>>,
   },
   /// A signed 64-bit floating point number.
   Double {
     data:       f64,
-    attributes: Option<OwnedAttributes>,
+    attributes: Option<Box<OwnedAttributes>>,
   },
   /// A large number not representable as a `Number` or `Double`.
   ///
   /// This library does not attempt to parse this.
   BigNumber {
     data:       Vec<u8>,
-    attributes: Option<OwnedAttributes>,
+    attributes: Option<Box<OwnedAttributes>>,
   },
   /// A string to be displayed without any escaping or filtering.
   VerbatimString {
     data:       Vec<u8>,
     format:     VerbatimStringFormat,
-    attributes: Option<OwnedAttributes>,
+    attributes: Option<Box<OwnedAttributes>>,
   },
   /// An array of frames.
   Array {
     data:       Vec<OwnedFrame>,
-    attributes: Option<OwnedAttributes>,
+    attributes: Option<Box<OwnedAttributes>>,
   },
-  /// An unordered map of key-value pairs.
+  /// A map of key-value pairs, in the order they were received.
   ///
-  /// According to the spec keys can be any other RESP3 data type. However, it doesn't make sense to implement `Hash`
-  /// for certain aggregate types. The [can_hash](crate::resp3::types::FrameKind::can_hash) function can be used to
-  /// detect this.
+  /// Keys can be any frame type, and duplicate keys are kept. See [FrameMap].
   Map {
     data:       FrameMap<OwnedFrame, OwnedFrame>,
-    attributes: Option<OwnedAttributes>,
+    attributes: Option<Box<OwnedAttributes>>,
   },
-  /// An unordered collection of other frames with a uniqueness constraint.
+  /// A collection of frames, in the order they were received.
+  ///
+  /// Members can be any frame type, and duplicates are kept. See [FrameSet].
   Set {
     data:       FrameSet<OwnedFrame>,
-    attributes: Option<OwnedAttributes>,
+    attributes: Option<Box<OwnedAttributes>>,
   },
   /// Out-of-band data.
   Push {
     data:       Vec<OwnedFrame>,
-    attributes: Option<OwnedAttributes>,
+    attributes: Option<Box<OwnedAttributes>>,
   },
   /// A special frame type used when first connecting to the server to describe the protocol version and optional
   /// credentials.
+  ///
+  /// This is encoded as a command, an array of blob strings. The decoder parses the inline form, such as
+  /// `HELLO 3 AUTH foo bar`, so an encoded `Hello` frame decodes as an array.
   Hello {
     version: RespVersion,
-    auth:    Option<(String, String)>,
+    /// The username and password.
+    auth:    Option<Box<(String, String)>>,
     setname: Option<String>,
   },
   /// One chunk of a streaming blob.
   ChunkedString(Vec<u8>),
 }
 
+impl_frame_eq!(OwnedFrame);
 impl Eq for OwnedFrame {}
 
 impl Hash for OwnedFrame {
@@ -1031,7 +1266,7 @@ impl Hash for OwnedFrame {
       SimpleError { data, .. } => data.hash(state),
       Number { data, .. } => data.hash(state),
       Null => NULL.hash(state),
-      Double { data, .. } => data.to_string().hash(state),
+      Double { data, .. } => resp3_utils::hash_f64(state, *data),
       Boolean { data, .. } => data.hash(state),
       BlobError { data, .. } => data.hash(state),
       VerbatimString { data, format, .. } => {
@@ -1040,7 +1275,13 @@ impl Hash for OwnedFrame {
       },
       ChunkedString(data) => data.hash(state),
       BigNumber { data, .. } => data.hash(state),
-      _ => panic!("Invalid RESP3 data type to use as hash key."),
+      Array { data, .. } | Push { data, .. } | Set { data, .. } => data.hash(state),
+      Map { data, .. } => data.hash(state),
+      Hello { version, auth, setname } => {
+        version.hash(state);
+        auth.hash(state);
+        setname.hash(state);
+      },
     };
   }
 }
@@ -1054,6 +1295,7 @@ impl Resp3Frame for OwnedFrame {
     attributes: Option<Self::Attributes>,
   ) -> Result<Self, RedisProtocolError> {
     let mut data: Vec<_> = buf.into_iter().collect();
+    let attributes = attributes.map(Box::new);
 
     Ok(match target {
       FrameKind::BlobString => {
@@ -1074,18 +1316,27 @@ impl Resp3Frame for OwnedFrame {
 
         OwnedFrame::BlobString { data: buf, attributes }
       },
-      FrameKind::Map => OwnedFrame::Map {
-        attributes,
-        data: data
-          .chunks_exact_mut(2)
-          .map(|chunk| (chunk[0].take(), chunk[1].take()))
-          .collect(),
+      FrameKind::Map => {
+        check_streamed_aggregate(target, &data)?;
+        OwnedFrame::Map {
+          attributes,
+          data: data
+            .chunks_exact_mut(2)
+            .map(|chunk| (chunk[0].take(), chunk[1].take()))
+            .collect(),
+        }
       },
-      FrameKind::Set => OwnedFrame::Set {
-        attributes,
-        data: data.into_iter().collect(),
+      FrameKind::Set => {
+        check_streamed_aggregate(target, &data)?;
+        OwnedFrame::Set {
+          attributes,
+          data: data.into_iter().collect(),
+        }
       },
-      FrameKind::Array => OwnedFrame::Array { attributes, data },
+      FrameKind::Array => {
+        check_streamed_aggregate(target, &data)?;
+        OwnedFrame::Array { attributes, data }
+      },
       _ => {
         return Err(RedisProtocolError::new(
           RedisProtocolErrorKind::DecodeError,
@@ -1121,7 +1372,7 @@ impl Resp3Frame for OwnedFrame {
     if let Some(_attributes) = _attributes.as_mut() {
       _attributes.extend(attributes);
     } else {
-      *_attributes = Some(attributes);
+      *_attributes = Some(Box::new(attributes));
     }
 
     Ok(())
@@ -1145,7 +1396,7 @@ impl Resp3Frame for OwnedFrame {
       OwnedFrame::Null | OwnedFrame::ChunkedString(_) | OwnedFrame::Hello { .. } => return None,
     };
 
-    attributes.as_ref()
+    attributes.as_deref()
   }
 
   fn attributes_mut(&mut self) -> Option<&mut Self::Attributes> {
@@ -1166,7 +1417,7 @@ impl Resp3Frame for OwnedFrame {
       OwnedFrame::Null | OwnedFrame::ChunkedString(_) | OwnedFrame::Hello { .. } => return None,
     };
 
-    attributes.as_mut()
+    attributes.as_deref_mut()
   }
 
   fn take_attributes(&mut self) -> Option<Self::Attributes> {
@@ -1187,7 +1438,7 @@ impl Resp3Frame for OwnedFrame {
       OwnedFrame::Null | OwnedFrame::ChunkedString(_) | OwnedFrame::Hello { .. } => return None,
     };
 
-    attributes.take()
+    attributes.take().map(|attributes| *attributes)
   }
 
   fn new_end_stream() -> Self {
@@ -1289,7 +1540,16 @@ impl Resp3Frame for OwnedFrame {
         1 => Some(true),
         _ => None,
       },
+      OwnedFrame::Null => Some(false),
       _ => None,
+    }
+  }
+
+  fn as_f64(&self) -> Option<f64> {
+    match self {
+      OwnedFrame::Double { data, .. } => Some(*data),
+      OwnedFrame::Number { data, .. } => Some(*data as f64),
+      _ => self.as_str().and_then(|s| utils::str_to_f64(s).ok()),
     }
   }
 
@@ -1302,7 +1562,9 @@ impl Resp3Frame for OwnedFrame {
       | OwnedFrame::BigNumber { data, .. } => String::from_utf8(data.to_vec()).ok(),
       OwnedFrame::VerbatimString { data, .. } => String::from_utf8(data.to_vec()).ok(),
       OwnedFrame::ChunkedString(b) => String::from_utf8(b.to_vec()).ok(),
-      OwnedFrame::Double { data, .. } => Some(data.to_string()),
+      OwnedFrame::Double { data, .. } => Some(resp3_utils::with_f64_str(*data, |s| {
+        s.iter().map(|b| *b as char).collect()
+      })),
       OwnedFrame::Number { data, .. } => Some(data.to_string()),
       _ => None,
     }
@@ -1380,13 +1642,29 @@ impl Resp3Frame for OwnedFrame {
   #[cfg_attr(docsrs, doc(cfg(feature = "convert")))]
   fn pop_or_take(self) -> Self {
     match self {
-      OwnedFrame::Array { mut data, .. } | OwnedFrame::Push { mut data, .. } => data.pop().unwrap(),
+      OwnedFrame::Array { mut data, .. } | OwnedFrame::Push { mut data, .. } if data.len() == 1 => {
+        data.swap_remove(0)
+      },
       _ => self,
     }
   }
 }
 
 impl OwnedFrame {
+  /// Create a `HELLO` frame.
+  ///
+  /// ```rust
+  /// # use redis_protocol::resp3::types::{OwnedFrame, RespVersion};
+  /// let hello = OwnedFrame::hello(RespVersion::RESP3, Some(("foo", "bar")), Some("my-client"));
+  /// ```
+  pub fn hello<S: Into<String>>(version: RespVersion, auth: Option<(S, S)>, setname: Option<S>) -> Self {
+    OwnedFrame::Hello {
+      version,
+      auth: auth.map(|(username, password)| Box::new((username.into(), password.into()))),
+      setname: setname.map(Into::into),
+    }
+  }
+
   /// Move the frame contents into a new [BytesFrame].
   #[cfg(feature = "bytes")]
   #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
@@ -1459,22 +1737,23 @@ impl From<f64> for OwnedFrame {
   }
 }
 
-/// A RESP3 frame that uses [Bytes](bytes::Bytes) and [Str](bytes_utils::Str) as the underlying buffer type.
+/// A RESP3 frame that uses [Bytes] and [Str] as the underlying buffer type.
 ///
 /// <https://github.com/antirez/RESP3/blob/master/spec.md>
 #[cfg(feature = "bytes")]
 #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
+#[non_exhaustive]
 pub enum BytesFrame {
   /// A blob of bytes.
   BlobString {
     data:       Bytes,
-    attributes: Option<BytesAttributes>,
+    attributes: Option<Box<BytesAttributes>>,
   },
   /// A blob representing an error.
   BlobError {
     data:       Bytes,
-    attributes: Option<BytesAttributes>,
+    attributes: Option<Box<BytesAttributes>>,
   },
   /// A small string.
   ///
@@ -1482,72 +1761,76 @@ pub enum BytesFrame {
   /// stream.
   SimpleString {
     data:       Bytes,
-    attributes: Option<BytesAttributes>,
+    attributes: Option<Box<BytesAttributes>>,
   },
   /// A small string representing an error.
   SimpleError {
     data:       Str,
-    attributes: Option<BytesAttributes>,
+    attributes: Option<Box<BytesAttributes>>,
   },
   /// A boolean type.
   Boolean {
     data:       bool,
-    attributes: Option<BytesAttributes>,
+    attributes: Option<Box<BytesAttributes>>,
   },
   /// A null type.
   Null,
   /// A signed 64-bit integer.
   Number {
     data:       i64,
-    attributes: Option<BytesAttributes>,
+    attributes: Option<Box<BytesAttributes>>,
   },
   /// A signed 64-bit floating point number.
   Double {
     data:       f64,
-    attributes: Option<BytesAttributes>,
+    attributes: Option<Box<BytesAttributes>>,
   },
   /// A large number not representable as a `Number` or `Double`.
   ///
   /// This library does not attempt to parse this.
   BigNumber {
     data:       Bytes,
-    attributes: Option<BytesAttributes>,
+    attributes: Option<Box<BytesAttributes>>,
   },
   /// A string to be displayed without any escaping or filtering.
   VerbatimString {
     data:       Bytes,
     format:     VerbatimStringFormat,
-    attributes: Option<BytesAttributes>,
+    attributes: Option<Box<BytesAttributes>>,
   },
   /// An array of frames.
   Array {
     data:       Vec<BytesFrame>,
-    attributes: Option<BytesAttributes>,
+    attributes: Option<Box<BytesAttributes>>,
   },
-  /// An unordered map of key-value pairs.
+  /// A map of key-value pairs, in the order they were received.
   ///
-  /// According to the spec keys can be any other RESP3 data type. However, it doesn't make sense to implement `Hash`
-  /// for certain aggregate types. The [can_hash](crate::resp3::types::FrameKind::can_hash) function can be used to
-  /// detect this.
+  /// Keys can be any frame type, and duplicate keys are kept. See [FrameMap].
   Map {
     data:       FrameMap<BytesFrame, BytesFrame>,
-    attributes: Option<BytesAttributes>,
+    attributes: Option<Box<BytesAttributes>>,
   },
-  /// An unordered collection of other frames with a uniqueness constraint.
+  /// A collection of frames, in the order they were received.
+  ///
+  /// Members can be any frame type, and duplicates are kept. See [FrameSet].
   Set {
     data:       FrameSet<BytesFrame>,
-    attributes: Option<BytesAttributes>,
+    attributes: Option<Box<BytesAttributes>>,
   },
   /// Out-of-band data.
   Push {
     data:       Vec<BytesFrame>,
-    attributes: Option<BytesAttributes>,
+    attributes: Option<Box<BytesAttributes>>,
   },
   /// A special frame type used when first connecting to the server to describe the protocol version and optional
   /// credentials.
+  ///
+  /// This is encoded as a command, an array of blob strings. The decoder parses the inline form, such as
+  /// `HELLO 3 AUTH foo bar`, so an encoded `Hello` frame decodes as an array.
   Hello {
     version: RespVersion,
-    auth:    Option<(Str, Str)>,
+    /// The username and password.
+    auth:    Option<Box<(Str, Str)>>,
     setname: Option<Str>,
   },
   /// One chunk of a streaming blob.
@@ -1634,7 +1917,7 @@ impl Hash for BytesFrame {
       SimpleError { data, .. } => data.hash(state),
       Number { data, .. } => data.hash(state),
       Null => NULL.hash(state),
-      Double { data, .. } => data.to_string().hash(state),
+      Double { data, .. } => resp3_utils::hash_f64(state, *data),
       Boolean { data, .. } => data.hash(state),
       BlobError { data, .. } => data.hash(state),
       VerbatimString { data, format, .. } => {
@@ -1643,11 +1926,19 @@ impl Hash for BytesFrame {
       },
       ChunkedString(data) => data.hash(state),
       BigNumber { data, .. } => data.hash(state),
-      _ => panic!("Invalid RESP3 data type to use as hash key."),
+      Array { data, .. } | Push { data, .. } | Set { data, .. } => data.hash(state),
+      Map { data, .. } => data.hash(state),
+      Hello { version, auth, setname } => {
+        version.hash(state);
+        auth.hash(state);
+        setname.hash(state);
+      },
     };
   }
 }
 
+#[cfg(feature = "bytes")]
+impl_frame_eq!(BytesFrame);
 #[cfg(feature = "bytes")]
 impl Eq for BytesFrame {}
 
@@ -1661,6 +1952,7 @@ impl Resp3Frame for BytesFrame {
     attributes: Option<Self::Attributes>,
   ) -> Result<Self, RedisProtocolError> {
     let mut data: Vec<_> = buf.into_iter().collect();
+    let attributes = attributes.map(Box::new);
 
     Ok(match target {
       FrameKind::BlobString => {
@@ -1684,18 +1976,27 @@ impl Resp3Frame for BytesFrame {
           attributes,
         }
       },
-      FrameKind::Map => BytesFrame::Map {
-        attributes,
-        data: data
-          .chunks_exact_mut(2)
-          .map(|chunk| (chunk[0].take(), chunk[1].take()))
-          .collect(),
+      FrameKind::Map => {
+        check_streamed_aggregate(target, &data)?;
+        BytesFrame::Map {
+          attributes,
+          data: data
+            .chunks_exact_mut(2)
+            .map(|chunk| (chunk[0].take(), chunk[1].take()))
+            .collect(),
+        }
       },
-      FrameKind::Set => BytesFrame::Set {
-        attributes,
-        data: data.into_iter().collect(),
+      FrameKind::Set => {
+        check_streamed_aggregate(target, &data)?;
+        BytesFrame::Set {
+          attributes,
+          data: data.into_iter().collect(),
+        }
       },
-      FrameKind::Array => BytesFrame::Array { attributes, data },
+      FrameKind::Array => {
+        check_streamed_aggregate(target, &data)?;
+        BytesFrame::Array { attributes, data }
+      },
       _ => {
         return Err(RedisProtocolError::new(
           RedisProtocolErrorKind::DecodeError,
@@ -1723,7 +2024,7 @@ impl Resp3Frame for BytesFrame {
       BytesFrame::Null | BytesFrame::ChunkedString(_) | BytesFrame::Hello { .. } => return None,
     };
 
-    attributes.as_ref()
+    attributes.as_deref()
   }
 
   fn take_attributes(&mut self) -> Option<Self::Attributes> {
@@ -1744,7 +2045,7 @@ impl Resp3Frame for BytesFrame {
       BytesFrame::Null | BytesFrame::ChunkedString(_) | BytesFrame::Hello { .. } => return None,
     };
 
-    attributes.take()
+    attributes.take().map(|attributes| *attributes)
   }
 
   fn attributes_mut(&mut self) -> Option<&mut Self::Attributes> {
@@ -1765,7 +2066,7 @@ impl Resp3Frame for BytesFrame {
       BytesFrame::Null | BytesFrame::ChunkedString(_) | BytesFrame::Hello { .. } => return None,
     };
 
-    attributes.as_mut()
+    attributes.as_deref_mut()
   }
 
   /// Attempt to add attributes to the frame, extending the existing attributes if needed.
@@ -1795,7 +2096,7 @@ impl Resp3Frame for BytesFrame {
     if let Some(_attributes) = _attributes.as_mut() {
       _attributes.extend(attributes);
     } else {
-      *_attributes = Some(attributes);
+      *_attributes = Some(Box::new(attributes));
     }
 
     Ok(())
@@ -1900,7 +2201,16 @@ impl Resp3Frame for BytesFrame {
         1 => Some(true),
         _ => None,
       },
+      BytesFrame::Null => Some(false),
       _ => None,
+    }
+  }
+
+  fn as_f64(&self) -> Option<f64> {
+    match self {
+      BytesFrame::Double { data, .. } => Some(*data),
+      BytesFrame::Number { data, .. } => Some(*data as f64),
+      _ => self.as_str().and_then(|s| utils::str_to_f64(s).ok()),
     }
   }
 
@@ -1913,7 +2223,9 @@ impl Resp3Frame for BytesFrame {
       | BytesFrame::BigNumber { data, .. } => String::from_utf8(data.to_vec()).ok(),
       BytesFrame::VerbatimString { data, .. } => String::from_utf8(data.to_vec()).ok(),
       BytesFrame::ChunkedString(b) => String::from_utf8(b.to_vec()).ok(),
-      BytesFrame::Double { data, .. } => Some(data.to_string()),
+      BytesFrame::Double { data, .. } => Some(resp3_utils::with_f64_str(*data, |s| {
+        s.iter().map(|b| *b as char).collect()
+      })),
       BytesFrame::Number { data, .. } => Some(data.to_string()),
       _ => None,
     }
@@ -1997,7 +2309,9 @@ impl Resp3Frame for BytesFrame {
   #[cfg_attr(docsrs, doc(cfg(feature = "convert")))]
   fn pop_or_take(self) -> Self {
     match self {
-      BytesFrame::Array { mut data, .. } | BytesFrame::Push { mut data, .. } => data.pop().unwrap(),
+      BytesFrame::Array { mut data, .. } | BytesFrame::Push { mut data, .. } if data.len() == 1 => {
+        data.swap_remove(0)
+      },
       _ => self,
     }
   }
@@ -2005,6 +2319,20 @@ impl Resp3Frame for BytesFrame {
 
 #[cfg(feature = "bytes")]
 impl BytesFrame {
+  /// Create a `HELLO` frame.
+  ///
+  /// ```rust
+  /// # use redis_protocol::resp3::types::{BytesFrame, RespVersion};
+  /// let hello = BytesFrame::hello(RespVersion::RESP3, Some(("foo", "bar")), Some("my-client"));
+  /// ```
+  pub fn hello<S: Into<Str>>(version: RespVersion, auth: Option<(S, S)>, setname: Option<S>) -> Self {
+    BytesFrame::Hello {
+      version,
+      auth: auth.map(|(username, password)| Box::new((username.into(), password.into()))),
+      setname: setname.map(Into::into),
+    }
+  }
+
   /// Copy the frame contents into a new [OwnedFrame].
   pub fn to_owned_frame(&self) -> OwnedFrame {
     resp3_utils::bytes_to_owned_frame(self)
@@ -2099,7 +2427,7 @@ impl<T: Resp3Frame> DecodedFrame<T> {
 ///   println!("{:?}", result); // OwnedFrame::Array { data: [1, 2], attributes: None }
 /// }
 /// ```
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StreamedFrame<T: Resp3Frame> {
   /// The internal buffer of frames and attributes.
   buffer:          VecDeque<T>,
@@ -2160,6 +2488,108 @@ impl<T: Resp3Frame> StreamedFrame<T> {
 mod tests {
   use super::*;
   use crate::resp3::utils::new_map;
+  use std::{collections::hash_map::RandomState, hash::BuildHasher};
+
+  #[test]
+  fn should_compare_doubles_consistently_with_hash() {
+    let owned = |data: f64| OwnedFrame::Double { data, attributes: None };
+    let bytes = |data: f64| BytesFrame::Double { data, attributes: None };
+    let range = |data: f64| RangeFrame::Double { data, attributes: None };
+    let borrowed = |data: f64| BorrowedFrame::Double { data, attributes: None };
+
+    assert_eq!(owned(f64::NAN), owned(f64::NAN));
+    assert_eq!(owned(-0.0), owned(0.0));
+    assert_ne!(owned(1.0), owned(2.0));
+    assert_ne!(owned(1.0), OwnedFrame::Number {
+      data:       1,
+      attributes: None,
+    });
+    assert_eq!(bytes(f64::NAN), bytes(f64::NAN));
+    assert_eq!(bytes(-0.0), bytes(0.0));
+    assert_ne!(bytes(1.0), bytes(f64::NAN));
+    assert_eq!(range(f64::NAN), range(f64::NAN));
+    assert_eq!(range(-0.0), range(0.0));
+    assert_eq!(borrowed(f64::NAN), borrowed(f64::NAN));
+    assert_eq!(borrowed(-0.0), borrowed(0.0));
+
+    // frames that compare equal hash the same, so doubles can be used as set members and map keys
+    let state = RandomState::new();
+    assert_eq!(state.hash_one(owned(-0.0)), state.hash_one(owned(0.0)));
+    assert_eq!(state.hash_one(bytes(f64::NAN)), state.hash_one(bytes(f64::NAN)));
+    let set: std::collections::HashSet<_> = [owned(f64::NAN), owned(f64::NAN), owned(0.0), owned(-0.0)].into();
+    assert_eq!(set.len(), 2);
+
+    // nested doubles use the same rules
+    let array = |data: f64| OwnedFrame::Array {
+      data:       vec![owned(data)],
+      attributes: None,
+    };
+    assert_eq!(array(f64::NAN), array(f64::NAN));
+    assert_ne!(array(1.0), array(f64::NAN));
+  }
+
+  #[test]
+  fn should_compare_non_double_frames() {
+    let blob = |data: &str| OwnedFrame::BlobString {
+      data:       data.as_bytes().to_vec(),
+      attributes: None,
+    };
+    assert_eq!(blob("a"), blob("a"));
+    assert_ne!(blob("a"), blob("b"));
+    assert_ne!(blob("a"), OwnedFrame::SimpleString {
+      data:       "a".into(),
+      attributes: None,
+    });
+    assert_eq!(OwnedFrame::Null, OwnedFrame::Null);
+
+    let mut attributes = new_map(0);
+    attributes.push((blob("a"), blob("b")));
+    let with_attrs = OwnedFrame::BlobString {
+      data:       "a".into(),
+      attributes: Some(Box::new(attributes)),
+    };
+    assert_ne!(with_attrs, blob("a"));
+    assert_eq!(with_attrs, with_attrs.clone());
+
+    let verbatim = |format: VerbatimStringFormat| OwnedFrame::VerbatimString {
+      data: "a".into(),
+      format,
+      attributes: None,
+    };
+    assert_eq!(
+      verbatim(VerbatimStringFormat::Text),
+      verbatim(VerbatimStringFormat::Text)
+    );
+    assert_ne!(
+      verbatim(VerbatimStringFormat::Text),
+      verbatim(VerbatimStringFormat::Markdown)
+    );
+  }
+
+  #[test]
+  fn should_read_doubles_and_null_from_frames() {
+    let owned = |data: f64| OwnedFrame::Double { data, attributes: None };
+    let bytes = |data: f64| BytesFrame::Double { data, attributes: None };
+
+    assert_eq!(owned(1.5).as_f64(), Some(1.5));
+    assert_eq!(bytes(1.5).as_f64(), Some(1.5));
+    assert_eq!(OwnedFrame::from(3_i64).as_f64(), Some(3.0));
+    assert_eq!(BytesFrame::from(3_i64).as_f64(), Some(3.0));
+    assert_eq!(
+      BytesFrame::BlobString {
+        data:       "-inf".into(),
+        attributes: None,
+      }
+      .as_f64(),
+      Some(f64::NEG_INFINITY)
+    );
+    assert_eq!(OwnedFrame::Null.as_bool(), Some(false));
+    assert_eq!(BytesFrame::Null.as_bool(), Some(false));
+    assert_eq!(owned(f64::NAN).to_string(), Some("nan".into()));
+    assert_eq!(owned(f64::INFINITY).to_string(), Some("inf".into()));
+    assert_eq!(bytes(f64::NEG_INFINITY).to_string(), Some("-inf".into()));
+    assert_eq!(bytes(1.5).to_string(), Some("1.5".into()));
+  }
 
   #[test]
   fn should_convert_basic_streaming_buffer_to_frame() {
@@ -2176,9 +2606,9 @@ mod tests {
   #[test]
   fn should_convert_basic_streaming_buffer_to_frame_with_attributes() {
     let mut attributes = new_map(0);
-    attributes.insert((FrameKind::SimpleString, "a").try_into().unwrap(), 1.into());
-    attributes.insert((FrameKind::SimpleString, "b").try_into().unwrap(), 2.into());
-    attributes.insert((FrameKind::SimpleString, "c").try_into().unwrap(), 3.into());
+    attributes.push(((FrameKind::SimpleString, "a").try_into().unwrap(), 1.into()));
+    attributes.push(((FrameKind::SimpleString, "b").try_into().unwrap(), 2.into()));
+    attributes.push(((FrameKind::SimpleString, "c").try_into().unwrap(), 3.into()));
 
     let mut streaming_buf = StreamedFrame::new(FrameKind::BlobString);
     streaming_buf.add_attributes(attributes.clone()).unwrap();

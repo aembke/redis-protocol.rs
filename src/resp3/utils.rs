@@ -1,14 +1,15 @@
 use crate::{
-  error::{RedisProtocolError, RedisProtocolErrorKind},
+  error::RedisProtocolError,
   resp3::types::*,
-  utils::digits_in_usize,
+  utils::{digits_in_i64, digits_in_usize},
 };
 use alloc::{
-  borrow::Cow,
+  boxed::Box,
   string::{String, ToString},
   vec::Vec,
 };
 use core::{
+  fmt,
   hash::{Hash, Hasher},
   str,
 };
@@ -18,13 +19,6 @@ use bytes::{Bytes, BytesMut};
 #[cfg(feature = "bytes")]
 use bytes_utils::Str;
 
-#[cfg(feature = "hashbrown")]
-use hashbrown::{HashMap, HashSet};
-#[cfg(feature = "index-map")]
-use indexmap::{IndexMap, IndexSet};
-#[cfg(feature = "std")]
-use std::collections::{HashMap, HashSet};
-
 pub const BOOLEAN_ENCODE_LEN: usize = 4;
 
 pub fn hash_tuple<H: Hasher>(state: &mut H, range: &(usize, usize)) {
@@ -32,25 +26,9 @@ pub fn hash_tuple<H: Hasher>(state: &mut H, range: &(usize, usize)) {
   range.1.hash(state);
 }
 
-#[cfg(not(feature = "index-map"))]
-#[allow(dead_code)]
-pub fn new_set<K: Hash + Eq>(capacity: usize) -> HashSet<K> {
-  HashSet::with_capacity(capacity)
-}
-
-#[cfg(feature = "index-map")]
-pub fn new_set<K: Hash + Eq>(capacity: usize) -> IndexSet<K> {
-  IndexSet::with_capacity(capacity)
-}
-
-#[cfg(not(feature = "index-map"))]
-pub fn new_map<K: Hash + Eq, V>(capacity: usize) -> HashMap<K, V> {
-  HashMap::with_capacity(capacity)
-}
-
-#[cfg(feature = "index-map")]
-pub fn new_map<K: Hash + Eq, V>(capacity: usize) -> IndexMap<K, V> {
-  IndexMap::with_capacity(capacity)
+/// Create an empty [FrameMap] with room for `capacity` pairs.
+pub fn new_map<K, V>(capacity: usize) -> FrameMap<K, V> {
+  Vec::with_capacity(capacity)
 }
 
 /// Read the number of bytes needed to encode the length prefix on any aggregate type frame.
@@ -81,7 +59,8 @@ pub fn verbatimstring_encode_len(format: &VerbatimStringFormat, data: &[u8]) -> 
 
 pub fn number_encode_len(i: i64, int_as_blobstring: bool) -> usize {
   let prefix = if i < 0 { 1 } else { 0 };
-  let digits = digits_in_usize(i.unsigned_abs() as usize);
+  // count the digits as a u64, since `usize` is 32 bits on some targets
+  let digits = digits_in_i64(i) - prefix;
 
   if int_as_blobstring {
     1 + digits_in_usize(digits + prefix) + 2 + prefix + digits + 2
@@ -91,30 +70,27 @@ pub fn number_encode_len(i: i64, int_as_blobstring: bool) -> usize {
 }
 
 pub fn double_encode_len(f: f64) -> usize {
-  if f.is_infinite() {
-    let inf_len = if f.is_sign_negative() {
-      NEG_INFINITY.as_bytes().len()
-    } else {
-      INFINITY.as_bytes().len()
-    };
-
-    // comma, inf|-inf, CRLF
-    1 + inf_len + 2
-  } else {
-    // TODO there's gotta be a better way to do this
-    1 + f.to_string().as_bytes().len() + 2
-  }
+  // comma, value, CRLF
+  1 + with_f64_str(f, |s| s.len()) + 2
 }
 
-pub fn auth_encode_len(username: Option<&str>, password: Option<&str>) -> usize {
-  if username.is_none() && password.is_none() {
-    return 0;
+/// The encoded length of a `HELLO` command, which is sent as an array of blob strings.
+pub fn hello_encode_len(auth: Option<(&str, &str)>, setname: Option<&str>) -> usize {
+  let mut args = 2;
+  // `HELLO` and the version, which is one digit
+  let mut len = blobstring_encode_len(HELLO.as_bytes()) + blobstring_encode_len(b"3");
+  if let Some((username, password)) = auth {
+    args += 3;
+    len += blobstring_encode_len(AUTH.as_bytes())
+      + blobstring_encode_len(username.as_bytes())
+      + blobstring_encode_len(password.as_bytes());
+  }
+  if let Some(setname) = setname {
+    args += 2;
+    len += blobstring_encode_len(SETNAME.as_bytes()) + blobstring_encode_len(setname.as_bytes());
   }
 
-  1 + AUTH.as_bytes().len()
-    + 1
-    + username.map(|s| s.as_bytes().len() + 1).unwrap_or(0)
-    + password.map(|s| s.as_bytes().len()).unwrap_or(0)
+  length_prefix_encode_len(args) + len
 }
 
 // As mentioned elsewhere in the comments, some of the encoding and decoding logic differs in meaningful ways based on
@@ -140,79 +116,58 @@ pub fn borrowed_array_or_push_encode_len(frames: &[BorrowedFrame], int_as_blobst
   })
 }
 
-pub fn owned_map_encode_len(map: &FrameMap<OwnedFrame, OwnedFrame>, int_as_blobstring: bool) -> usize {
+pub fn owned_map_encode_len(map: &[(OwnedFrame, OwnedFrame)], int_as_blobstring: bool) -> usize {
   map.iter().fold(length_prefix_encode_len(map.len()), |m, (k, v)| {
     m + owned_encode_len(k, int_as_blobstring) + owned_encode_len(v, int_as_blobstring)
   })
 }
 
-pub fn borrowed_map_encode_len(map: &FrameMap<BorrowedFrame, BorrowedFrame>, int_as_blobstring: bool) -> usize {
+pub fn borrowed_map_encode_len(map: &[(BorrowedFrame, BorrowedFrame)], int_as_blobstring: bool) -> usize {
   map.iter().fold(length_prefix_encode_len(map.len()), |m, (k, v)| {
     m + borrowed_encode_len(k, int_as_blobstring) + borrowed_encode_len(v, int_as_blobstring)
   })
 }
 
 #[cfg(feature = "bytes")]
-pub fn bytes_map_encode_len(map: &FrameMap<BytesFrame, BytesFrame>, int_as_blobstring: bool) -> usize {
+pub fn bytes_map_encode_len(map: &[(BytesFrame, BytesFrame)], int_as_blobstring: bool) -> usize {
   map.iter().fold(length_prefix_encode_len(map.len()), |m, (k, v)| {
     m + bytes_encode_len(k, int_as_blobstring) + bytes_encode_len(v, int_as_blobstring)
   })
 }
 
-pub fn owned_set_encode_len(set: &FrameSet<OwnedFrame>, int_as_blobstring: bool) -> usize {
+pub fn owned_set_encode_len(set: &[OwnedFrame], int_as_blobstring: bool) -> usize {
   set.iter().fold(length_prefix_encode_len(set.len()), |m, f| {
     m + owned_encode_len(f, int_as_blobstring)
   })
 }
 
-pub fn borrowed_set_encode_len(set: &FrameSet<BorrowedFrame>, int_as_blobstring: bool) -> usize {
+pub fn borrowed_set_encode_len(set: &[BorrowedFrame], int_as_blobstring: bool) -> usize {
   set.iter().fold(length_prefix_encode_len(set.len()), |m, f| {
     m + borrowed_encode_len(f, int_as_blobstring)
   })
 }
 
 #[cfg(feature = "bytes")]
-pub fn bytes_set_encode_len(set: &FrameSet<BytesFrame>, int_as_blobstring: bool) -> usize {
+pub fn bytes_set_encode_len(set: &[BytesFrame], int_as_blobstring: bool) -> usize {
   set.iter().fold(length_prefix_encode_len(set.len()), |m, f| {
     m + bytes_encode_len(f, int_as_blobstring)
   })
 }
 
 #[cfg(feature = "bytes")]
-pub fn bytes_hello_encode_len(auth: &Option<(Str, Str)>, setname: &Option<Str>) -> usize {
-  let username = auth.as_ref().map(|(u, _)| &**u);
-  let password = auth.as_ref().map(|(_, p)| &**p);
-  let setname_len = if let Some(setname) = setname.as_ref() {
-    1 + SETNAME.as_bytes().len() + 1 + setname.as_bytes().len()
-  } else {
-    0
-  };
-
-  HELLO.as_bytes().len() + 1 + 1 + auth_encode_len(username, password) + setname_len + 2
+pub fn bytes_hello_encode_len(auth: &Option<Box<(Str, Str)>>, setname: &Option<Str>) -> usize {
+  hello_encode_len(auth.as_deref().map(|(u, p)| (&**u, &**p)), setname.as_deref())
 }
 
-pub fn owned_hello_encode_len(auth: &Option<(String, String)>, setname: &Option<String>) -> usize {
-  let username = auth.as_ref().map(|(u, _)| &**u);
-  let password = auth.as_ref().map(|(_, p)| &**p);
-  let setname_len = if let Some(setname) = setname.as_ref() {
-    1 + SETNAME.as_bytes().len() + 1 + setname.as_bytes().len()
-  } else {
-    0
-  };
-
-  HELLO.as_bytes().len() + 1 + 1 + auth_encode_len(username, password) + setname_len + 2
+pub fn owned_hello_encode_len(auth: &Option<Box<(String, String)>>, setname: &Option<String>) -> usize {
+  hello_encode_len(
+    auth.as_deref().map(|(u, p)| (u.as_str(), p.as_str())),
+    setname.as_deref(),
+  )
 }
 
 pub fn borrowed_hello_encode_len(auth: &Option<(&str, &str)>, setname: &Option<&str>) -> usize {
-  let username = auth.as_ref().map(|(u, _)| &**u);
-  let password = auth.as_ref().map(|(_, p)| &**p);
-  let setname_len = if let Some(setname) = setname.as_ref() {
-    1 + SETNAME.as_bytes().len() + 1 + setname.as_bytes().len()
-  } else {
-    0
-  };
-
-  HELLO.as_bytes().len() + 1 + 1 + auth_encode_len(username, password) + setname_len + 2
+  hello_encode_len(*auth, *setname)
 }
 
 #[cfg(feature = "bytes")]
@@ -306,49 +261,52 @@ pub fn bytes_encode_len(data: &BytesFrame, int_as_blobstring: bool) -> usize {
   match data {
     Array { data, attributes } => {
       bytes_array_or_push_encode_len(data, int_as_blobstring)
-        + bytes_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+        + bytes_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     Push { data, attributes } => {
       bytes_array_or_push_encode_len(data, int_as_blobstring)
-        + bytes_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+        + bytes_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     BlobString { data, attributes } => {
-      blobstring_encode_len(data) + bytes_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+      blobstring_encode_len(data) + bytes_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     BlobError { data, attributes } => {
-      blobstring_encode_len(data) + bytes_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+      blobstring_encode_len(data) + bytes_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     SimpleString { data, attributes } => {
-      simplestring_encode_len(data) + bytes_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+      simplestring_encode_len(data) + bytes_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     SimpleError { data, attributes } => {
-      simplestring_encode_len(data.as_bytes()) + bytes_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+      simplestring_encode_len(data.as_bytes()) + bytes_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     Number { data, attributes } => {
-      number_encode_len(*data, int_as_blobstring) + bytes_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+      number_encode_len(*data, int_as_blobstring)
+        + bytes_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     Double { data, attributes } => {
-      double_encode_len(*data) + bytes_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+      double_encode_len(*data) + bytes_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     Boolean { attributes, .. } => {
-      BOOLEAN_ENCODE_LEN + bytes_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+      BOOLEAN_ENCODE_LEN + bytes_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     VerbatimString {
       data,
       attributes,
       format,
       ..
-    } => verbatimstring_encode_len(format, data) + bytes_attribute_encode_len(attributes.as_ref(), int_as_blobstring),
+    } => {
+      verbatimstring_encode_len(format, data) + bytes_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
+    },
     Map { data, attributes } => {
       bytes_map_encode_len(data, int_as_blobstring)
-        + bytes_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+        + bytes_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     Set { data, attributes } => {
       bytes_set_encode_len(data, int_as_blobstring)
-        + bytes_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+        + bytes_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     BigNumber { data, attributes } => {
-      bignumber_encode_len(data) + bytes_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+      bignumber_encode_len(data) + bytes_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     Hello { auth, setname, .. } => bytes_hello_encode_len(auth, setname),
     ChunkedString(data) => {
@@ -369,49 +327,52 @@ pub fn owned_encode_len(data: &OwnedFrame, int_as_blobstring: bool) -> usize {
   match data {
     Array { data, attributes } => {
       owned_array_or_push_encode_len(data, int_as_blobstring)
-        + owned_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+        + owned_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     Push { data, attributes } => {
       owned_array_or_push_encode_len(data, int_as_blobstring)
-        + owned_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+        + owned_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     BlobString { data, attributes } => {
-      blobstring_encode_len(data) + owned_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+      blobstring_encode_len(data) + owned_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     BlobError { data, attributes } => {
-      blobstring_encode_len(data) + owned_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+      blobstring_encode_len(data) + owned_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     SimpleString { data, attributes } => {
-      simplestring_encode_len(data) + owned_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+      simplestring_encode_len(data) + owned_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     SimpleError { data, attributes } => {
-      simplestring_encode_len(data.as_bytes()) + owned_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+      simplestring_encode_len(data.as_bytes()) + owned_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     Number { data, attributes } => {
-      number_encode_len(*data, int_as_blobstring) + owned_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+      number_encode_len(*data, int_as_blobstring)
+        + owned_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     Double { data, attributes } => {
-      double_encode_len(*data) + owned_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+      double_encode_len(*data) + owned_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     Boolean { attributes, .. } => {
-      BOOLEAN_ENCODE_LEN + owned_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+      BOOLEAN_ENCODE_LEN + owned_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     VerbatimString {
       data,
       attributes,
       format,
       ..
-    } => verbatimstring_encode_len(format, data) + owned_attribute_encode_len(attributes.as_ref(), int_as_blobstring),
+    } => {
+      verbatimstring_encode_len(format, data) + owned_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
+    },
     Map { data, attributes } => {
       owned_map_encode_len(data, int_as_blobstring)
-        + owned_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+        + owned_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     Set { data, attributes } => {
       owned_set_encode_len(data, int_as_blobstring)
-        + owned_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+        + owned_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     BigNumber { data, attributes } => {
-      bignumber_encode_len(data) + owned_attribute_encode_len(attributes.as_ref(), int_as_blobstring)
+      bignumber_encode_len(data) + owned_attribute_encode_len(attributes.as_deref(), int_as_blobstring)
     },
     Hello { auth, setname, .. } => owned_hello_encode_len(auth, setname),
     ChunkedString(data) => {
@@ -430,44 +391,44 @@ pub fn owned_encode_len(data: &OwnedFrame, int_as_blobstring: bool) -> usize {
 pub fn bytes_to_owned_frame(frame: &BytesFrame) -> OwnedFrame {
   match frame {
     BytesFrame::Array { data, attributes } => OwnedFrame::Array {
-      attributes: attributes.as_ref().map(bytes_to_owned_attrs),
+      attributes: attributes.as_deref().map(|a| Box::new(bytes_to_owned_attrs(a))),
       data:       data.iter().map(bytes_to_owned_frame).collect(),
     },
     BytesFrame::Push { data, attributes } => OwnedFrame::Push {
-      attributes: attributes.as_ref().map(bytes_to_owned_attrs),
+      attributes: attributes.as_deref().map(|a| Box::new(bytes_to_owned_attrs(a))),
       data:       data.iter().map(bytes_to_owned_frame).collect(),
     },
     BytesFrame::BlobString { data, attributes } => OwnedFrame::BlobString {
-      attributes: attributes.as_ref().map(bytes_to_owned_attrs),
+      attributes: attributes.as_deref().map(|a| Box::new(bytes_to_owned_attrs(a))),
       data:       data.to_vec(),
     },
     BytesFrame::BlobError { data, attributes } => OwnedFrame::BlobError {
-      attributes: attributes.as_ref().map(bytes_to_owned_attrs),
+      attributes: attributes.as_deref().map(|a| Box::new(bytes_to_owned_attrs(a))),
       data:       data.to_vec(),
     },
     BytesFrame::BigNumber { data, attributes } => OwnedFrame::BigNumber {
-      attributes: attributes.as_ref().map(bytes_to_owned_attrs),
+      attributes: attributes.as_deref().map(|a| Box::new(bytes_to_owned_attrs(a))),
       data:       data.to_vec(),
     },
     BytesFrame::ChunkedString(data) => OwnedFrame::ChunkedString(data.to_vec()),
     BytesFrame::SimpleString { data, attributes } => OwnedFrame::SimpleString {
-      attributes: attributes.as_ref().map(bytes_to_owned_attrs),
+      attributes: attributes.as_deref().map(|a| Box::new(bytes_to_owned_attrs(a))),
       data:       data.to_vec(),
     },
     BytesFrame::SimpleError { data, attributes } => OwnedFrame::SimpleError {
-      attributes: attributes.as_ref().map(bytes_to_owned_attrs),
+      attributes: attributes.as_deref().map(|a| Box::new(bytes_to_owned_attrs(a))),
       data:       data.to_string(),
     },
     BytesFrame::Number { data, attributes } => OwnedFrame::Number {
-      attributes: attributes.as_ref().map(bytes_to_owned_attrs),
+      attributes: attributes.as_deref().map(|a| Box::new(bytes_to_owned_attrs(a))),
       data:       *data,
     },
     BytesFrame::Double { data, attributes } => OwnedFrame::Double {
-      attributes: attributes.as_ref().map(bytes_to_owned_attrs),
+      attributes: attributes.as_deref().map(|a| Box::new(bytes_to_owned_attrs(a))),
       data:       *data,
     },
     BytesFrame::Boolean { data, attributes } => OwnedFrame::Boolean {
-      attributes: attributes.as_ref().map(bytes_to_owned_attrs),
+      attributes: attributes.as_deref().map(|a| Box::new(bytes_to_owned_attrs(a))),
       data:       *data,
     },
     BytesFrame::Null => OwnedFrame::Null,
@@ -476,24 +437,24 @@ pub fn bytes_to_owned_frame(frame: &BytesFrame) -> OwnedFrame {
       attributes,
       format,
     } => OwnedFrame::VerbatimString {
-      format:     format.clone(),
-      attributes: attributes.as_ref().map(bytes_to_owned_attrs),
+      format:     *format,
+      attributes: attributes.as_deref().map(|a| Box::new(bytes_to_owned_attrs(a))),
       data:       data.to_vec(),
     },
     BytesFrame::Map { data, attributes } => OwnedFrame::Map {
-      attributes: attributes.as_ref().map(bytes_to_owned_attrs),
+      attributes: attributes.as_deref().map(|a| Box::new(bytes_to_owned_attrs(a))),
       data:       data
         .iter()
         .map(|(k, v)| (bytes_to_owned_frame(k), bytes_to_owned_frame(v)))
         .collect(),
     },
     BytesFrame::Set { data, attributes } => OwnedFrame::Set {
-      attributes: attributes.as_ref().map(bytes_to_owned_attrs),
+      attributes: attributes.as_deref().map(|a| Box::new(bytes_to_owned_attrs(a))),
       data:       data.iter().map(bytes_to_owned_frame).collect(),
     },
     BytesFrame::Hello { version, auth, setname } => OwnedFrame::Hello {
-      version: version.clone(),
-      auth:    auth.as_ref().map(|(u, p)| (u.to_string(), p.to_string())),
+      version: *version,
+      auth:    auth.as_deref().map(|(u, p)| Box::new((u.to_string(), p.to_string()))),
       setname: setname.as_ref().map(|name| name.to_string()),
     },
   }
@@ -513,44 +474,44 @@ pub fn bytes_to_owned_attrs(attributes: &BytesAttributes) -> OwnedAttributes {
 pub fn owned_to_bytes_frame(frame: OwnedFrame) -> BytesFrame {
   match frame {
     OwnedFrame::Array { data, attributes } => BytesFrame::Array {
-      attributes: attributes.map(owned_to_bytes_attrs),
+      attributes: attributes.map(|a| Box::new(owned_to_bytes_attrs(*a))),
       data:       data.into_iter().map(owned_to_bytes_frame).collect(),
     },
     OwnedFrame::Push { data, attributes } => BytesFrame::Push {
-      attributes: attributes.map(owned_to_bytes_attrs),
+      attributes: attributes.map(|a| Box::new(owned_to_bytes_attrs(*a))),
       data:       data.into_iter().map(owned_to_bytes_frame).collect(),
     },
     OwnedFrame::BlobString { data, attributes } => BytesFrame::BlobString {
-      attributes: attributes.map(owned_to_bytes_attrs),
+      attributes: attributes.map(|a| Box::new(owned_to_bytes_attrs(*a))),
       data:       data.into(),
     },
     OwnedFrame::BlobError { data, attributes } => BytesFrame::BlobError {
-      attributes: attributes.map(owned_to_bytes_attrs),
+      attributes: attributes.map(|a| Box::new(owned_to_bytes_attrs(*a))),
       data:       data.into(),
     },
     OwnedFrame::BigNumber { data, attributes } => BytesFrame::BigNumber {
-      attributes: attributes.map(owned_to_bytes_attrs),
+      attributes: attributes.map(|a| Box::new(owned_to_bytes_attrs(*a))),
       data:       data.into(),
     },
     OwnedFrame::ChunkedString(data) => BytesFrame::ChunkedString(data.into()),
     OwnedFrame::SimpleString { data, attributes } => BytesFrame::SimpleString {
-      attributes: attributes.map(owned_to_bytes_attrs),
+      attributes: attributes.map(|a| Box::new(owned_to_bytes_attrs(*a))),
       data:       data.into(),
     },
     OwnedFrame::SimpleError { data, attributes } => BytesFrame::SimpleError {
-      attributes: attributes.map(owned_to_bytes_attrs),
+      attributes: attributes.map(|a| Box::new(owned_to_bytes_attrs(*a))),
       data:       data.into(),
     },
     OwnedFrame::Number { data, attributes } => BytesFrame::Number {
-      attributes: attributes.map(owned_to_bytes_attrs),
+      attributes: attributes.map(|a| Box::new(owned_to_bytes_attrs(*a))),
       data,
     },
     OwnedFrame::Double { data, attributes } => BytesFrame::Double {
-      attributes: attributes.map(owned_to_bytes_attrs),
+      attributes: attributes.map(|a| Box::new(owned_to_bytes_attrs(*a))),
       data,
     },
     OwnedFrame::Boolean { data, attributes } => BytesFrame::Boolean {
-      attributes: attributes.map(owned_to_bytes_attrs),
+      attributes: attributes.map(|a| Box::new(owned_to_bytes_attrs(*a))),
       data,
     },
     OwnedFrame::Null => BytesFrame::Null,
@@ -560,23 +521,23 @@ pub fn owned_to_bytes_frame(frame: OwnedFrame) -> BytesFrame {
       format,
     } => BytesFrame::VerbatimString {
       format,
-      attributes: attributes.map(owned_to_bytes_attrs),
+      attributes: attributes.map(|a| Box::new(owned_to_bytes_attrs(*a))),
       data: data.into(),
     },
     OwnedFrame::Map { data, attributes } => BytesFrame::Map {
-      attributes: attributes.map(owned_to_bytes_attrs),
+      attributes: attributes.map(|a| Box::new(owned_to_bytes_attrs(*a))),
       data:       data
         .into_iter()
         .map(|(k, v)| (owned_to_bytes_frame(k), owned_to_bytes_frame(v)))
         .collect(),
     },
     OwnedFrame::Set { data, attributes } => BytesFrame::Set {
-      attributes: attributes.map(owned_to_bytes_attrs),
+      attributes: attributes.map(|a| Box::new(owned_to_bytes_attrs(*a))),
       data:       data.into_iter().map(owned_to_bytes_frame).collect(),
     },
     OwnedFrame::Hello { version, auth, setname } => BytesFrame::Hello {
       version,
-      auth: auth.as_ref().map(|(u, p)| (u.into(), p.into())),
+      auth: auth.as_deref().map(|(u, p)| Box::new((u.into(), p.into()))),
       setname: setname.as_ref().map(|s| s.into()),
     },
   }
@@ -591,56 +552,115 @@ pub fn owned_to_bytes_attrs(attributes: OwnedAttributes) -> BytesAttributes {
     .collect()
 }
 
-/// Return the string representation of a double, accounting for `inf` and `-inf`.
-pub fn f64_to_redis_string(data: f64) -> Cow<'static, str> {
-  if data.is_nan() {
-    Cow::Borrowed(NAN)
-  } else if data.is_infinite() {
-    if data.is_sign_negative() {
-      Cow::Borrowed(NEG_INFINITY)
-    } else {
-      Cow::Borrowed(INFINITY)
+/// An upper bound on the length of an `f64` formatted with `Display`, which never uses exponent notation. The longest
+/// values are small negative numbers with 17 significant digits, such as `-2.2250738585072014e-308`, at 327 bytes.
+const MAX_F64_LEN: usize = 400;
+
+/// A fixed size string buffer used to format doubles without allocating.
+struct F64Buf {
+  buf: [u8; MAX_F64_LEN],
+  len: usize,
+}
+
+impl fmt::Write for F64Buf {
+  fn write_str(&mut self, s: &str) -> fmt::Result {
+    let end = self.len + s.len();
+    if end > self.buf.len() {
+      return Err(fmt::Error);
     }
-  } else {
-    Cow::Owned(data.to_string())
+
+    self.buf[self.len .. end].copy_from_slice(s.as_bytes());
+    self.len = end;
+    Ok(())
   }
 }
 
+/// Call `func` with the string representation of a double, accounting for `nan`, `inf`, and `-inf`.
+pub fn with_f64_str<R>(data: f64, func: impl FnOnce(&[u8]) -> R) -> R {
+  if data.is_nan() {
+    func(NAN.as_bytes())
+  } else if data.is_infinite() {
+    if data.is_sign_negative() {
+      func(NEG_INFINITY.as_bytes())
+    } else {
+      func(INFINITY.as_bytes())
+    }
+  } else {
+    let mut out = F64Buf {
+      buf: [0; MAX_F64_LEN],
+      len: 0,
+    };
+
+    if fmt::write(&mut out, format_args!("{data}")).is_ok() {
+      func(&out.buf[.. out.len])
+    } else {
+      // not reachable given the bound above, but formatting into a `String` is always correct
+      func(data.to_string().as_bytes())
+    }
+  }
+}
+
+/// Hash a double without formatting it, such that doubles that compare equal have the same hash.
+pub fn hash_f64<H: Hasher>(state: &mut H, data: f64) {
+  // `0.0 == -0.0`, so both hash as positive zero
+  let data = if data == 0.0 { 0.0 } else { data };
+  data.to_bits().hash(state);
+}
+
+#[inline]
 fn build_owned_attributes(
   buf: &[u8],
   attributes: Option<&RangeAttributes>,
-) -> Result<Option<OwnedAttributes>, RedisProtocolError> {
-  if let Some(attributes) = attributes {
-    let mut out = new_map(attributes.len());
-    for (key, value) in attributes {
-      let key = build_owned_frame(buf, key)?;
-      let value = build_owned_frame(buf, value)?;
-      out.insert(key, value);
-    }
+) -> Result<Option<Box<OwnedAttributes>>, RedisProtocolError> {
+  match attributes {
+    // most frames don't have attributes
+    None => Ok(None),
+    Some(attributes) => build_owned_attributes_slow(buf, attributes).map(Some),
+  }
+}
 
-    Ok(Some(out))
-  } else {
-    Ok(None)
+#[cold]
+fn build_owned_attributes_slow(
+  buf: &[u8],
+  attributes: &RangeAttributes,
+) -> Result<Box<OwnedAttributes>, RedisProtocolError> {
+  let mut out = new_map(attributes.len());
+  for (key, value) in attributes {
+    let key = build_owned_frame(buf, key)?;
+    let value = build_owned_frame(buf, value)?;
+    out.push((key, value));
+  }
+
+  Ok(Box::new(out))
+}
+
+#[cfg(feature = "bytes")]
+#[inline]
+fn build_bytes_attributes(
+  buf: &Bytes,
+  attributes: Option<&RangeAttributes>,
+) -> Result<Option<Box<BytesAttributes>>, RedisProtocolError> {
+  match attributes {
+    // most frames don't have attributes
+    None => Ok(None),
+    Some(attributes) => build_bytes_attributes_slow(buf, attributes).map(Some),
   }
 }
 
 #[cfg(feature = "bytes")]
-fn build_bytes_attributes(
+#[cold]
+fn build_bytes_attributes_slow(
   buf: &Bytes,
-  attributes: Option<&RangeAttributes>,
-) -> Result<Option<BytesAttributes>, RedisProtocolError> {
-  if let Some(attributes) = attributes {
-    let mut out = new_map(attributes.len());
-    for (key, value) in attributes {
-      let key = build_bytes_frame(buf, key)?;
-      let value = build_bytes_frame(buf, value)?;
-      out.insert(key, value);
-    }
-
-    Ok(Some(out))
-  } else {
-    Ok(None)
+  attributes: &RangeAttributes,
+) -> Result<Box<BytesAttributes>, RedisProtocolError> {
+  let mut out = new_map(attributes.len());
+  for (key, value) in attributes {
+    let key = build_bytes_frame(buf, key)?;
+    let value = build_bytes_frame(buf, value)?;
+    out.push((key, value));
   }
+
+  Ok(Box::new(out))
 }
 
 /// Move or copy the contents of `buf` based on the ranges in the provided frame.
@@ -648,31 +668,31 @@ pub fn build_owned_frame(buf: &[u8], frame: &RangeFrame) -> Result<OwnedFrame, R
   Ok(match frame {
     RangeFrame::SimpleString { data, attributes } => OwnedFrame::SimpleString {
       data:       buf[data.0 .. data.1].to_vec(),
-      attributes: build_owned_attributes(buf, attributes.as_ref())?,
+      attributes: build_owned_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::SimpleError { data, attributes } => OwnedFrame::SimpleError {
       data:       str::from_utf8(&buf[data.0 .. data.1])?.to_string(),
-      attributes: build_owned_attributes(buf, attributes.as_ref())?,
+      attributes: build_owned_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::BlobString { data, attributes } => OwnedFrame::BlobString {
       data:       buf[data.0 .. data.1].to_vec(),
-      attributes: build_owned_attributes(buf, attributes.as_ref())?,
+      attributes: build_owned_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::BlobError { data, attributes } => OwnedFrame::BlobError {
       data:       buf[data.0 .. data.1].to_vec(),
-      attributes: build_owned_attributes(buf, attributes.as_ref())?,
+      attributes: build_owned_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::Number { data, attributes } => OwnedFrame::Number {
       data:       *data,
-      attributes: build_owned_attributes(buf, attributes.as_ref())?,
+      attributes: build_owned_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::Double { data, attributes } => OwnedFrame::Double {
       data:       *data,
-      attributes: build_owned_attributes(buf, attributes.as_ref())?,
+      attributes: build_owned_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::Boolean { data, attributes } => OwnedFrame::Boolean {
       data:       *data,
-      attributes: build_owned_attributes(buf, attributes.as_ref())?,
+      attributes: build_owned_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::Null => OwnedFrame::Null,
     RangeFrame::VerbatimString {
@@ -681,32 +701,22 @@ pub fn build_owned_frame(buf: &[u8], frame: &RangeFrame) -> Result<OwnedFrame, R
       format,
     } => OwnedFrame::VerbatimString {
       data:       buf[data.0 .. data.1].to_vec(),
-      format:     format.clone(),
-      attributes: build_owned_attributes(buf, attributes.as_ref())?,
+      format:     *format,
+      attributes: build_owned_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::BigNumber { data, attributes } => OwnedFrame::BigNumber {
       data:       buf[data.0 .. data.1].to_vec(),
-      attributes: build_owned_attributes(buf, attributes.as_ref())?,
+      attributes: build_owned_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::ChunkedString(data) => OwnedFrame::ChunkedString(buf[data.0 .. data.1].to_vec()),
-    RangeFrame::Hello {
-      version,
-      username,
-      password,
-      setname,
-    } => OwnedFrame::Hello {
-      version: version.clone(),
-      auth:    if let Some(username) = username {
-        if let Some(password) = password {
-          Some((
-            String::from_utf8(buf[username.0 .. username.1].to_vec())?,
-            String::from_utf8(buf[password.0 .. password.1].to_vec())?,
-          ))
-        } else {
-          None
-        }
-      } else {
-        None
+    RangeFrame::Hello { version, auth, setname } => OwnedFrame::Hello {
+      version: *version,
+      auth:    match auth.as_deref() {
+        Some((username, password)) => Some(Box::new((
+          String::from_utf8(buf[username.0 .. username.1].to_vec())?,
+          String::from_utf8(buf[password.0 .. password.1].to_vec())?,
+        ))),
+        None => None,
       },
       setname: if let Some(setname) = setname {
         Some(String::from_utf8(buf[setname.0 .. setname.1].to_vec())?)
@@ -719,51 +729,28 @@ pub fn build_owned_frame(buf: &[u8], frame: &RangeFrame) -> Result<OwnedFrame, R
         .iter()
         .map(|f| build_owned_frame(buf, f))
         .collect::<Result<Vec<OwnedFrame>, RedisProtocolError>>()?,
-      attributes: build_owned_attributes(buf, attributes.as_ref())?,
+      attributes: build_owned_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::Push { data, attributes } => OwnedFrame::Push {
       data:       data
         .iter()
         .map(|f| build_owned_frame(buf, f))
         .collect::<Result<Vec<OwnedFrame>, RedisProtocolError>>()?,
-      attributes: build_owned_attributes(buf, attributes.as_ref())?,
+      attributes: build_owned_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::Set { data, attributes } => OwnedFrame::Set {
       data:       data
         .iter()
-        .map(|f| {
-          let value = build_owned_frame(buf, f)?;
-
-          if !value.kind().can_hash() {
-            Err(RedisProtocolError::new(
-              RedisProtocolErrorKind::DecodeError,
-              "Invalid hash key.",
-            ))
-          } else {
-            Ok(value)
-          }
-        })
-        .collect::<Result<FrameSet<OwnedFrame>, RedisProtocolError>>()?,
-      attributes: build_owned_attributes(buf, attributes.as_ref())?,
+        .map(|f| build_owned_frame(buf, f))
+        .collect::<Result<FrameSet<_>, RedisProtocolError>>()?,
+      attributes: build_owned_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::Map { data, attributes } => OwnedFrame::Map {
       data:       data
         .iter()
-        .map(|(k, v)| {
-          let key = build_owned_frame(buf, k)?;
-          let value = build_owned_frame(buf, v)?;
-
-          if !key.kind().can_hash() {
-            Err(RedisProtocolError::new(
-              RedisProtocolErrorKind::DecodeError,
-              "Invalid hash key.",
-            ))
-          } else {
-            Ok((key, value))
-          }
-        })
-        .collect::<Result<FrameMap<OwnedFrame, OwnedFrame>, RedisProtocolError>>()?,
-      attributes: build_owned_attributes(buf, attributes.as_ref())?,
+        .map(|(k, v)| Ok((build_owned_frame(buf, k)?, build_owned_frame(buf, v)?)))
+        .collect::<Result<FrameMap<_, _>, RedisProtocolError>>()?,
+      attributes: build_owned_attributes(buf, attributes.as_deref())?,
     },
   })
 }
@@ -774,31 +761,31 @@ pub fn build_bytes_frame(buf: &Bytes, frame: &RangeFrame) -> Result<BytesFrame, 
   Ok(match frame {
     RangeFrame::SimpleString { data, attributes } => BytesFrame::SimpleString {
       data:       buf.slice(data.0 .. data.1),
-      attributes: build_bytes_attributes(buf, attributes.as_ref())?,
+      attributes: build_bytes_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::SimpleError { data, attributes } => BytesFrame::SimpleError {
       data:       Str::from_inner(buf.slice(data.0 .. data.1))?,
-      attributes: build_bytes_attributes(buf, attributes.as_ref())?,
+      attributes: build_bytes_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::BlobString { data, attributes } => BytesFrame::BlobString {
       data:       buf.slice(data.0 .. data.1),
-      attributes: build_bytes_attributes(buf, attributes.as_ref())?,
+      attributes: build_bytes_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::BlobError { data, attributes } => BytesFrame::BlobError {
       data:       buf.slice(data.0 .. data.1),
-      attributes: build_bytes_attributes(buf, attributes.as_ref())?,
+      attributes: build_bytes_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::Number { data, attributes } => BytesFrame::Number {
       data:       *data,
-      attributes: build_bytes_attributes(buf, attributes.as_ref())?,
+      attributes: build_bytes_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::Double { data, attributes } => BytesFrame::Double {
       data:       *data,
-      attributes: build_bytes_attributes(buf, attributes.as_ref())?,
+      attributes: build_bytes_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::Boolean { data, attributes } => BytesFrame::Boolean {
       data:       *data,
-      attributes: build_bytes_attributes(buf, attributes.as_ref())?,
+      attributes: build_bytes_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::Null => BytesFrame::Null,
     RangeFrame::VerbatimString {
@@ -807,32 +794,22 @@ pub fn build_bytes_frame(buf: &Bytes, frame: &RangeFrame) -> Result<BytesFrame, 
       format,
     } => BytesFrame::VerbatimString {
       data:       buf.slice(data.0 .. data.1),
-      format:     format.clone(),
-      attributes: build_bytes_attributes(buf, attributes.as_ref())?,
+      format:     *format,
+      attributes: build_bytes_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::BigNumber { data, attributes } => BytesFrame::BigNumber {
       data:       buf.slice(data.0 .. data.1),
-      attributes: build_bytes_attributes(buf, attributes.as_ref())?,
+      attributes: build_bytes_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::ChunkedString(data) => BytesFrame::ChunkedString(buf.slice(data.0 .. data.1)),
-    RangeFrame::Hello {
-      version,
-      username,
-      password,
-      setname,
-    } => BytesFrame::Hello {
-      version: version.clone(),
-      auth:    if let Some(username) = username {
-        if let Some(password) = password {
-          Some((
-            Str::from_inner(buf.slice(username.0 .. username.1))?,
-            Str::from_inner(buf.slice(password.0 .. password.1))?,
-          ))
-        } else {
-          None
-        }
-      } else {
-        None
+    RangeFrame::Hello { version, auth, setname } => BytesFrame::Hello {
+      version: *version,
+      auth:    match auth.as_deref() {
+        Some((username, password)) => Some(Box::new((
+          Str::from_inner(buf.slice(username.0 .. username.1))?,
+          Str::from_inner(buf.slice(password.0 .. password.1))?,
+        ))),
+        None => None,
       },
       setname: if let Some(setname) = setname {
         Some(Str::from_inner(buf.slice(setname.0 .. setname.1))?)
@@ -845,51 +822,28 @@ pub fn build_bytes_frame(buf: &Bytes, frame: &RangeFrame) -> Result<BytesFrame, 
         .iter()
         .map(|f| build_bytes_frame(buf, f))
         .collect::<Result<Vec<_>, RedisProtocolError>>()?,
-      attributes: build_bytes_attributes(buf, attributes.as_ref())?,
+      attributes: build_bytes_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::Push { data, attributes } => BytesFrame::Push {
       data:       data
         .iter()
         .map(|f| build_bytes_frame(buf, f))
         .collect::<Result<Vec<_>, RedisProtocolError>>()?,
-      attributes: build_bytes_attributes(buf, attributes.as_ref())?,
+      attributes: build_bytes_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::Set { data, attributes } => BytesFrame::Set {
       data:       data
         .iter()
-        .map(|f| {
-          let value = build_bytes_frame(buf, f)?;
-
-          if !value.kind().can_hash() {
-            Err(RedisProtocolError::new(
-              RedisProtocolErrorKind::DecodeError,
-              "Invalid hash key.",
-            ))
-          } else {
-            Ok(value)
-          }
-        })
+        .map(|f| build_bytes_frame(buf, f))
         .collect::<Result<FrameSet<_>, RedisProtocolError>>()?,
-      attributes: build_bytes_attributes(buf, attributes.as_ref())?,
+      attributes: build_bytes_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::Map { data, attributes } => BytesFrame::Map {
       data:       data
         .iter()
-        .map(|(k, v)| {
-          let key = build_bytes_frame(buf, k)?;
-          let value = build_bytes_frame(buf, v)?;
-
-          if !key.kind().can_hash() {
-            Err(RedisProtocolError::new(
-              RedisProtocolErrorKind::DecodeError,
-              "Invalid hash key.",
-            ))
-          } else {
-            Ok((key, value))
-          }
-        })
+        .map(|(k, v)| Ok((build_bytes_frame(buf, k)?, build_bytes_frame(buf, v)?)))
         .collect::<Result<FrameMap<_, _>, RedisProtocolError>>()?,
-      attributes: build_bytes_attributes(buf, attributes.as_ref())?,
+      attributes: build_bytes_attributes(buf, attributes.as_deref())?,
     },
   })
 }
@@ -915,11 +869,11 @@ pub fn build_owned_streaming_frame(
   buf: &[u8],
   frame: &StreamedRangeFrame,
 ) -> Result<StreamedFrame<OwnedFrame>, RedisProtocolError> {
-  let attributes = build_owned_attributes(buf, frame.attributes.as_ref())?;
+  let attributes = build_owned_attributes(buf, frame.attributes.as_deref())?;
   let mut streamed = StreamedFrame::new(frame.kind);
 
   if let Some(attributes) = attributes {
-    streamed.add_attributes(attributes)?;
+    streamed.add_attributes(*attributes)?;
   }
   Ok(streamed)
 }
@@ -930,13 +884,85 @@ pub fn build_bytes_streaming_frame(
   buf: &Bytes,
   frame: &StreamedRangeFrame,
 ) -> Result<StreamedFrame<BytesFrame>, RedisProtocolError> {
-  let attributes = build_bytes_attributes(buf, frame.attributes.as_ref())?;
+  let attributes = build_bytes_attributes(buf, frame.attributes.as_deref())?;
   let mut streamed = StreamedFrame::new(frame.kind);
 
   if let Some(attributes) = attributes {
-    streamed.add_attributes(attributes)?;
+    streamed.add_attributes(*attributes)?;
   }
   Ok(streamed)
+}
+
+#[cfg(test)]
+mod f64_tests {
+  use super::*;
+  use alloc::vec::Vec;
+  use core::hash::BuildHasher;
+  use std::collections::hash_map::RandomState;
+
+  fn expected(data: f64) -> String {
+    if data.is_nan() {
+      NAN.to_string()
+    } else if data == f64::INFINITY {
+      INFINITY.to_string()
+    } else if data == f64::NEG_INFINITY {
+      NEG_INFINITY.to_string()
+    } else {
+      data.to_string()
+    }
+  }
+
+  fn check(data: f64) {
+    let formatted = with_f64_str(data, |s| String::from_utf8(s.to_vec()).unwrap());
+    assert_eq!(formatted, expected(data), "{data:?}");
+    assert!(formatted.len() <= MAX_F64_LEN, "{data:?}");
+    assert_eq!(double_encode_len(data), formatted.len() + 3, "{data:?}");
+  }
+
+  #[test]
+  fn should_format_doubles_like_display() {
+    let mut extremes = Vec::from([
+      0.0,
+      1.0,
+      0.1,
+      1.5e300,
+      f64::MAX,
+      f64::MIN_POSITIVE,
+      f64::EPSILON,
+      2.2250738585072014e-308,
+      2.225073858507201e-308,
+      5e-324,
+      1.2345678901234567e-300,
+      f64::NAN,
+      f64::INFINITY,
+    ]);
+    extremes.extend(extremes.clone().into_iter().map(|f| -f));
+    for data in extremes {
+      check(data);
+    }
+
+    let mut state = 0x9e37_79b9_7f4a_7c15_u64;
+    for _ in 0 .. 200_000 {
+      state ^= state << 13;
+      state ^= state >> 7;
+      state ^= state << 17;
+      check(f64::from_bits(state));
+    }
+  }
+
+  #[test]
+  fn should_hash_equal_doubles_equally() {
+    let hasher = RandomState::new();
+    let hash = |data: f64| {
+      let mut state = hasher.build_hasher();
+      hash_f64(&mut state, data);
+      state.finish()
+    };
+
+    assert_eq!(hash(0.0), hash(-0.0));
+    assert_eq!(hash(1.5), hash(1.5));
+    assert_ne!(hash(1.5), hash(-1.5));
+  }
 }
 
 #[cfg(test)]
@@ -944,7 +970,7 @@ pub fn build_bytes_streaming_frame(
 mod tests {
   use crate::resp3::{
     types::*,
-    utils::{bytes_encode_len, new_map, new_set},
+    utils::{bytes_encode_len, new_map},
   };
   use alloc::vec;
 
@@ -958,7 +984,7 @@ mod tests {
       data:       42,
       attributes: None,
     };
-    out.insert(key, value);
+    out.push((key, value));
 
     (out, 1 + 1 + 2 + 6 + 5)
   }
@@ -974,7 +1000,7 @@ mod tests {
       data:       42,
       attributes: None,
     };
-    out.insert(key, value);
+    out.push((key, value));
 
     (out, 4 + 6 + 8)
   }
@@ -1001,7 +1027,7 @@ mod tests {
 
     let expected = BytesFrame::BlobString {
       data:       "foobarbaz".as_bytes().into(),
-      attributes: Some(attributes),
+      attributes: Some(Box::new(attributes)),
     };
     assert_eq!(streamed_frame.take().unwrap(), expected);
   }
@@ -1049,7 +1075,7 @@ mod tests {
     });
     streamed_frame.add_frame(BytesFrame::Number {
       data:       42,
-      attributes: Some(attributes.clone()),
+      attributes: Some(Box::new(attributes.clone())),
     });
     streamed_frame.add_frame(BytesFrame::Boolean {
       data:       true,
@@ -1065,14 +1091,14 @@ mod tests {
         },
         BytesFrame::Number {
           data:       42,
-          attributes: Some(attributes.clone()),
+          attributes: Some(Box::new(attributes.clone())),
         },
         BytesFrame::Boolean {
           data:       true,
           attributes: None,
         },
       ],
-      attributes: Some(attributes),
+      attributes: Some(Box::new(attributes)),
     };
     assert_eq!(streamed_frame.take().unwrap(), expected);
   }
@@ -1103,8 +1129,8 @@ mod tests {
     streamed_frame.add_frame(v2.clone());
 
     let mut expected = new_map(0);
-    expected.insert(k1.clone(), v1.clone());
-    expected.insert(k2.clone(), v2.clone());
+    expected.push((k1.clone(), v1.clone()));
+    expected.push((k2.clone(), v2.clone()));
     let expected = BytesFrame::Map {
       data:       expected,
       attributes: None,
@@ -1122,11 +1148,11 @@ mod tests {
     streamed_frame.add_attributes(attributes.clone()).unwrap();
 
     let mut expected = new_map(0);
-    expected.insert(k1.clone(), v1.clone());
-    expected.insert(k2.clone(), v2.clone());
+    expected.push((k1.clone(), v1.clone()));
+    expected.push((k2.clone(), v2.clone()));
     let expected = BytesFrame::Map {
       data:       expected,
-      attributes: Some(attributes),
+      attributes: Some(Box::new(attributes)),
     };
     assert_eq!(streamed_frame.take().unwrap(), expected);
   }
@@ -1156,11 +1182,11 @@ mod tests {
     streamed_frame.add_frame(v3.clone());
     streamed_frame.add_frame(v4.clone());
 
-    let mut expected = new_set(0);
-    expected.insert(v1.clone());
-    expected.insert(v2.clone());
-    expected.insert(v3.clone());
-    expected.insert(v4.clone());
+    let mut expected = Vec::new();
+    expected.push(v1.clone());
+    expected.push(v2.clone());
+    expected.push(v3.clone());
+    expected.push(v4.clone());
     let expected = BytesFrame::Set {
       data:       expected,
       attributes: None,
@@ -1177,14 +1203,14 @@ mod tests {
     streamed_frame.add_frame(v4.clone());
     streamed_frame.add_attributes(attributes.clone()).unwrap();
 
-    let mut expected = new_set(0);
-    expected.insert(v1);
-    expected.insert(v2);
-    expected.insert(v3);
-    expected.insert(v4);
+    let mut expected = Vec::new();
+    expected.push(v1);
+    expected.push(v2);
+    expected.push(v3);
+    expected.push(v4);
     let expected = BytesFrame::Set {
       data:       expected,
-      attributes: Some(attributes),
+      attributes: Some(Box::new(attributes)),
     };
     assert_eq!(streamed_frame.take().unwrap(), expected);
   }
@@ -1259,14 +1285,14 @@ mod tests {
         BytesFrame::Null,
         BytesFrame::BigNumber {
           data:       "123456789".as_bytes().into(),
-          attributes: Some(attributes.clone()),
+          attributes: Some(Box::new(attributes.clone())),
         },
       ],
       attributes: None,
     });
     streamed_frame.add_frame(BytesFrame::Boolean {
       data:       true,
-      attributes: Some(attributes.clone()),
+      attributes: Some(Box::new(attributes.clone())),
     });
     streamed_frame.add_attributes(attributes.clone()).unwrap();
 
@@ -1285,17 +1311,17 @@ mod tests {
             BytesFrame::Null,
             BytesFrame::BigNumber {
               data:       "123456789".as_bytes().into(),
-              attributes: Some(attributes.clone()),
+              attributes: Some(Box::new(attributes.clone())),
             },
           ],
           attributes: None,
         },
         BytesFrame::Boolean {
           data:       true,
-          attributes: Some(attributes.clone()),
+          attributes: Some(Box::new(attributes.clone())),
         },
       ],
-      attributes: Some(attributes),
+      attributes: Some(Box::new(attributes)),
     };
     assert_eq!(streamed_frame.take().unwrap(), expected);
   }
@@ -1323,7 +1349,7 @@ mod tests {
       attributes: None,
     };
     let mut inner_map = new_map(0);
-    inner_map.insert(inner_k1.clone(), inner_v1.clone());
+    inner_map.push((inner_k1.clone(), inner_v1.clone()));
     let v2 = BytesFrame::Map {
       data:       inner_map,
       attributes: None,
@@ -1336,8 +1362,8 @@ mod tests {
     streamed_frame.add_frame(v2.clone());
 
     let mut expected = new_map(0);
-    expected.insert(k1.clone(), v1.clone());
-    expected.insert(k2.clone(), v2.clone());
+    expected.push((k1.clone(), v1.clone()));
+    expected.push((k2.clone(), v2.clone()));
     let expected = BytesFrame::Map {
       data:       expected,
       attributes: None,
@@ -1348,7 +1374,7 @@ mod tests {
     v1.add_attributes(attributes.clone()).unwrap();
     inner_v1.add_attributes(attributes.clone()).unwrap();
     let mut inner_map = new_map(0);
-    inner_map.insert(inner_k1, inner_v1);
+    inner_map.push((inner_k1, inner_v1));
     let v2 = BytesFrame::Map {
       data:       inner_map,
       attributes: None,
@@ -1362,11 +1388,11 @@ mod tests {
     streamed_frame.add_attributes(attributes.clone()).unwrap();
 
     let mut expected = new_map(0);
-    expected.insert(k1.clone(), v1.clone());
-    expected.insert(k2.clone(), v2.clone());
+    expected.push((k1.clone(), v1.clone()));
+    expected.push((k2.clone(), v2.clone()));
     let expected = BytesFrame::Map {
       data:       expected,
-      attributes: Some(attributes),
+      attributes: Some(Box::new(attributes)),
     };
     assert_eq!(streamed_frame.take().unwrap(), expected);
   }
@@ -1575,36 +1601,33 @@ mod tests {
       setname: None,
     };
 
-    // HELLO 3\r\n
-    let expected_len = 5 + 1 + 1 + 2;
-    assert_eq!(bytes_encode_len(&frame, false), expected_len);
+    let expected = "*2\r\n$5\r\nHELLO\r\n$1\r\n3\r\n";
+    assert_eq!(bytes_encode_len(&frame, false), expected.len());
 
     let frame = BytesFrame::Hello {
       version: RespVersion::RESP2,
       auth:    None,
       setname: None,
     };
-    // HELLO 2\r\n
-    let expected_len = 5 + 1 + 1 + 2;
-    assert_eq!(bytes_encode_len(&frame, false), expected_len);
+    let expected = "*2\r\n$5\r\nHELLO\r\n$1\r\n2\r\n";
+    assert_eq!(bytes_encode_len(&frame, false), expected.len());
 
     let frame = BytesFrame::Hello {
       version: RespVersion::RESP3,
-      auth:    Some(("foo".into(), "bar".into())),
+      auth:    Some(Box::new(("foo".into(), "bar".into()))),
       setname: None,
     };
-    // HELLO 3 AUTH foo bar\r\n
-    let expected_len = 5 + 1 + 1 + 1 + 4 + 1 + 3 + 1 + 3 + 2;
-    assert_eq!(bytes_encode_len(&frame, false), expected_len);
+    let expected = "*5\r\n$5\r\nHELLO\r\n$1\r\n3\r\n$4\r\nAUTH\r\n$3\r\nfoo\r\n$3\r\nbar\r\n";
+    assert_eq!(bytes_encode_len(&frame, false), expected.len());
 
     let frame = BytesFrame::Hello {
       version: RespVersion::RESP3,
-      auth:    Some(("foo".into(), "bar".into())),
+      auth:    Some(Box::new(("foo".into(), "bar".into()))),
       setname: Some("baz".into()),
     };
-    // HELLO 3 AUTH foo bar SETNAME baz\r\n
-    let expected_len = 5 + 1 + 1 + 1 + 4 + 1 + 3 + 1 + 3 + 1 + 7 + 1 + 3 + 2;
-    assert_eq!(bytes_encode_len(&frame, false), expected_len);
+    let expected =
+      "*7\r\n$5\r\nHELLO\r\n$1\r\n3\r\n$4\r\nAUTH\r\n$3\r\nfoo\r\n$3\r\nbar\r\n$7\r\nSETNAME\r\n$3\r\nbaz\r\n";
+    assert_eq!(bytes_encode_len(&frame, false), expected.len());
   }
 
   #[test]

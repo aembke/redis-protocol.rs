@@ -1,8 +1,7 @@
 Redis Protocol
 ==============
 
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 [![CircleCI](https://circleci.com/gh/aembke/redis-protocol.rs/tree/main.svg?style=svg)](https://circleci.com/gh/aembke/redis-protocol.rs/tree/main)
 [![Crates.io](https://img.shields.io/crates/v/redis-protocol.svg)](https://crates.io/crates/redis-protocol)
 [![API docs](https://docs.rs/redis-protocol/badge.svg)](https://docs.rs/redis-protocol)
@@ -48,22 +47,30 @@ fn main() {
 
 | Name          | Default | Description                                                                                                                                  |
 |---------------|---------|----------------------------------------------------------------------------------------------------------------------------------------------|
-| `std`         | x       | Enable stdlib features and most dependency default features.                                                                                 |
+| `std`         | x       | Enable stdlib features and the `std` features of dependencies.                                                                               |
 | `resp2`       | x       | Enable the RESP2 interface.                                                                                                                  |
 | `resp3`       | x       | Enable the RESP3 interface.                                                                                                                  |
 | `bytes`       |         | Enable the zero-copy parsing interface via [Bytes](https://crates.io/crates/bytes) types.                                                    |
 | `decode-logs` |         | Enable extra debugging TRACE logs during the frame decoding process.                                                                         |
-| `codec`       |         | Enable a RESP2 and RESP3 [Tokio codec](https://docs.rs/tokio-util/latest/tokio_util/codec/index.html) interface.                             |
+| `codec`       |         | Enable a RESP2 and RESP3 [Tokio codec](https://docs.rs/tokio-util/latest/tokio_util/codec/index.html) interface. Implies `std` and `bytes`.  |
 | `convert`     |         | Enable the `FromResp2` and `FromResp3` trait interfaces.                                                                                     |
-| `index-map`   |         | Use [IndexMap](https://crates.io/crates/indexmap) types instead of `HashMap`. This is useful for testing and may also be useful for callers. |
+
+RESP3 maps and sets (`FrameMap` and `FrameSet`) are `Vec`s that keep the order of the elements on the wire, along with any
+duplicates. Convert them to the map or set type that suits the application, such as `HashMap` or `IndexMap`.
+
+## Untrusted Input
+
+The decoders reject frames with aggregate types (arrays, maps, sets, etc.) nested more than
+[MAX_DECODE_DEPTH](https://docs.rs/redis-protocol/latest/redis_protocol/types/constant.MAX_DECODE_DEPTH.html) levels
+deep, returning an error rather than risking a stack overflow.
 
 ## no_std
 
-`no_std` builds are supported by disabling the `std` feature. However, a few optional dependencies must be activated as
-a substitute.
+`no_std` builds are supported by disabling the `std` feature. The crate still requires `alloc`. The `codec` feature
+requires `std`.
 
 ```TOML
-redis-protocol = { version = "X.X.X", default-features = false, features = ["libm", "hashbrown", "alloc"] }
+redis-protocol = { version = "X.X.X", default-features = false, features = ["resp2", "resp3"] }
 ```
 
 ## Decoding
@@ -73,15 +80,41 @@ different use cases:
 
 * `OwnedFrame` types use `core` container types to implement owned frame variants. This is the easiest frame
   interface to use, but often requires moving or copying the underlying buffer contents when decoding.
-* `BytesFrame` types use [Bytes](https://docs.rs/bytes/1.5.0/bytes/struct.Bytes.html) as the backing container.
+* `BytesFrame` types use [Bytes](https://docs.rs/bytes/latest/bytes/struct.Bytes.html) as the backing container.
   The `bytes` feature flag enables this frame type and a set of associated functions that avoid moving or
   copying `BytesMut` contents.
 * `RangeFrame` types represent ranges into an associated buffer and are typically used to implement forms of zero-copy
   parsing. This is the lowest level interface.
 
+### Incremental Decoding
+
+The decoding functions don't keep any state between calls. When a buffer holds only part of a frame they return
+`None`, and the next call parses the buffer again from the start. If a large frame arrives over many small reads, such
+as TLS records, the total cost of decoding it grows with the square of its size.
+
+The `FrameScanner` types in the `resp2::decode` and `resp3::decode` modules avoid this. A scanner remembers how far it
+got through a partial frame, so each call only reads newly received bytes, and the decoder only runs once the frame is
+complete. The codecs in the `codec` module use a scanner internally.
+
+```rust
+use bytes::BytesMut;
+use redis_protocol::resp2::decode::{decode_bytes_mut, FrameScanner};
+
+let mut scanner = FrameScanner::new();
+let mut buf = BytesMut::from("*2\r\n$3\r\nfoo\r\n$3\r\nb");
+assert!(scanner.decode_with(&mut buf, decode_bytes_mut).unwrap().is_none());
+
+// the next call reads only the new bytes
+buf.extend_from_slice(b"ar\r\n");
+let (frame, _, _) = scanner.decode_with(&mut buf, decode_bytes_mut).unwrap().unwrap();
+println!("Decoded {:?}", frame);
+assert!(buf.is_empty());
+```
+
 ### RESP2 `OwnedFrame` Decoding Example
 
-Simple array decoding example adapted from the tests
+Simple array decoding example adapted from the tests. Note that RESP2 has two null values: a null bulk string
+(`$-1\r\n`) decodes to `Null`, and a null array (`*-1\r\n`) decodes to `NullArray`.
 
 ```rust
 use redis_protocol::resp2::{
@@ -89,18 +122,19 @@ use redis_protocol::resp2::{
   types::{OwnedFrame, Resp2Frame}
 };
 
-fn should_decode_array() {
-  // ["Foo", nil, "Bar"]
-  let buf: &[u8] = b"*3\r\n$3\r\nFoo\r\n$-1\r\n$3\r\nBar\r\n";
+// ["Foo", nil, "Bar"]
+let buf: &[u8] = b"*3\r\n$3\r\nFoo\r\n$-1\r\n$3\r\nBar\r\n";
 
-  let (frame, amt) = decode(&buf).unwrap().unwrap();
-  assert_eq!(frame, OwnedFrame::Array(vec![
-    OwnedFrame::BulkString("Foo".into()),
-    OwnedFrame::Null,
-    OwnedFrame::BulkString("Bar".into())
-  ]));
-  assert_eq!(amt, buf.len());
-}
+let (frame, amt) = decode(&buf).unwrap().unwrap();
+assert_eq!(frame, OwnedFrame::Array(vec![
+  OwnedFrame::BulkString("Foo".into()),
+  OwnedFrame::Null,
+  OwnedFrame::BulkString("Bar".into())
+]));
+assert_eq!(amt, buf.len());
+
+let (frame, _) = decode(b"*-1\r\n").unwrap().unwrap();
+assert_eq!(frame, OwnedFrame::NullArray);
 ```
 
 ### RESP2 `BytesFrame` Decoding Example
@@ -114,28 +148,26 @@ use redis_protocol::resp2::{
 };
 use bytes::BytesMut;
 
-fn should_decode_array_no_nulls() {
-  let expected = (
-    BytesFrame::Array(vec![
-      BytesFrame::SimpleString("Foo".into()),
-      BytesFrame::SimpleString("Bar".into()),
-    ]),
-    16,
-  );
-  let mut bytes: BytesMut = "*2\r\n+Foo\r\n+Bar\r\n".into();
-  let total_len = bytes.len();
+let expected = (
+  BytesFrame::Array(vec![
+    BytesFrame::SimpleString("Foo".into()),
+    BytesFrame::SimpleString("Bar".into()),
+  ]),
+  16,
+);
+let mut bytes: BytesMut = "*2\r\n+Foo\r\n+Bar\r\n".into();
+let total_len = bytes.len();
 
-  let (frame, amt, buf) = match decode_bytes_mut(&mut bytes) {
-    Ok(Some(result)) => result,
-    Ok(None) => panic!("Expected complete frame"),
-    Err(e) => panic!("{:?}", e)
-  };
+let (frame, amt, buf) = match decode_bytes_mut(&mut bytes) {
+  Ok(Some(result)) => result,
+  Ok(None) => panic!("Expected complete frame"),
+  Err(e) => panic!("{:?}", e)
+};
 
-  assert_eq!(frame, expected.0, "decoded frame matched");
-  assert_eq!(amt, expected.1, "decoded frame len matched");
-  assert_eq!(buf.len(), expected.1, "output buffer len matched");
-  assert_eq!(buf.len() + bytes.len(), total_len, "total len matched");
-}
+assert_eq!(frame, expected.0, "decoded frame matched");
+assert_eq!(amt, expected.1, "decoded frame len matched");
+assert_eq!(buf.len(), expected.1, "output buffer len matched");
+assert_eq!(buf.len() + bytes.len(), total_len, "total len matched");
 ```
 
 ### RESP2 `RangeFrame` Decoding Example
@@ -166,6 +198,12 @@ fn decode_borrowed(buf: &[u8]) -> Option<MyBorrowedFrame> {
     _ => None,
   }
 }
+
+let buf = b"$3\r\nfoo\r\n";
+assert!(matches!(decode_borrowed(buf), Some(MyBorrowedFrame::BulkString(b"foo"))));
+let buf = b"+bar\r\n";
+assert!(matches!(decode_borrowed(buf), Some(MyBorrowedFrame::SimpleString("bar"))));
+assert!(decode_borrowed(b":1\r\n").is_none());
 ```
 
 ## Encoding
@@ -173,9 +211,9 @@ fn decode_borrowed(buf: &[u8]) -> Option<MyBorrowedFrame> {
 Similar to the decoding interface, there are 3 frame types available to callers for encoding use cases.
 
 * `OwnedFrame` - See above. Callers that use this interface often have to allocate additional containers on the heap,
-  and often have to move or copy the contents into these frame types from other types, such as `RedisValue` in `fred`.
+  and often have to move or copy the contents into these frame types from other types, such as `Value` in [fred](https://crates.io/crates/fred).
 * `BytesFrame` - See above. This frame type often avoids the need to copy or move the contents from upstream types such
-  as `RedisValue`, but still requires callers to allocate containers on the heap (i.e. the `Vec` in the `Array`
+  as `Value`, but still requires callers to allocate containers on the heap (i.e. the `Vec` in the `Array`
   variant).
 * `BorrowedFrame` - This frame type serves a similar purpose to the `RangeFrame` type in the decoding interface in that
   it can be used when callers want to entirely avoid heap allocations. In practice this often requires the caller to
@@ -224,5 +262,19 @@ fn main() {
   let len = encode::extend_encode_borrowed(&mut buf, &frame, false).expect("Error encoding frame");
   println!("Encoded {} bytes into buffer with contents {:?}", len, buf);
 }
-
 ```
+
+## Benchmarks
+
+```bash
+cargo bench --features bytes
+```
+
+## License
+
+Licensed under either of
+
+* Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or <https://www.apache.org/licenses/LICENSE-2.0>)
+* MIT license ([LICENSE-MIT](LICENSE-MIT) or <https://opensource.org/licenses/MIT>)
+
+at your option.

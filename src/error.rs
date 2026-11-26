@@ -1,5 +1,6 @@
+#[cfg(any(feature = "resp2", feature = "resp3"))]
+use crate::gen::GenError;
 use alloc::{borrow::Cow, format, string::FromUtf8Error};
-use cookie_factory::GenError;
 use core::{borrow::Borrow, fmt, fmt::Debug, str::Utf8Error};
 use nom::{
   error::{ErrorKind, FromExternalError, ParseError},
@@ -10,12 +11,11 @@ use nom::{
 #[cfg(feature = "bytes")]
 use bytes_utils::string::Utf8Error as BytesUtf8Error;
 #[cfg(feature = "std")]
-use std::error::Error;
-#[cfg(feature = "std")]
 use std::io::Error as IoError;
 
 /// The kind of error without any associated data.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum RedisProtocolErrorKind {
   /// An error that occurred while encoding data.
   EncodeError,
@@ -119,56 +119,24 @@ impl fmt::Display for RedisProtocolError {
   }
 }
 
+#[cfg(any(feature = "resp2", feature = "resp3"))]
 impl From<GenError> for RedisProtocolError {
   fn from(e: GenError) -> Self {
     match e {
       GenError::CustomError(i) => match i {
         1 => RedisProtocolError::new(RedisProtocolErrorKind::EncodeError, "Invalid frame kind."),
-        2 => RedisProtocolError::new(RedisProtocolErrorKind::EncodeError, "Cannot encode NaN."),
         3 => RedisProtocolError::new(RedisProtocolErrorKind::EncodeError, "Cannot stream non aggregate type."),
+        crate::gen::INVALID_LINE => RedisProtocolError::new(
+          RedisProtocolErrorKind::EncodeError,
+          "Simple strings, simple errors, and big numbers cannot contain CR or LF.",
+        ),
+        crate::gen::COMMAND_LENGTH => RedisProtocolError::new(
+          RedisProtocolErrorKind::EncodeError,
+          "The number of command arguments doesn't match the iterator's length.",
+        ),
         _ => RedisProtocolError::new_empty(),
       },
-      GenError::InvalidOffset => RedisProtocolError::new(RedisProtocolErrorKind::EncodeError, "Invalid offset."),
       GenError::BufferTooSmall(b) => RedisProtocolError::buffer_too_small(b),
-      _ => RedisProtocolError::new_empty(),
-    }
-  }
-}
-
-impl From<NomError<nom::error::Error<&[u8]>>> for RedisProtocolError {
-  fn from(e: NomError<nom::error::Error<&[u8]>>) -> Self {
-    if let NomError::Incomplete(Needed::Size(s)) = e {
-      RedisProtocolError {
-        kind:    RedisProtocolErrorKind::BufferTooSmall(s.get()),
-        details: Cow::Borrowed(""),
-      }
-    } else {
-      let desc = match e {
-        NomError::Failure(inner) => format!("Failure: {:?}", inner.code),
-        NomError::Error(inner) => format!("Error: {:?}", inner.code),
-        _ => format!("{:?}", e),
-      };
-
-      RedisProtocolError {
-        kind:    RedisProtocolErrorKind::DecodeError,
-        details: Cow::Owned(desc),
-      }
-    }
-  }
-}
-
-impl From<NomError<&[u8]>> for RedisProtocolError {
-  fn from(e: NomError<&[u8]>) -> Self {
-    if let NomError::Incomplete(Needed::Size(s)) = e {
-      RedisProtocolError {
-        kind:    RedisProtocolErrorKind::BufferTooSmall(s.get()),
-        details: Cow::Borrowed(""),
-      }
-    } else {
-      RedisProtocolError {
-        kind:    RedisProtocolErrorKind::DecodeError,
-        details: Cow::Owned(format!("{:?}", e)),
-      }
     }
   }
 }
@@ -185,13 +153,13 @@ where
   I: Debug,
 {
   fn from(e: RedisParseError<I>) -> Self {
-    RedisProtocolError::new(RedisProtocolErrorKind::DecodeError, format!("{:?}", e))
+    RedisProtocolError::new(RedisProtocolErrorKind::DecodeError, format!("{e:?}"))
   }
 }
 
 impl From<FromUtf8Error> for RedisProtocolError {
   fn from(e: FromUtf8Error) -> Self {
-    RedisProtocolError::new(RedisProtocolErrorKind::Unknown, format!("{:?}", e))
+    RedisProtocolError::new(RedisProtocolErrorKind::Unknown, format!("{e:?}"))
   }
 }
 
@@ -204,12 +172,12 @@ impl<B> From<BytesUtf8Error<B>> for RedisProtocolError {
 
 impl From<Utf8Error> for RedisProtocolError {
   fn from(e: Utf8Error) -> Self {
-    RedisProtocolError::new(RedisProtocolErrorKind::DecodeError, format!("{}", e))
+    RedisProtocolError::new(RedisProtocolErrorKind::DecodeError, format!("{e}"))
   }
 }
 
 /// A struct defining parse errors when decoding frames.
-pub enum RedisParseError<I> {
+pub(crate) enum RedisParseError<I> {
   Custom {
     context: &'static str,
     message: Cow<'static, str>,
@@ -224,9 +192,9 @@ where
 {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
-      RedisParseError::Custom { context, message } => write!(f, "{}: {}", context, message),
-      RedisParseError::Nom(input, kind) => write!(f, "{:?} at {:?}", kind, input),
-      RedisParseError::Incomplete(needed) => write!(f, "Incomplete({:?})", needed),
+      RedisParseError::Custom { context, message } => write!(f, "{context}: {message}"),
+      RedisParseError::Nom(input, kind) => write!(f, "{kind:?} at {input:?}"),
+      RedisParseError::Incomplete(needed) => write!(f, "Incomplete({needed:?})"),
     }
   }
 }
@@ -297,18 +265,14 @@ impl<B, I> From<BytesUtf8Error<B>> for RedisParseError<I> {
 
 impl<I> From<Utf8Error> for RedisParseError<I> {
   fn from(e: Utf8Error) -> Self {
-    RedisParseError::new_custom("parse_utf8", format!("{}", e))
+    RedisParseError::new_custom("parse_utf8", format!("{e}"))
   }
 }
 
-#[cfg(feature = "std")]
-impl std::error::Error for RedisProtocolError {
-  fn description(&self) -> &str {
-    self.details()
-  }
-
-  fn source(&self) -> Option<&(dyn Error + 'static)> {
+impl core::error::Error for RedisProtocolError {
+  fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
     match self.kind {
+      #[cfg(feature = "std")]
       RedisProtocolErrorKind::IO(ref e) => Some(e),
       _ => None,
     }
@@ -318,13 +282,13 @@ impl std::error::Error for RedisProtocolError {
 #[cfg(feature = "convert")]
 impl From<core::num::ParseIntError> for RedisProtocolError {
   fn from(value: core::num::ParseIntError) -> Self {
-    RedisProtocolError::new_parse(format!("{:?}", value))
+    RedisProtocolError::new_parse(format!("{value:?}"))
   }
 }
 
 #[cfg(feature = "convert")]
 impl From<core::num::ParseFloatError> for RedisProtocolError {
   fn from(value: core::num::ParseFloatError) -> Self {
-    RedisProtocolError::new_parse(format!("{:?}", value))
+    RedisProtocolError::new_parse(format!("{value:?}"))
   }
 }

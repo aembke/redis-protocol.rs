@@ -1,8 +1,7 @@
 use crate::{
   digits_in_usize,
   resp2::utils::{bulkstring_encode_len, error_encode_len, integer_encode_len, simplestring_encode_len},
-  resp3::types::OwnedFrame as Resp3OwnedFrame,
-  types::{_Range, PATTERN_PUBSUB_PREFIX, PUBSUB_PREFIX, PUBSUB_PUSH_PREFIX, SHARD_PUBSUB_PREFIX},
+  types::{_Range, PATTERN_PUBSUB_PREFIX, PUBSUB_PREFIX, SHARD_PUBSUB_PREFIX},
   utils,
 };
 use alloc::{
@@ -18,12 +17,13 @@ use core::{
 
 #[cfg(feature = "convert")]
 use crate::convert::FromResp2;
-#[cfg(any(feature = "bytes", feature = "convert"))]
 use crate::error::RedisProtocolError;
 #[cfg(feature = "bytes")]
 use crate::error::RedisProtocolErrorKind;
-#[cfg(feature = "bytes")]
+#[cfg(all(feature = "bytes", feature = "resp3"))]
 use crate::resp3::types::BytesFrame as Resp3BytesFrame;
+#[cfg(feature = "resp3")]
+use crate::{resp3::types::OwnedFrame as Resp3OwnedFrame, types::PUBSUB_PUSH_PREFIX};
 #[cfg(feature = "bytes")]
 use bytes::Bytes;
 #[cfg(feature = "bytes")]
@@ -42,9 +42,12 @@ pub const ARRAY_BYTE: u8 = b'*';
 
 /// The binary representation of NULL in RESP2.
 pub const NULL: &str = "$-1\r\n";
+/// The binary representation of a null array in RESP2.
+pub const NULL_ARRAY: &str = "*-1\r\n";
 
 /// An enum representing the type of RESP frame.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[non_exhaustive]
 pub enum FrameKind {
   SimpleString,
   Error,
@@ -52,6 +55,7 @@ pub enum FrameKind {
   BulkString,
   Array,
   Null,
+  NullArray,
 }
 
 impl FrameKind {
@@ -83,7 +87,7 @@ impl FrameKind {
       Error => ERROR_BYTE,
       Integer => INTEGER_BYTE,
       BulkString | Null => BULKSTRING_BYTE,
-      Array => ARRAY_BYTE,
+      Array | NullArray => ARRAY_BYTE,
     }
   }
 
@@ -98,12 +102,14 @@ impl FrameKind {
       Error => "e",
       Integer => "i",
       Null => "N",
+      NullArray => "NA",
     }
   }
 }
 
 /// A borrowed frame variant, typically used for encoding use cases.
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum BorrowedFrame<'a> {
   /// A RESP2 simple string.
   SimpleString(&'a [u8]),
@@ -117,22 +123,11 @@ pub enum BorrowedFrame<'a> {
   Array(&'a [BorrowedFrame<'a>]),
   /// A null value.
   Null,
+  /// A null array value (`*-1\r\n`).
+  NullArray,
 }
 
-impl<'a> Clone for BorrowedFrame<'a> {
-  fn clone(self: &BorrowedFrame<'a>) -> BorrowedFrame<'a> {
-    match self {
-      BorrowedFrame::Null => BorrowedFrame::Null,
-      BorrowedFrame::Array(a) => BorrowedFrame::Array(a),
-      BorrowedFrame::BulkString(b) => BorrowedFrame::BulkString(b),
-      BorrowedFrame::SimpleString(s) => BorrowedFrame::SimpleString(s),
-      BorrowedFrame::Error(e) => BorrowedFrame::Error(e),
-      BorrowedFrame::Integer(i) => BorrowedFrame::Integer(*i),
-    }
-  }
-}
-
-impl<'a> Hash for BorrowedFrame<'a> {
+impl Hash for BorrowedFrame<'_> {
   fn hash<H: Hasher>(&self, state: &mut H) {
     self.kind().hash_prefix().hash(state);
 
@@ -142,11 +137,12 @@ impl<'a> Hash for BorrowedFrame<'a> {
       BorrowedFrame::Integer(i) => i.hash(state),
       BorrowedFrame::Array(f) => f.iter().for_each(|f| f.hash(state)),
       BorrowedFrame::Null => NULL.hash(state),
+      BorrowedFrame::NullArray => NULL_ARRAY.hash(state),
     }
   }
 }
 
-impl<'a> BorrowedFrame<'a> {
+impl BorrowedFrame<'_> {
   /// Read the `FrameKind` value for this frame.
   pub fn kind(&self) -> FrameKind {
     match self {
@@ -156,6 +152,7 @@ impl<'a> BorrowedFrame<'a> {
       BorrowedFrame::BulkString(_) => FrameKind::BulkString,
       BorrowedFrame::Array(_) => FrameKind::Array,
       BorrowedFrame::Null => FrameKind::Null,
+      BorrowedFrame::NullArray => FrameKind::NullArray,
     }
   }
 
@@ -170,6 +167,7 @@ impl<'a> BorrowedFrame<'a> {
         m + f.encode_len(int_as_bulkstring)
       }),
       BorrowedFrame::Null => NULL.as_bytes().len(),
+      BorrowedFrame::NullArray => NULL_ARRAY.as_bytes().len(),
       BorrowedFrame::SimpleString(s) => simplestring_encode_len(s),
       BorrowedFrame::Error(s) => error_encode_len(s),
       BorrowedFrame::Integer(i) => integer_encode_len(*i, int_as_bulkstring),
@@ -180,6 +178,7 @@ impl<'a> BorrowedFrame<'a> {
 /// A reference-free frame type representing ranges into an associated buffer, typically used to implement zero-copy
 /// parsing.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum RangeFrame {
   /// A RESP2 simple string.
   SimpleString(_Range),
@@ -193,6 +192,34 @@ pub enum RangeFrame {
   Array(Vec<RangeFrame>),
   /// A null value.
   Null,
+  /// A null array value (`*-1\r\n`).
+  NullArray,
+}
+
+impl RangeFrame {
+  /// Build an [OwnedFrame] from the buffer this frame was decoded from.
+  ///
+  /// This copies the contents of each frame out of `buf`, which must be the buffer passed to `decode_range`.
+  ///
+  /// # Panics
+  ///
+  /// Panics if `buf` is shorter than the ranges in the frame.
+  pub fn to_owned_frame(&self, buf: &[u8]) -> Result<OwnedFrame, RedisProtocolError> {
+    crate::resp2::utils::build_owned_frame(buf, self)
+  }
+
+  /// Build a [BytesFrame] from the buffer this frame was decoded from, without copying the contents of each frame.
+  ///
+  /// `buf` must contain the same bytes that were passed to `decode_range`.
+  ///
+  /// # Panics
+  ///
+  /// Panics if `buf` is shorter than the ranges in the frame.
+  #[cfg(feature = "bytes")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
+  pub fn to_bytes_frame(&self, buf: &Bytes) -> Result<BytesFrame, RedisProtocolError> {
+    crate::resp2::utils::build_bytes_frame(buf, self)
+  }
 }
 
 /// Generic operations on a RESP2 frame.
@@ -233,8 +260,11 @@ pub trait Resp2Frame: Debug + Hash + Eq {
   }
 
   /// Convert the frame to a double.
+  ///
+  /// Integers are cast to a double and strings are parsed with [str_to_f64](crate::str_to_f64), which supports
+  /// `inf`, `-inf`, and `nan`.
   fn as_f64(&self) -> Option<f64> {
-    self.as_str().and_then(|s| s.parse::<f64>().ok())
+    self.as_str().and_then(|s| utils::str_to_f64(s).ok())
   }
 
   /// Convert the frame to another type.
@@ -253,9 +283,7 @@ pub trait Resp2Frame: Debug + Hash + Eq {
   #[cfg_attr(docsrs, doc(cfg(feature = "convert")))]
   fn is_single_element_vec(&self) -> bool;
 
-  /// Pop an element from the inner array or return the original frame.
-  ///
-  /// This function is intended to be used with [Self::is_single_element_vec] and may panic.
+  /// Return the only element of a single-element array, or the original frame otherwise.
   #[cfg(feature = "convert")]
   #[cfg_attr(docsrs, doc(cfg(feature = "convert")))]
   fn pop_or_take(self) -> Self;
@@ -263,6 +291,7 @@ pub trait Resp2Frame: Debug + Hash + Eq {
 
 /// A RESP2 frame.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum OwnedFrame {
   /// A RESP2 simple string.
   SimpleString(Vec<u8>),
@@ -276,6 +305,8 @@ pub enum OwnedFrame {
   Array(Vec<OwnedFrame>),
   /// A null value.
   Null,
+  /// A null array value (`*-1\r\n`).
+  NullArray,
 }
 
 impl OwnedFrame {
@@ -292,9 +323,12 @@ impl OwnedFrame {
         BytesFrame::Array(frames.into_iter().map(|frame| frame.into_bytes_frame()).collect())
       },
       OwnedFrame::Null => BytesFrame::Null,
+      OwnedFrame::NullArray => BytesFrame::NullArray,
     }
   }
 
+  #[cfg(feature = "resp3")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "resp3")))]
   /// Convert the frame to RESP3.
   ///
   /// For the most part RESP3 is a superset of RESP2, but there is one notable difference with publish-subscribe
@@ -333,6 +367,7 @@ impl OwnedFrame {
           attributes: None,
         },
         OwnedFrame::Null => Resp3OwnedFrame::Null,
+        OwnedFrame::NullArray => Resp3OwnedFrame::Null,
       }
     }
   }
@@ -348,6 +383,7 @@ impl Hash for OwnedFrame {
       OwnedFrame::Integer(i) => i.hash(state),
       OwnedFrame::Array(f) => f.iter().for_each(|f| f.hash(state)),
       OwnedFrame::Null => NULL.hash(state),
+      OwnedFrame::NullArray => NULL_ARRAY.hash(state),
     }
   }
 }
@@ -360,6 +396,7 @@ impl Resp2Frame for OwnedFrame {
         m + f.encode_len(int_as_bulkstring)
       }),
       OwnedFrame::Null => NULL.as_bytes().len(),
+      OwnedFrame::NullArray => NULL_ARRAY.as_bytes().len(),
       OwnedFrame::SimpleString(s) => simplestring_encode_len(s),
       OwnedFrame::Error(s) => error_encode_len(s),
       OwnedFrame::Integer(i) => integer_encode_len(*i, int_as_bulkstring),
@@ -378,6 +415,7 @@ impl Resp2Frame for OwnedFrame {
       OwnedFrame::BulkString(_) => FrameKind::BulkString,
       OwnedFrame::Array(_) => FrameKind::Array,
       OwnedFrame::Null => FrameKind::Null,
+      OwnedFrame::NullArray => FrameKind::NullArray,
     }
   }
 
@@ -396,7 +434,15 @@ impl Resp2Frame for OwnedFrame {
       OwnedFrame::Integer(0) => Some(false),
       OwnedFrame::Integer(1) => Some(true),
       OwnedFrame::Null => Some(false),
+      OwnedFrame::NullArray => Some(false),
       _ => None,
+    }
+  }
+
+  fn as_f64(&self) -> Option<f64> {
+    match self {
+      OwnedFrame::Integer(i) => Some(*i as f64),
+      _ => self.as_str().and_then(|s| utils::str_to_f64(s).ok()),
     }
   }
 
@@ -467,18 +513,18 @@ impl Resp2Frame for OwnedFrame {
   #[cfg(feature = "convert")]
   #[cfg_attr(docsrs, doc(cfg(feature = "convert")))]
   fn pop_or_take(self) -> Self {
-    if let OwnedFrame::Array(mut values) = self {
-      values.pop().unwrap().pop_or_take()
-    } else {
-      self
+    match self {
+      OwnedFrame::Array(mut values) if values.len() == 1 => values.swap_remove(0),
+      _ => self,
     }
   }
 }
 
-/// A RESP2 frame that uses [Bytes](bytes::Bytes) and [Str](bytes_utils::Str) as the underlying buffer type.
+/// A RESP2 frame that uses [Bytes] and [Str] as the underlying buffer type.
 #[cfg(feature = "bytes")]
 #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum BytesFrame {
   /// A RESP2 simple string.
   SimpleString(Bytes),
@@ -492,6 +538,8 @@ pub enum BytesFrame {
   Array(Vec<BytesFrame>),
   /// A null value.
   Null,
+  /// A null array value (`*-1\r\n`).
+  NullArray,
 }
 
 #[cfg(feature = "bytes")]
@@ -505,6 +553,7 @@ impl Hash for BytesFrame {
       BytesFrame::Integer(i) => i.hash(state),
       BytesFrame::Array(f) => f.iter().for_each(|f| f.hash(state)),
       BytesFrame::Null => NULL.hash(state),
+      BytesFrame::NullArray => NULL_ARRAY.hash(state),
     }
   }
 }
@@ -518,6 +567,7 @@ impl Resp2Frame for BytesFrame {
         m + f.encode_len(int_as_bulkstring)
       }),
       BytesFrame::Null => NULL.as_bytes().len(),
+      BytesFrame::NullArray => NULL_ARRAY.as_bytes().len(),
       BytesFrame::SimpleString(s) => simplestring_encode_len(s),
       BytesFrame::Error(s) => error_encode_len(s),
       BytesFrame::Integer(i) => integer_encode_len(*i, int_as_bulkstring),
@@ -536,6 +586,7 @@ impl Resp2Frame for BytesFrame {
       BytesFrame::BulkString(_) => FrameKind::BulkString,
       BytesFrame::Array(_) => FrameKind::Array,
       BytesFrame::Null => FrameKind::Null,
+      BytesFrame::NullArray => FrameKind::NullArray,
     }
   }
 
@@ -554,7 +605,15 @@ impl Resp2Frame for BytesFrame {
       BytesFrame::Integer(0) => Some(false),
       BytesFrame::Integer(1) => Some(true),
       BytesFrame::Null => Some(false),
+      BytesFrame::NullArray => Some(false),
       _ => None,
+    }
+  }
+
+  fn as_f64(&self) -> Option<f64> {
+    match self {
+      BytesFrame::Integer(i) => Some(*i as f64),
+      _ => self.as_str().and_then(|s| utils::str_to_f64(s).ok()),
     }
   }
 
@@ -625,10 +684,9 @@ impl Resp2Frame for BytesFrame {
   #[cfg(feature = "convert")]
   #[cfg_attr(docsrs, doc(cfg(feature = "convert")))]
   fn pop_or_take(self) -> Self {
-    if let BytesFrame::Array(mut values) = self {
-      values.pop().unwrap().pop_or_take()
-    } else {
-      self
+    match self {
+      BytesFrame::Array(mut values) if values.len() == 1 => values.swap_remove(0),
+      _ => self,
     }
   }
 }
@@ -644,9 +702,12 @@ impl BytesFrame {
       BytesFrame::BulkString(b) => OwnedFrame::BulkString(b.to_vec()),
       BytesFrame::Array(frames) => OwnedFrame::Array(frames.iter().map(|f| f.to_owned_frame()).collect()),
       BytesFrame::Null => OwnedFrame::Null,
+      BytesFrame::NullArray => OwnedFrame::NullArray,
     }
   }
 
+  #[cfg(feature = "resp3")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "resp3")))]
   /// Convert the frame to RESP3.
   ///
   /// For the most part RESP3 is a superset of RESP2, but there is one notable difference with publish-subscribe
@@ -685,6 +746,7 @@ impl BytesFrame {
           attributes: None,
         },
         BytesFrame::Null => Resp3BytesFrame::Null,
+        BytesFrame::NullArray => Resp3BytesFrame::Null,
       }
     }
   }
@@ -700,6 +762,7 @@ impl<B: Into<Bytes>> TryFrom<(FrameKind, B)> for BytesFrame {
       FrameKind::Error => BytesFrame::Error(Str::from_inner(buf.into())?),
       FrameKind::BulkString => BytesFrame::BulkString(buf.into()),
       FrameKind::Null => BytesFrame::Null,
+      FrameKind::NullArray => BytesFrame::NullArray,
       _ => {
         return Err(RedisProtocolError::new(
           RedisProtocolErrorKind::Unknown,
@@ -714,6 +777,23 @@ impl<B: Into<Bytes>> TryFrom<(FrameKind, B)> for BytesFrame {
 #[cfg(feature = "bytes")]
 mod tests {
   use super::*;
+
+  #[test]
+  #[cfg(feature = "convert")]
+  fn should_only_unwrap_single_element_arrays() {
+    let nested_empty = OwnedFrame::Array(vec![OwnedFrame::Array(vec![])]);
+    assert!(nested_empty.clone().convert::<String>().is_err());
+    assert!(nested_empty.convert::<Option<i64>>().is_err());
+
+    let nested = BytesFrame::Array(vec![BytesFrame::Array(vec![
+      BytesFrame::BulkString("a".into()),
+      BytesFrame::BulkString("b".into()),
+    ])]);
+    assert!(nested.convert::<String>().is_err());
+
+    let single = BytesFrame::Array(vec![BytesFrame::BulkString("a".into())]);
+    assert_eq!(single.convert::<String>().unwrap(), "a");
+  }
 
   #[test]
   fn should_parse_pattern_pubsub_message() {

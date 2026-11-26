@@ -9,19 +9,24 @@
 #![allow(clippy::while_let_on_iterator)]
 #![allow(clippy::type_complexity)]
 #![allow(clippy::new_without_default)]
+#![allow(clippy::needless_as_bytes)]
+// these suggest APIs that are newer than the minimum supported Rust version
+#![allow(unknown_lints)]
+#![allow(clippy::manual_is_multiple_of)]
+#![allow(clippy::chunks_exact_to_as_chunks)]
 #![cfg_attr(docsrs, deny(rustdoc::broken_intra_doc_links))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(docsrs, allow(unused_attributes))]
 #![cfg_attr(all(not(test), not(feature = "std")), no_std)]
+// most of the internal utilities are only used by the protocol implementations
+#![cfg_attr(
+  not(any(feature = "resp2", feature = "resp3")),
+  allow(dead_code, unused_macros, unused_imports)
+)]
 #![doc = include_str!("../README.md")]
 
 extern crate alloc;
 extern crate core;
-
-#[macro_use]
-extern crate log;
-#[macro_use]
-extern crate cookie_factory;
 
 #[cfg(feature = "bytes")]
 #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
@@ -35,8 +40,12 @@ pub extern crate tokio_util;
 
 #[macro_use]
 mod macros;
+#[cfg(any(feature = "resp2", feature = "resp3"))]
+mod command;
 /// Error types.
 pub mod error;
+#[cfg(any(feature = "resp2", feature = "resp3"))]
+mod gen;
 mod int2dec;
 mod utils;
 
@@ -64,8 +73,3 @@ pub mod convert;
 #[cfg(feature = "bytes")]
 pub use utils::zero_extend;
 pub use utils::{digits_in_i64, digits_in_usize, redis_keyslot, str_to_f64};
-
-#[deprecated(since = "5.1.0", note = "Use `digits_in_usize` instead.")]
-pub fn digits_in_number(d: usize) -> usize {
-  digits_in_usize(d)
-}

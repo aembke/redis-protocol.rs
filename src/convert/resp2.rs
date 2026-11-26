@@ -1,4 +1,5 @@
 use crate::{
+  convert::{i64_to_int, utf8_error},
   error::RedisProtocolError,
   resp2::types::{OwnedFrame, Resp2Frame},
 };
@@ -20,67 +21,30 @@ use bytes::Bytes;
 #[cfg(feature = "bytes")]
 use bytes_utils::Str;
 
-#[cfg(feature = "hashbrown")]
-use hashbrown::{HashMap, HashSet};
-#[cfg(feature = "std")]
-use std::collections::{HashMap, HashSet};
-
-macro_rules! to_signed_number(
+macro_rules! to_number(
   ($f:tt, $t:ty, $v:expr) => {
     match $v {
       $f::Error(s) => s.parse::<$t>().map_err(|e| e.into()),
-      $f::Integer(i) => Ok(i as $t),
+      $f::Integer(i) => i64_to_int::<$t>(i),
       $f::SimpleString(s) | $f::BulkString(s) => str::from_utf8(&s)
-        .map_err(RedisProtocolError::from)
+        .map_err(utf8_error)
         .and_then(|s| s.parse::<$t>().map_err(RedisProtocolError::from)),
       $f::Array(mut a) => if a.len() == 1 {
         match a.pop().unwrap() {
           $f::Error(s) => s.parse::<$t>().map_err(|e| e.into()),
-          $f::Integer(i) => Ok(i as $t),
+          $f::Integer(i) => i64_to_int::<$t>(i),
           $f::SimpleString(s) | $f::BulkString(s) => str::from_utf8(&s)
-            .map_err(RedisProtocolError::from)
+            .map_err(utf8_error)
             .and_then(|s| s.parse::<$t>().map_err(RedisProtocolError::from)),
           $f::Null => Err(RedisProtocolError::new_parse("Cannot convert nil to number.")),
+          $f::NullArray => Err(RedisProtocolError::new_parse("Cannot convert nil to number.")),
           _ => Err(RedisProtocolError::new_parse("Cannot convert to number."))
         }
       }else{
         Err(RedisProtocolError::new_parse("Cannot convert array to number."))
       }
       $f::Null => Err(RedisProtocolError::new_parse("Cannot convert nil to number.")),
-    }
-  }
-);
-
-macro_rules! to_unsigned_number(
-  ($f:tt, $t:ty, $v:expr) => {
-    match $v {
-      $f::Error(s) => s.parse::<$t>().map_err(|e| e.into()),
-      $f::Integer(i) => if i >= 0 {
-        Ok(i as $t)
-      }else{
-        Err(RedisProtocolError::new_parse("Cannot convert from negative number"))
-      },
-      $f::SimpleString(s) | $f::BulkString(s) => str::from_utf8(&s)
-        .map_err(RedisProtocolError::from)
-        .and_then(|s| s.parse::<$t>().map_err(RedisProtocolError::from)),
-      $f::Array(mut a) => if a.len() == 1 {
-        match a.pop().unwrap() {
-          $f::Error(s) => s.parse::<$t>().map_err(|e| e.into()),
-          $f::Integer(i) => if i >= 0 {
-            Ok(i as $t)
-          }else{
-            Err(RedisProtocolError::new_parse("Cannot convert from negative number"))
-          },
-          $f::SimpleString(s) | $f::BulkString(s) => str::from_utf8(&s)
-            .map_err(RedisProtocolError::from)
-            .and_then(|s| s.parse::<$t>().map_err(RedisProtocolError::from)),
-          $f::Null => Err(RedisProtocolError::new_parse("Cannot convert nil to number.")),
-          _ => Err(RedisProtocolError::new_parse("Cannot convert to number."))
-        }
-      }else{
-        Err(RedisProtocolError::new_parse("Cannot convert array to number."))
-      }
-      $f::Null => Err(RedisProtocolError::new_parse("Cannot convert nil to number.")),
+      $f::NullArray => Err(RedisProtocolError::new_parse("Cannot convert nil to number.")),
     }
   }
 );
@@ -90,7 +54,7 @@ macro_rules! impl_signed_number (
     impl FromResp2<OwnedFrame> for $t {
       fn from_frame(value: OwnedFrame) -> Result<$t, RedisProtocolError> {
         check_single_vec_reply!(value);
-        to_signed_number!(OwnedFrame, $t, value)
+        to_number!(OwnedFrame, $t, value)
       }
     }
 
@@ -99,7 +63,7 @@ macro_rules! impl_signed_number (
     impl FromResp2<BytesFrame> for $t {
       fn from_frame(value: BytesFrame) -> Result<$t, RedisProtocolError> {
         check_single_vec_reply!(value);
-        to_signed_number!(BytesFrame, $t, value)
+        to_number!(BytesFrame, $t, value)
       }
     }
   }
@@ -110,7 +74,7 @@ macro_rules! impl_unsigned_number (
     impl FromResp2<OwnedFrame> for $t {
       fn from_frame(value: OwnedFrame) -> Result<$t, RedisProtocolError> {
         check_single_vec_reply!(value);
-        to_unsigned_number!(OwnedFrame, $t, value)
+        to_number!(OwnedFrame, $t, value)
       }
     }
 
@@ -119,7 +83,7 @@ macro_rules! impl_unsigned_number (
     impl FromResp2<BytesFrame> for $t {
       fn from_frame(value: BytesFrame) -> Result<$t, RedisProtocolError> {
         check_single_vec_reply!(value);
-        to_unsigned_number!(BytesFrame, $t, value)
+        to_number!(BytesFrame, $t, value)
       }
     }
   }
@@ -159,7 +123,7 @@ impl_signed_number!(isize);
 impl FromResp2<OwnedFrame> for u8 {
   fn from_frame(frame: OwnedFrame) -> Result<Self, RedisProtocolError> {
     check_single_vec_reply!(frame);
-    to_unsigned_number!(OwnedFrame, u8, frame)
+    to_number!(OwnedFrame, u8, frame)
   }
 
   fn from_owned_bytes(d: Vec<u8>) -> Option<Vec<Self>> {
@@ -171,7 +135,7 @@ impl FromResp2<OwnedFrame> for u8 {
 impl FromResp2<BytesFrame> for u8 {
   fn from_frame(frame: BytesFrame) -> Result<Self, RedisProtocolError> {
     check_single_vec_reply!(frame);
-    to_unsigned_number!(BytesFrame, u8, frame)
+    to_number!(BytesFrame, u8, frame)
   }
 
   fn from_owned_bytes(d: Vec<u8>) -> Option<Vec<Self>> {
@@ -282,7 +246,7 @@ impl FromResp2<OwnedFrame> for String {
     check_single_vec_reply!(frame);
 
     Ok(match frame {
-      OwnedFrame::BulkString(b) | OwnedFrame::SimpleString(b) => String::from_utf8(b)?,
+      OwnedFrame::BulkString(b) | OwnedFrame::SimpleString(b) => String::from_utf8(b).map_err(utf8_error)?,
       OwnedFrame::Error(s) => s,
       OwnedFrame::Integer(i) => i.to_string(),
       _ => return Err(RedisProtocolError::new_parse("Cannot convert to string.")),
@@ -297,7 +261,7 @@ impl FromResp2<BytesFrame> for String {
     check_single_vec_reply!(frame);
 
     Ok(match frame {
-      BytesFrame::BulkString(b) | BytesFrame::SimpleString(b) => String::from_utf8(b.to_vec())?,
+      BytesFrame::BulkString(b) | BytesFrame::SimpleString(b) => str::from_utf8(&b).map_err(utf8_error)?.to_string(),
       BytesFrame::Error(s) => s.to_string(),
       BytesFrame::Integer(i) => i.to_string(),
       _ => return Err(RedisProtocolError::new_parse("Cannot convert to string.")),
@@ -313,7 +277,9 @@ impl FromResp2<BytesFrame> for Str {
     check_single_vec_reply!(frame);
 
     Ok(match frame {
-      BytesFrame::BulkString(b) | BytesFrame::SimpleString(b) => Str::from_inner(b)?,
+      BytesFrame::BulkString(b) | BytesFrame::SimpleString(b) => {
+        Str::from_inner(b).map_err(|e| utf8_error(e.utf8_error()))?
+      },
       BytesFrame::Error(s) => s,
       BytesFrame::Integer(i) => i.to_string().into(),
       _ => return Err(RedisProtocolError::new_parse("Cannot convert to string.")),
@@ -353,6 +319,7 @@ where
         }
       },
       OwnedFrame::Null => Ok(None),
+      OwnedFrame::NullArray => Ok(None),
       _ => T::from_frame(frame).map(Some),
     }
   }
@@ -375,6 +342,7 @@ where
         }
       },
       BytesFrame::Null => Ok(None),
+      BytesFrame::NullArray => Ok(None),
       _ => T::from_frame(frame).map(Some),
     }
   }
@@ -423,6 +391,7 @@ where
       },
       OwnedFrame::Integer(i) => Ok(vec![T::from_frame(OwnedFrame::Integer(i))?]),
       OwnedFrame::Null => Ok(Vec::new()),
+      OwnedFrame::NullArray => Ok(Vec::new()),
     }
   }
 }
@@ -472,6 +441,7 @@ where
       },
       BytesFrame::Integer(i) => Ok(vec![T::from_frame(BytesFrame::Integer(i))?]),
       BytesFrame::Null => Ok(Vec::new()),
+      BytesFrame::NullArray => Ok(Vec::new()),
     }
   }
 }
@@ -486,9 +456,9 @@ where
     let value: Vec<T> = value.convert()?;
     let len = value.len();
 
-    value.try_into().map_err(|_| {
-      RedisProtocolError::new_parse(format!("Failed to convert to array. Expected {}, found {}.", N, len))
-    })
+    value
+      .try_into()
+      .map_err(|_| RedisProtocolError::new_parse(format!("Failed to convert to array. Expected {N}, found {len}.")))
   }
 }
 
@@ -504,126 +474,129 @@ where
     let value: Vec<T> = value.convert()?;
     let len = value.len();
 
-    value.try_into().map_err(|_| {
-      RedisProtocolError::new_parse(format!("Failed to convert to array. Expected {}, found {}.", N, len))
-    })
+    value
+      .try_into()
+      .map_err(|_| RedisProtocolError::new_parse(format!("Failed to convert to array. Expected {N}, found {len}.")))
   }
 }
 
-impl<K, V, S> FromResp2<OwnedFrame> for HashMap<K, V, S>
-where
-  K: FromResp2<OwnedFrame> + Eq + Hash,
-  V: FromResp2<OwnedFrame>,
-  S: BuildHasher + Default,
-{
-  fn from_frame(frame: OwnedFrame) -> Result<Self, RedisProtocolError> {
-    debug_type!(
-      "FromResp2(HashMap<{}, {}>): {:?}",
-      std::any::type_name::<K>(),
-      std::any::type_name::<V>(),
-      frame
-    );
+#[cfg(feature = "std")]
+macro_rules! impl_from_resp2_collections {
+  () => {
+    impl<K, V, S> FromResp2<OwnedFrame> for HashMap<K, V, S>
+    where
+      K: FromResp2<OwnedFrame> + Eq + Hash,
+      V: FromResp2<OwnedFrame>,
+      S: BuildHasher + Default,
+    {
+      fn from_frame(frame: OwnedFrame) -> Result<Self, RedisProtocolError> {
+        debug_type!(
+          "FromResp2(HashMap<{}, {}>): {:?}",
+          std::any::type_name::<K>(),
+          std::any::type_name::<V>(),
+          frame
+        );
 
-    if let OwnedFrame::Array(mut values) = frame {
-      if values.is_empty() {
-        return Ok::<HashMap<K, V, S>, _>(HashMap::default());
-      }
+        match frame {
+          OwnedFrame::Array(values) => {
+            if values.len() % 2 != 0 {
+              return Err(RedisProtocolError::new_parse("Expected even number of elements"));
+            }
 
-      if values.len() % 2 == 0 {
-        let mut out = HashMap::default();
-        out.reserve(values.len() / 2);
-
-        #[allow(clippy::manual_while_let_some)]
-        while !values.is_empty() {
-          let value = values.pop().unwrap();
-          let key = values.pop().unwrap();
-
-          out.insert(K::from_frame(key)?, V::from_frame(value)?);
+            let mut out = HashMap::default();
+            out.reserve(values.len() / 2);
+            // iterate in order so that the last value wins with duplicate keys
+            let mut values = values.into_iter();
+            while let (Some(key), Some(value)) = (values.next(), values.next()) {
+              out.insert(K::from_frame(key)?, V::from_frame(value)?);
+            }
+            Ok(out)
+          },
+          OwnedFrame::Null | OwnedFrame::NullArray => Ok(HashMap::default()),
+          _ => Err(RedisProtocolError::new_parse("Cannot convert to map")),
         }
-        Ok(out)
-      } else {
-        Err(RedisProtocolError::new_parse("Expected even number of elements"))
       }
-    } else {
-      Err(RedisProtocolError::new_parse("Cannot convert to map"))
     }
-  }
-}
 
-#[cfg(feature = "bytes")]
-#[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
-impl<K, V, S> FromResp2<BytesFrame> for HashMap<K, V, S>
-where
-  K: FromResp2<BytesFrame> + Eq + Hash,
-  V: FromResp2<BytesFrame>,
-  S: BuildHasher + Default,
-{
-  fn from_frame(frame: BytesFrame) -> Result<Self, RedisProtocolError> {
-    debug_type!(
-      "FromResp2(HashMap<{}, {}>): {:?}",
-      std::any::type_name::<K>(),
-      std::any::type_name::<V>(),
-      frame
-    );
+    #[cfg(feature = "bytes")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
+    impl<K, V, S> FromResp2<BytesFrame> for HashMap<K, V, S>
+    where
+      K: FromResp2<BytesFrame> + Eq + Hash,
+      V: FromResp2<BytesFrame>,
+      S: BuildHasher + Default,
+    {
+      fn from_frame(frame: BytesFrame) -> Result<Self, RedisProtocolError> {
+        debug_type!(
+          "FromResp2(HashMap<{}, {}>): {:?}",
+          std::any::type_name::<K>(),
+          std::any::type_name::<V>(),
+          frame
+        );
 
-    if let BytesFrame::Array(mut values) = frame {
-      if values.is_empty() {
-        return Ok::<HashMap<K, V, S>, _>(HashMap::default());
-      }
+        match frame {
+          BytesFrame::Array(values) => {
+            if values.len() % 2 != 0 {
+              return Err(RedisProtocolError::new_parse("Expected even number of elements"));
+            }
 
-      if values.len() % 2 == 0 {
-        let mut out = HashMap::default();
-        out.reserve(values.len() / 2);
-
-        #[allow(clippy::manual_while_let_some)]
-        while !values.is_empty() {
-          let value = values.pop().unwrap();
-          let key = values.pop().unwrap();
-
-          out.insert(K::from_frame(key)?, V::from_frame(value)?);
+            let mut out = HashMap::default();
+            out.reserve(values.len() / 2);
+            // iterate in order so that the last value wins with duplicate keys
+            let mut values = values.into_iter();
+            while let (Some(key), Some(value)) = (values.next(), values.next()) {
+              out.insert(K::from_frame(key)?, V::from_frame(value)?);
+            }
+            Ok(out)
+          },
+          BytesFrame::Null | BytesFrame::NullArray => Ok(HashMap::default()),
+          _ => Err(RedisProtocolError::new_parse("Cannot convert to map")),
         }
-        Ok(out)
-      } else {
-        Err(RedisProtocolError::new_parse("Expected even number of elements"))
       }
-    } else {
-      Err(RedisProtocolError::new_parse("Cannot convert to map"))
     }
-  }
+
+    impl<V, S> FromResp2<OwnedFrame> for HashSet<V, S>
+    where
+      V: FromResp2<OwnedFrame> + Hash + Eq,
+      S: BuildHasher + Default,
+    {
+      fn from_frame(frame: OwnedFrame) -> Result<Self, RedisProtocolError> {
+        debug_type!("FromResp2(HashSet<{}>): {:?}", std::any::type_name::<V>(), frame);
+
+        match frame {
+          OwnedFrame::Array(values) => values.into_iter().map(V::from_frame).collect(),
+          OwnedFrame::Null | OwnedFrame::NullArray => Ok(HashSet::default()),
+          _ => Err(RedisProtocolError::new_parse("Cannot convert to set")),
+        }
+      }
+    }
+
+    #[cfg(feature = "bytes")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
+    impl<V, S> FromResp2<BytesFrame> for HashSet<V, S>
+    where
+      V: FromResp2<BytesFrame> + Hash + Eq,
+      S: BuildHasher + Default,
+    {
+      fn from_frame(frame: BytesFrame) -> Result<Self, RedisProtocolError> {
+        debug_type!("FromResp2(HashSet<{}>): {:?}", std::any::type_name::<V>(), frame);
+
+        match frame {
+          BytesFrame::Array(values) => values.into_iter().map(V::from_frame).collect(),
+          BytesFrame::Null | BytesFrame::NullArray => Ok(HashSet::default()),
+          _ => Err(RedisProtocolError::new_parse("Cannot convert to set")),
+        }
+      }
+    }
+  };
 }
 
-impl<V, S> FromResp2<OwnedFrame> for HashSet<V, S>
-where
-  V: FromResp2<OwnedFrame> + Hash + Eq,
-  S: BuildHasher + Default,
-{
-  fn from_frame(frame: OwnedFrame) -> Result<Self, RedisProtocolError> {
-    debug_type!("FromResp2(HashSet<{}>): {:?}", std::any::type_name::<V>(), frame);
+#[cfg(feature = "std")]
+mod std_collections {
+  use super::*;
+  use std::collections::{HashMap, HashSet};
 
-    if let OwnedFrame::Array(values) = frame {
-      values.into_iter().map(V::from_frame).collect()
-    } else {
-      Err(RedisProtocolError::new_parse("Cannot convert to set"))
-    }
-  }
-}
-
-#[cfg(feature = "bytes")]
-#[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
-impl<V, S> FromResp2<BytesFrame> for HashSet<V, S>
-where
-  V: FromResp2<BytesFrame> + Hash + Eq,
-  S: BuildHasher + Default,
-{
-  fn from_frame(frame: BytesFrame) -> Result<Self, RedisProtocolError> {
-    debug_type!("FromResp2(HashSet<{}>): {:?}", std::any::type_name::<V>(), frame);
-
-    if let BytesFrame::Array(values) = frame {
-      values.into_iter().map(V::from_frame).collect()
-    } else {
-      Err(RedisProtocolError::new_parse("Cannot convert to set"))
-    }
-  }
+  impl_from_resp2_collections!();
 }
 
 macro_rules! impl_from_resp2_tuple {
@@ -741,6 +714,8 @@ impl_from_resp2_tuple! { T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, }
 #[cfg(test)]
 mod owned_tests {
   use super::*;
+  use crate::error::RedisProtocolErrorKind;
+  use std::collections::{HashMap, HashSet};
 
   #[test]
   fn should_convert_signed_numeric_types() {
@@ -973,12 +948,86 @@ mod owned_tests {
       .is_err());
     assert!(OwnedFrame::Array(vec![]).convert::<[i64; 3]>().is_err());
   }
+
+  #[test]
+  fn should_convert_integers_to_doubles() {
+    assert_eq!(OwnedFrame::Integer(2).convert::<f64>(), Ok(2.0));
+    assert_eq!(OwnedFrame::Integer(-3).convert::<f32>(), Ok(-3.0));
+    assert_eq!(OwnedFrame::Integer(2).as_f64(), Some(2.0));
+    assert_eq!(OwnedFrame::BulkString("inf".into()).convert::<f64>(), Ok(f64::INFINITY));
+    assert_eq!(
+      OwnedFrame::BulkString("-inf".into()).convert::<f64>(),
+      Ok(f64::NEG_INFINITY)
+    );
+    assert!(OwnedFrame::BulkString("nan".into()).convert::<f64>().unwrap().is_nan());
+    assert!(OwnedFrame::BulkString("foo".into()).convert::<f64>().is_err());
+  }
+
+  #[test]
+  fn should_not_truncate_numeric_conversions() {
+    let err = OwnedFrame::Integer(300).convert::<u8>().unwrap_err();
+    assert_eq!(err.kind(), &RedisProtocolErrorKind::Parse);
+    assert!(OwnedFrame::Integer(200).convert::<i8>().is_err());
+    assert!(OwnedFrame::Integer(-1).convert::<u64>().is_err());
+    assert!(OwnedFrame::Integer(-1).convert::<u128>().is_err());
+    assert!(OwnedFrame::Integer(i64::MAX).convert::<i32>().is_err());
+    assert!(OwnedFrame::Array(vec![OwnedFrame::Integer(300)])
+      .convert::<u8>()
+      .is_err());
+    assert!(OwnedFrame::BulkString("300".into()).convert::<u8>().is_err());
+
+    assert_eq!(OwnedFrame::Integer(255).convert::<u8>(), Ok(255));
+    assert_eq!(OwnedFrame::Integer(-128).convert::<i8>(), Ok(-128));
+    assert_eq!(OwnedFrame::Integer(i64::MAX).convert::<u64>(), Ok(i64::MAX as u64));
+    assert_eq!(OwnedFrame::Integer(i64::MIN).convert::<i128>(), Ok(i64::MIN as i128));
+  }
+
+  #[test]
+  fn should_convert_null_to_empty_collections() {
+    for frame in [OwnedFrame::Null, OwnedFrame::NullArray] {
+      assert_eq!(frame.clone().convert::<HashMap<String, String>>(), Ok(HashMap::new()));
+      assert_eq!(frame.clone().convert::<HashSet<String>>(), Ok(HashSet::new()));
+      assert_eq!(frame.clone().convert::<Vec<String>>(), Ok(Vec::new()));
+      assert_eq!(frame.clone().convert::<bool>(), Ok(false));
+      assert_eq!(frame.as_bool(), Some(false));
+    }
+  }
+
+  #[test]
+  fn should_keep_last_value_with_duplicate_map_keys() {
+    let foo: HashMap<String, i64> = OwnedFrame::Array(vec![
+      OwnedFrame::SimpleString("a".into()),
+      OwnedFrame::Integer(1),
+      OwnedFrame::SimpleString("a".into()),
+      OwnedFrame::Integer(2),
+    ])
+    .convert()
+    .unwrap();
+
+    assert_eq!(foo.len(), 1);
+    assert_eq!(foo.get("a"), Some(&2));
+  }
+
+  #[test]
+  fn should_return_parse_error_with_invalid_utf8() {
+    let frame = OwnedFrame::BulkString(vec![0xff, 0xfe]);
+    assert_eq!(
+      frame.clone().convert::<String>().unwrap_err().kind(),
+      &RedisProtocolErrorKind::Parse
+    );
+    assert_eq!(
+      frame.convert::<i64>().unwrap_err().kind(),
+      &RedisProtocolErrorKind::Parse
+    );
+  }
 }
 
 #[cfg(test)]
 #[cfg(feature = "bytes")]
 mod bytes_tests {
   use super::*;
+  use crate::error::RedisProtocolErrorKind;
+  use std::collections::{HashMap, HashSet};
 
   #[test]
   fn should_convert_signed_numeric_types() {
@@ -1212,5 +1261,86 @@ mod bytes_tests {
       .convert::<[i64; 3]>()
       .is_err());
     assert!(BytesFrame::Array(vec![]).convert::<[i64; 3]>().is_err());
+  }
+
+  #[test]
+  fn should_convert_integers_to_doubles() {
+    assert_eq!(BytesFrame::Integer(2).convert::<f64>(), Ok(2.0));
+    assert_eq!(BytesFrame::Integer(-3).convert::<f32>(), Ok(-3.0));
+    assert_eq!(BytesFrame::Integer(2).as_f64(), Some(2.0));
+    assert_eq!(BytesFrame::BulkString("inf".into()).convert::<f64>(), Ok(f64::INFINITY));
+    assert_eq!(
+      BytesFrame::BulkString("-inf".into()).convert::<f64>(),
+      Ok(f64::NEG_INFINITY)
+    );
+    assert!(BytesFrame::BulkString("nan".into()).convert::<f64>().unwrap().is_nan());
+    assert!(BytesFrame::BulkString("foo".into()).convert::<f64>().is_err());
+  }
+
+  #[test]
+  fn should_not_truncate_numeric_conversions() {
+    let err = BytesFrame::Integer(300).convert::<u8>().unwrap_err();
+    assert_eq!(err.kind(), &RedisProtocolErrorKind::Parse);
+    assert!(BytesFrame::Integer(200).convert::<i8>().is_err());
+    assert!(BytesFrame::Integer(-1).convert::<u64>().is_err());
+    assert!(BytesFrame::Integer(-1).convert::<u128>().is_err());
+    assert!(BytesFrame::Integer(i64::MAX).convert::<i32>().is_err());
+    assert!(BytesFrame::Array(vec![BytesFrame::Integer(300)])
+      .convert::<u8>()
+      .is_err());
+    assert!(BytesFrame::BulkString("300".into()).convert::<u8>().is_err());
+
+    assert_eq!(BytesFrame::Integer(255).convert::<u8>(), Ok(255));
+    assert_eq!(BytesFrame::Integer(-128).convert::<i8>(), Ok(-128));
+    assert_eq!(BytesFrame::Integer(i64::MAX).convert::<u64>(), Ok(i64::MAX as u64));
+    assert_eq!(BytesFrame::Integer(i64::MIN).convert::<i128>(), Ok(i64::MIN as i128));
+  }
+
+  #[test]
+  fn should_convert_null_to_empty_collections() {
+    for frame in [BytesFrame::Null, BytesFrame::NullArray] {
+      assert_eq!(frame.clone().convert::<HashMap<String, String>>(), Ok(HashMap::new()));
+      assert_eq!(frame.clone().convert::<HashSet<String>>(), Ok(HashSet::new()));
+      assert_eq!(frame.clone().convert::<Vec<String>>(), Ok(Vec::new()));
+      assert_eq!(frame.clone().convert::<bool>(), Ok(false));
+      assert_eq!(frame.as_bool(), Some(false));
+    }
+  }
+
+  #[test]
+  fn should_keep_last_value_with_duplicate_map_keys() {
+    let foo: HashMap<String, i64> = BytesFrame::Array(vec![
+      BytesFrame::SimpleString("a".into()),
+      BytesFrame::Integer(1),
+      BytesFrame::SimpleString("a".into()),
+      BytesFrame::Integer(2),
+    ])
+    .convert()
+    .unwrap();
+
+    assert_eq!(foo.len(), 1);
+    assert_eq!(foo.get("a"), Some(&2));
+  }
+
+  #[test]
+  fn should_return_parse_error_with_invalid_utf8() {
+    let frame = BytesFrame::BulkString(vec![0xff, 0xfe].into());
+    assert_eq!(
+      frame.clone().convert::<String>().unwrap_err().kind(),
+      &RedisProtocolErrorKind::Parse
+    );
+    assert_eq!(
+      frame.convert::<i64>().unwrap_err().kind(),
+      &RedisProtocolErrorKind::Parse
+    );
+  }
+
+  #[test]
+  fn should_return_parse_error_with_invalid_utf8_str() {
+    let frame = BytesFrame::BulkString(vec![0xff, 0xfe].into());
+    assert_eq!(
+      frame.convert::<Str>().unwrap_err().kind(),
+      &RedisProtocolErrorKind::Parse
+    );
   }
 }

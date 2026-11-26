@@ -7,47 +7,140 @@ use crate::types::REDIS_CLUSTER_SLOTS;
 use bytes::BytesMut;
 
 /// Returns the number of bytes necessary to encode a string representation of `d`.
-#[cfg(feature = "std")]
 pub fn digits_in_usize(d: usize) -> usize {
-  if d == 0 {
-    return 1;
-  }
-
-  ((d as f64).log10()).floor() as usize + 1
+  d.checked_ilog10().map_or(1, |n| n as usize + 1)
 }
 
 /// Returns the number of bytes necessary to encode a string representation of `d`.
-#[cfg(feature = "libm")]
-pub fn digits_in_usize(d: usize) -> usize {
-  if d == 0 {
-    return 1;
-  }
-
-  libm::floor(libm::log10(d as f64)) as usize + 1
-}
-
-/// Returns the number of bytes necessary to encode a string representation of `d`.
-#[cfg(feature = "std")]
 pub fn digits_in_i64(d: i64) -> usize {
-  if d == 0 {
-    return 1;
-  }
   let prefix = if d.is_negative() { 1 } else { 0 };
-
-  prefix + ((d.unsigned_abs() as f64).log10()).floor() as usize + 1
+  prefix + d.unsigned_abs().checked_ilog10().map_or(1, |n| n as usize + 1)
 }
 
-/// Returns the number of bytes necessary to encode a string representation of `d`.
-#[cfg(feature = "libm")]
-pub fn digits_in_i64(d: i64) -> usize {
-  if d == 0 {
-    return 1;
+/// Split `buf` around the first CRLF, returning the bytes before the CRLF and the bytes after it.
+///
+/// Returns `Incomplete` if the buffer does not contain a CRLF.
+#[cfg(any(feature = "resp2", feature = "resp3"))]
+#[inline]
+pub(crate) fn find_crlf(buf: &[u8]) -> Result<(&[u8], &[u8]), nom::Err<RedisParseError<&[u8]>>> {
+  // most lines are short, such as length prefixes, where memchr's setup costs more than a loop
+  let short = buf.len().min(16);
+  if let Some(pos) = buf[.. short].iter().position(|b| *b == b'\r') {
+    if buf.get(pos + 1) == Some(&b'\n') {
+      return Ok((&buf[.. pos], &buf[pos + 2 ..]));
+    }
   }
-  let prefix = if d.is_negative() { 1 } else { 0 };
 
-  prefix + libm::floor(libm::log10(d.unsigned_abs() as f64)) as usize + 1
+  let mut offset = 0;
+  while let Some(idx) = memchr::memchr(b'\r', &buf[offset ..]) {
+    let pos = offset + idx;
+    match buf.get(pos + 1) {
+      Some(b'\n') => return Ok((&buf[.. pos], &buf[pos + 2 ..])),
+      Some(_) => offset = pos + 1,
+      None => break,
+    }
+  }
+
+  Err(nom::Err::Incomplete(nom::Needed::Unknown))
 }
 
+/// Split the `len` bytes of a blob from the front of `buf`, checking that the CRLF that ends the blob follows them.
+///
+/// Returns the bytes after the CRLF and the contents of the blob, or `Incomplete` if the blob and CRLF aren't
+/// buffered yet.
+#[cfg(any(feature = "resp2", feature = "resp3"))]
+#[inline]
+pub(crate) fn take_blob(buf: &[u8], len: usize) -> Result<(&[u8], &[u8]), nom::Err<RedisParseError<&[u8]>>> {
+  // lengths are at most `isize::MAX`, so this can't overflow
+  let end = len + 2;
+  match buf.get(len .. end) {
+    // compare the bytes directly rather than with nom's `tag`, which is measurably slower on this hot path
+    Some(b"\r\n") => Ok((&buf[end ..], &buf[.. len])),
+    Some(_) => Err(nom::Err::Failure(RedisParseError::new_custom(
+      "take_blob",
+      "Expected CRLF after blob.",
+    ))),
+    None => Err(nom::Err::Incomplete(nom::Needed::new(end - buf.len()))),
+  }
+}
+
+/// Whether `buf[start..]` contains a CRLF, resuming the search from `*searched` (the buffer length at the end of the
+/// last unsuccessful search) so that a line arriving in many small reads is only searched once.
+#[cfg(any(feature = "resp2", feature = "resp3"))]
+pub(crate) fn line_is_buffered(buf: &[u8], start: usize, searched: &mut usize) -> bool {
+  // the last search may have stopped between the `\r` and the `\n`
+  let from = start.max(searched.saturating_sub(1));
+  if buf.get(from ..).is_some_and(|rest| find_crlf(rest).is_ok()) {
+    true
+  } else {
+    *searched = buf.len();
+    false
+  }
+}
+
+/// Split an optional sign from the digits of an integer, following the rules of `str::parse`.
+#[cfg(any(feature = "resp2", feature = "resp3"))]
+#[inline]
+fn split_sign(s: &[u8]) -> Option<(bool, &[u8])> {
+  match s {
+    [] | [b'+' | b'-'] => None,
+    [b'-', digits @ ..] => Some((true, digits)),
+    [b'+', digits @ ..] => Some((false, digits)),
+    digits => Some((false, digits)),
+  }
+}
+
+/// Parse a decimal `i64` from bytes, accepting exactly what `str::parse::<i64>` accepts.
+///
+/// This avoids validating the input as UTF-8 before parsing it, since any byte that isn't an ASCII digit is rejected.
+#[cfg(any(feature = "resp2", feature = "resp3"))]
+pub(crate) fn parse_i64(s: &[u8]) -> Option<i64> {
+  let (negative, digits) = split_sign(s)?;
+  let mut out: i64 = 0;
+  for &b in digits {
+    let digit = b.wrapping_sub(b'0');
+    if digit > 9 {
+      return None;
+    }
+    // accumulate negative values separately, since `i64::MIN` has no positive counterpart
+    out = out.checked_mul(10)?;
+    out = if negative {
+      out.checked_sub(digit as i64)?
+    } else {
+      out.checked_add(digit as i64)?
+    };
+  }
+
+  Some(out)
+}
+
+/// Parse a decimal `isize` from bytes, accepting exactly what `str::parse::<isize>` accepts.
+#[cfg(any(feature = "resp2", feature = "resp3"))]
+pub(crate) fn parse_isize(s: &[u8]) -> Option<isize> {
+  parse_i64(s).and_then(|v| isize::try_from(v).ok())
+}
+
+/// Parse a decimal `usize` from bytes, accepting exactly what `str::parse::<usize>` accepts.
+#[cfg(feature = "resp3")]
+pub(crate) fn parse_usize(s: &[u8]) -> Option<usize> {
+  let (negative, digits) = split_sign(s)?;
+  if negative {
+    return None;
+  }
+
+  let mut out: usize = 0;
+  for &b in digits {
+    let digit = b.wrapping_sub(b'0');
+    if digit > 9 {
+      return None;
+    }
+    out = out.checked_mul(10)?.checked_add(digit as usize)?;
+  }
+
+  Some(out)
+}
+
+#[cfg(feature = "resp2")]
 pub fn isize_to_usize<T>(val: isize) -> Result<usize, RedisParseError<T>> {
   if val >= 0 {
     Ok(val as usize)
@@ -61,6 +154,41 @@ pub fn isize_to_usize<T>(val: isize) -> Result<usize, RedisParseError<T>> {
 #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
 pub fn zero_extend(buf: &mut BytesMut, amt: usize) {
   buf.resize(buf.len() + amt, 0);
+}
+
+/// Append an encoded frame to `buf`, reserving `reserve` bytes first.
+///
+/// The `extend_encode` functions pass `0` and let `buf` grow as the frame is written. Reserving the exact length up
+/// front means walking the frame an extra time to compute `encode_len`, and benchmarks showed that costs more than
+/// the occasional extra growth. See `benches/reserve.rs` for the numbers.
+///
+/// Returns the number of bytes encoded. If encoding fails, `buf` is restored to its original length.
+#[cfg(all(feature = "bytes", any(feature = "resp2", feature = "resp3")))]
+pub(crate) fn extend_with<F>(buf: &mut BytesMut, reserve: usize, encode: F) -> Result<usize, RedisProtocolError>
+where
+  F: FnOnce(&mut BytesMut) -> Result<(), crate::gen::GenError>,
+{
+  let start = buf.len();
+  buf.reserve(reserve);
+
+  match encode(buf) {
+    Ok(()) => Ok(buf.len() - start),
+    Err(e) => {
+      buf.truncate(start);
+      Err(e.into())
+    },
+  }
+}
+
+/// The error returned when a frame is larger than a scanner's maximum frame size.
+#[cfg(any(feature = "resp2", feature = "resp3"))]
+pub(crate) fn frame_too_large(max: usize) -> RedisProtocolError {
+  use alloc::format;
+
+  RedisProtocolError::new(
+    RedisProtocolErrorKind::DecodeError,
+    format!("Frame is larger than the maximum size of {max} bytes."),
+  )
 }
 
 /// Whether an error payload is a `MOVED` or `ASK` redirection.
@@ -79,7 +207,7 @@ fn crc16_xmodem(key: &[u8]) -> u16 {
 
 /// Map a key to the corresponding cluster key slot.
 ///
-/// ```ignore
+/// ```text
 /// $ redis-cli cluster keyslot "8xjx7vWrfPq54mKfFD3Y1CcjjofpnAcQ"
 /// (integer) 5458
 /// ```
@@ -131,7 +259,7 @@ pub fn str_to_f64(s: &str) -> Result<f64, RedisProtocolError> {
     "nan" => Ok(f64::NAN),
     _ => s.parse::<f64>().map_err(|_| {
       RedisProtocolError::new(
-        RedisProtocolErrorKind::Unknown,
+        RedisProtocolErrorKind::Parse,
         "Could not convert to floating point value.",
       )
     }),
@@ -150,7 +278,7 @@ pub(crate) fn bytes_to_bool(b: &[u8]) -> Option<bool> {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use alloc::vec::Vec;
+  use alloc::{vec, vec::Vec};
 
   fn read_kitten_file() -> Vec<u8> {
     include_bytes!("../tests/kitten.jpeg").to_vec()
@@ -258,5 +386,128 @@ mod tests {
     let expected: u16 = 12739;
     let actual = redis_keyslot(&key);
     assert_eq!(actual, expected)
+  }
+
+  #[test]
+  fn should_count_digits_in_usize() {
+    for d in [0, 1, 9, 10, 99, 100, 12345, 999_999_999_999_999_999, usize::MAX] {
+      assert_eq!(digits_in_usize(d), d.to_string().len(), "{d}");
+    }
+  }
+
+  #[test]
+  fn should_count_digits_in_i64() {
+    for d in [0, 1, -1, 9, -9, 10, -10, 999_999_999_999_999_999, i64::MAX, i64::MIN] {
+      assert_eq!(digits_in_i64(d), d.to_string().len(), "{d}");
+    }
+  }
+
+  /// Inputs around the edges of the integer grammar: signs, empty digits, overflow, and non-digit bytes.
+  #[cfg(any(feature = "resp2", feature = "resp3"))]
+  fn integer_cases() -> Vec<Vec<u8>> {
+    let mut cases: Vec<Vec<u8>> = [
+      "",
+      "+",
+      "-",
+      "0",
+      "-0",
+      "+0",
+      "00",
+      "007",
+      "-007",
+      "1",
+      "-1",
+      "+1",
+      "++1",
+      "--1",
+      "+-1",
+      "-+1",
+      "1-",
+      "1+",
+      " 1",
+      "1 ",
+      "1.0",
+      "1e3",
+      "0x1",
+      "?",
+      "-?",
+      "9223372036854775807",
+      "9223372036854775808",
+      "-9223372036854775808",
+      "-9223372036854775809",
+      "18446744073709551615",
+      "18446744073709551616",
+      "+18446744073709551615",
+      "-18446744073709551615",
+      "99999999999999999999999",
+      "0000000000000000000000001",
+    ]
+    .iter()
+    .map(|s| s.as_bytes().to_vec())
+    .collect();
+    cases.push(vec![b'1', 0xff]);
+    cases.push(vec![0xc3, 0xa9]);
+    cases.push(vec![b'1', b'/']);
+    cases.push(vec![b'1', b':']);
+
+    // random strings drawn from the bytes that matter most
+    let alphabet = b"0123456789+- \xff9";
+    let mut state = 0x2545_f491_4f6c_dd1d_u64;
+    for _ in 0 .. 100_000 {
+      state ^= state << 13;
+      state ^= state >> 7;
+      state ^= state << 17;
+      let len = (state % 24) as usize;
+      let case = (0 .. len)
+        .map(|i| alphabet[((state >> (i % 8 * 8)) as usize + i) % alphabet.len()])
+        .collect();
+      cases.push(case);
+    }
+
+    cases
+  }
+
+  #[test]
+  #[cfg(any(feature = "resp2", feature = "resp3"))]
+  fn should_parse_integers_like_str_parse() {
+    for case in integer_cases() {
+      let expected_i64 = str::from_utf8(&case).ok().and_then(|s| s.parse::<i64>().ok());
+      let expected_isize = str::from_utf8(&case).ok().and_then(|s| s.parse::<isize>().ok());
+      assert_eq!(parse_i64(&case), expected_i64, "{case:?}");
+      assert_eq!(parse_isize(&case), expected_isize, "{case:?}");
+      #[cfg(feature = "resp3")]
+      {
+        let expected_usize = str::from_utf8(&case).ok().and_then(|s| s.parse::<usize>().ok());
+        assert_eq!(parse_usize(&case), expected_usize, "{case:?}");
+      }
+    }
+  }
+
+  #[test]
+  #[cfg(any(feature = "resp2", feature = "resp3"))]
+  fn should_find_crlf() {
+    assert_eq!(find_crlf(b"foo\r\nbar").unwrap(), (&b"foo"[..], &b"bar"[..]));
+    assert_eq!(find_crlf(b"\r\n").unwrap(), (&b""[..], &b""[..]));
+    assert_eq!(find_crlf(b"a\rb\r\n").unwrap(), (&b"a\rb"[..], &b""[..]));
+    assert_eq!(find_crlf(b"a\r\r\nb").unwrap(), (&b"a\r"[..], &b"b"[..]));
+    // around the end of the short scan before memchr
+    for len in 12 .. 20 {
+      let mut buf = vec![b'x'; len];
+      buf.extend_from_slice(b"\r\nrest");
+      assert_eq!(find_crlf(&buf).unwrap(), (&buf[.. len], &b"rest"[..]), "{len}");
+
+      let mut buf = vec![b'x'; len];
+      buf[len / 2] = b'\r';
+      buf.extend_from_slice(b"\r\n");
+      assert_eq!(find_crlf(&buf).unwrap(), (&buf[.. len], &b""[..]), "{len}");
+    }
+  }
+
+  #[test]
+  #[cfg(any(feature = "resp2", feature = "resp3"))]
+  fn should_return_incomplete_without_crlf() {
+    for buf in [&b""[..], b"foo", b"foo\r", b"foo\nbar", b"\r"] {
+      assert!(matches!(find_crlf(buf), Err(nom::Err::Incomplete(_))), "{buf:?}");
+    }
   }
 }

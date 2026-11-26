@@ -1,3 +1,4 @@
 #!/bin/bash
 
-cargo +nightly rustdoc --features "std bytes codec convert resp2 resp3" "$@" -- --cfg docsrs
+# build the docs the same way docs.rs does, failing on any rustdoc warnings
+RUSTDOCFLAGS="--cfg docsrs -D warnings ${RUSTDOCFLAGS}" cargo +nightly doc --all-features --no-deps "$@"

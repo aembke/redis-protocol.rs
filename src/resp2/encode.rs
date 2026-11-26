@@ -2,8 +2,13 @@
 //!
 //! <https://redis.io/topics/protocol#resp-protocol-description>
 
-use crate::{error::RedisProtocolError, int2dec, resp2::types::*, types::CRLF};
-use cookie_factory::GenError;
+use crate::{
+  error::RedisProtocolError,
+  gen::{check_line, GenError, GenOut},
+  int2dec,
+  resp2::types::*,
+  types::CRLF,
+};
 use core::str;
 
 #[cfg(feature = "bytes")]
@@ -11,21 +16,28 @@ use crate::utils;
 #[cfg(feature = "bytes")]
 use bytes::BytesMut;
 
-fn gen_simplestring<'a>(x: (&'a mut [u8], usize), data: &[u8]) -> Result<(&'a mut [u8], usize), GenError> {
+#[cfg(feature = "bytes")]
+#[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
+pub use crate::command::extend_encode_command;
+pub use crate::command::{command_encode_len, encode_command};
+
+fn gen_simplestring<W: GenOut>(x: W, data: &[u8]) -> Result<W, GenError> {
+  check_line(data)?;
   do_gen!(
     x,
     gen_be_u8!(FrameKind::SimpleString.to_byte()) >> gen_slice!(data) >> gen_slice!(CRLF.as_bytes())
   )
 }
 
-fn gen_error<'a>(x: (&'a mut [u8], usize), data: &str) -> Result<(&'a mut [u8], usize), GenError> {
+fn gen_error<W: GenOut>(x: W, data: &str) -> Result<W, GenError> {
+  check_line(data.as_bytes())?;
   do_gen!(
     x,
     gen_be_u8!(FrameKind::Error.to_byte()) >> gen_slice!(data.as_bytes()) >> gen_slice!(CRLF.as_bytes())
   )
 }
 
-fn gen_integer(x: (&mut [u8], usize), data: i64, as_bulkstring: bool) -> Result<(&mut [u8], usize), GenError> {
+fn gen_integer<W: GenOut>(x: W, data: i64, as_bulkstring: bool) -> Result<W, GenError> {
   let (buf, buf_padding) = int2dec::i64_to_digits(data);
 
   if as_bulkstring {
@@ -49,8 +61,11 @@ fn gen_integer(x: (&mut [u8], usize), data: i64, as_bulkstring: bool) -> Result<
   }
 }
 
-fn gen_bulkstring<'a>(x: (&'a mut [u8], usize), data: &[u8]) -> Result<(&'a mut [u8], usize), GenError> {
+fn gen_bulkstring<W: GenOut>(x: W, data: &[u8]) -> Result<W, GenError> {
   let (len, padding) = int2dec::u64_to_digits(data.len() as u64);
+  // reserve the whole blob, so a large payload doesn't grow the buffer to exactly its size and then again for the
+  // trailing CRLF, copying the payload twice. see benches/reserve.rs.
+  let x = x.reserve(1 + len.len() - padding + 2 + data.len() + 2);
 
   do_gen!(
     x,
@@ -62,8 +77,12 @@ fn gen_bulkstring<'a>(x: (&'a mut [u8], usize), data: &[u8]) -> Result<(&'a mut 
   )
 }
 
-fn gen_null(x: (&mut [u8], usize)) -> Result<(&mut [u8], usize), GenError> {
+fn gen_null<W: GenOut>(x: W) -> Result<W, GenError> {
   do_gen!(x, gen_slice!(NULL.as_bytes()))
+}
+
+fn gen_null_array<W: GenOut>(x: W) -> Result<W, GenError> {
+  do_gen!(x, gen_slice!(NULL_ARRAY.as_bytes()))
 }
 
 // The array encoding logic requires using one of the public frame types, but they each potentially require some
@@ -72,11 +91,7 @@ fn gen_null(x: (&mut [u8], usize)) -> Result<(&mut [u8], usize), GenError> {
 // middle that uses `&[u8]` and `&str` as the backing types, but even that would require an added `Vec` in the
 // intermediate frame's `Array` variant. For now, I'm just going to duplicate this function to avoid these tradeoffs.
 
-fn gen_owned_array<'a>(
-  x: (&'a mut [u8], usize),
-  data: &[OwnedFrame],
-  int_as_bulkstring: bool,
-) -> Result<(&'a mut [u8], usize), GenError> {
+fn gen_owned_array<W: GenOut>(x: W, data: &[OwnedFrame], int_as_bulkstring: bool) -> Result<W, GenError> {
   let (len, padding) = int2dec::u64_to_digits(data.len() as u64);
   let mut x = do_gen!(
     x,
@@ -88,6 +103,7 @@ fn gen_owned_array<'a>(
       OwnedFrame::SimpleString(s) => gen_simplestring(x, s)?,
       OwnedFrame::BulkString(b) => gen_bulkstring(x, b)?,
       OwnedFrame::Null => gen_null(x)?,
+      OwnedFrame::NullArray => gen_null_array(x)?,
       OwnedFrame::Error(s) => gen_error(x, s)?,
       OwnedFrame::Array(frames) => gen_owned_array(x, frames, int_as_bulkstring)?,
       OwnedFrame::Integer(i) => gen_integer(x, *i, int_as_bulkstring)?,
@@ -98,11 +114,7 @@ fn gen_owned_array<'a>(
   Ok(x)
 }
 
-fn gen_borrowed_array<'a>(
-  x: (&'a mut [u8], usize),
-  data: &[BorrowedFrame],
-  int_as_bulkstring: bool,
-) -> Result<(&'a mut [u8], usize), GenError> {
+fn gen_borrowed_array<W: GenOut>(x: W, data: &[BorrowedFrame], int_as_bulkstring: bool) -> Result<W, GenError> {
   let (len, padding) = int2dec::u64_to_digits(data.len() as u64);
   let mut x = do_gen!(
     x,
@@ -114,6 +126,7 @@ fn gen_borrowed_array<'a>(
       BorrowedFrame::SimpleString(s) => gen_simplestring(x, s)?,
       BorrowedFrame::BulkString(b) => gen_bulkstring(x, b)?,
       BorrowedFrame::Null => gen_null(x)?,
+      BorrowedFrame::NullArray => gen_null_array(x)?,
       BorrowedFrame::Error(s) => gen_error(x, s)?,
       BorrowedFrame::Array(frames) => gen_borrowed_array(x, frames, int_as_bulkstring)?,
       BorrowedFrame::Integer(i) => gen_integer(x, *i, int_as_bulkstring)?,
@@ -125,11 +138,7 @@ fn gen_borrowed_array<'a>(
 }
 
 #[cfg(feature = "bytes")]
-fn gen_bytes_array<'a>(
-  x: (&'a mut [u8], usize),
-  data: &[BytesFrame],
-  int_as_bulkstring: bool,
-) -> Result<(&'a mut [u8], usize), GenError> {
+fn gen_bytes_array<W: GenOut>(x: W, data: &[BytesFrame], int_as_bulkstring: bool) -> Result<W, GenError> {
   let (len, padding) = int2dec::u64_to_digits(data.len() as u64);
   let mut x = do_gen!(
     x,
@@ -141,6 +150,7 @@ fn gen_bytes_array<'a>(
       BytesFrame::SimpleString(ref s) => gen_simplestring(x, s)?,
       BytesFrame::BulkString(ref b) => gen_bulkstring(x, b)?,
       BytesFrame::Null => gen_null(x)?,
+      BytesFrame::NullArray => gen_null_array(x)?,
       BytesFrame::Error(ref s) => gen_error(x, s)?,
       BytesFrame::Array(ref frames) => gen_bytes_array(x, frames, int_as_bulkstring)?,
       BytesFrame::Integer(ref i) => gen_integer(x, *i, int_as_bulkstring)?,
@@ -151,52 +161,40 @@ fn gen_bytes_array<'a>(
   Ok(x)
 }
 
-fn gen_owned_frame(
-  buf: &mut [u8],
-  offset: usize,
-  frame: &OwnedFrame,
-  int_as_bulkstring: bool,
-) -> Result<usize, GenError> {
+fn gen_owned_frame<W: GenOut>(x: W, frame: &OwnedFrame, int_as_bulkstring: bool) -> Result<W, GenError> {
   match frame {
-    OwnedFrame::BulkString(b) => gen_bulkstring((buf, offset), b).map(|(_, l)| l),
-    OwnedFrame::Null => gen_null((buf, offset)).map(|(_, l)| l),
-    OwnedFrame::Array(frames) => gen_owned_array((buf, offset), frames, int_as_bulkstring).map(|(_, l)| l),
-    OwnedFrame::Error(s) => gen_error((buf, offset), s).map(|(_, l)| l),
-    OwnedFrame::SimpleString(s) => gen_simplestring((buf, offset), s).map(|(_, l)| l),
-    OwnedFrame::Integer(i) => gen_integer((buf, offset), *i, int_as_bulkstring).map(|(_, l)| l),
+    OwnedFrame::BulkString(b) => gen_bulkstring(x, b),
+    OwnedFrame::Null => gen_null(x),
+    OwnedFrame::NullArray => gen_null_array(x),
+    OwnedFrame::Array(frames) => gen_owned_array(x, frames, int_as_bulkstring),
+    OwnedFrame::Error(s) => gen_error(x, s),
+    OwnedFrame::SimpleString(s) => gen_simplestring(x, s),
+    OwnedFrame::Integer(i) => gen_integer(x, *i, int_as_bulkstring),
   }
 }
 
-fn gen_borrowed_frame(
-  buf: &mut [u8],
-  offset: usize,
-  frame: &BorrowedFrame,
-  int_as_bulkstring: bool,
-) -> Result<usize, GenError> {
+fn gen_borrowed_frame<W: GenOut>(x: W, frame: &BorrowedFrame, int_as_bulkstring: bool) -> Result<W, GenError> {
   match frame {
-    BorrowedFrame::BulkString(b) => gen_bulkstring((buf, offset), b).map(|(_, l)| l),
-    BorrowedFrame::Null => gen_null((buf, offset)).map(|(_, l)| l),
-    BorrowedFrame::Array(frames) => gen_borrowed_array((buf, offset), frames, int_as_bulkstring).map(|(_, l)| l),
-    BorrowedFrame::Error(s) => gen_error((buf, offset), s).map(|(_, l)| l),
-    BorrowedFrame::SimpleString(s) => gen_simplestring((buf, offset), s).map(|(_, l)| l),
-    BorrowedFrame::Integer(i) => gen_integer((buf, offset), *i, int_as_bulkstring).map(|(_, l)| l),
+    BorrowedFrame::BulkString(b) => gen_bulkstring(x, b),
+    BorrowedFrame::Null => gen_null(x),
+    BorrowedFrame::NullArray => gen_null_array(x),
+    BorrowedFrame::Array(frames) => gen_borrowed_array(x, frames, int_as_bulkstring),
+    BorrowedFrame::Error(s) => gen_error(x, s),
+    BorrowedFrame::SimpleString(s) => gen_simplestring(x, s),
+    BorrowedFrame::Integer(i) => gen_integer(x, *i, int_as_bulkstring),
   }
 }
 
 #[cfg(feature = "bytes")]
-fn gen_bytes_frame(
-  buf: &mut [u8],
-  offset: usize,
-  frame: &BytesFrame,
-  int_as_bulkstring: bool,
-) -> Result<usize, GenError> {
+fn gen_bytes_frame<W: GenOut>(x: W, frame: &BytesFrame, int_as_bulkstring: bool) -> Result<W, GenError> {
   match frame {
-    BytesFrame::BulkString(b) => gen_bulkstring((buf, offset), b).map(|(_, l)| l),
-    BytesFrame::Null => gen_null((buf, offset)).map(|(_, l)| l),
-    BytesFrame::Array(frames) => gen_bytes_array((buf, offset), frames, int_as_bulkstring).map(|(_, l)| l),
-    BytesFrame::Error(s) => gen_error((buf, offset), s).map(|(_, l)| l),
-    BytesFrame::SimpleString(s) => gen_simplestring((buf, offset), s).map(|(_, l)| l),
-    BytesFrame::Integer(i) => gen_integer((buf, offset), *i, int_as_bulkstring).map(|(_, l)| l),
+    BytesFrame::BulkString(b) => gen_bulkstring(x, b),
+    BytesFrame::Null => gen_null(x),
+    BytesFrame::NullArray => gen_null_array(x),
+    BytesFrame::Array(frames) => gen_bytes_array(x, frames, int_as_bulkstring),
+    BytesFrame::Error(s) => gen_error(x, s),
+    BytesFrame::SimpleString(s) => gen_simplestring(x, s),
+    BytesFrame::Integer(i) => gen_integer(x, *i, int_as_bulkstring),
   }
 }
 
@@ -207,7 +205,9 @@ fn gen_bytes_frame(
 /// Returns the number of bytes encoded.
 pub fn encode(buf: &mut [u8], frame: &OwnedFrame, int_as_bulkstring: bool) -> Result<usize, RedisProtocolError> {
   encode_checks!(buf, 0, frame.encode_len(int_as_bulkstring));
-  gen_owned_frame(buf, 0, frame, int_as_bulkstring).map_err(|e| e.into())
+  gen_owned_frame((buf, 0), frame, int_as_bulkstring)
+    .map(|(_, l)| l)
+    .map_err(|e| e.into())
 }
 
 /// Attempt to encode a borrowed frame into `buf`.
@@ -221,7 +221,9 @@ pub fn encode_borrowed(
   int_as_bulkstring: bool,
 ) -> Result<usize, RedisProtocolError> {
   encode_checks!(buf, 0, frame.encode_len(int_as_bulkstring));
-  gen_borrowed_frame(buf, 0, frame, int_as_bulkstring).map_err(|e| e.into())
+  gen_borrowed_frame((buf, 0), frame, int_as_bulkstring)
+    .map(|(_, l)| l)
+    .map_err(|e| e.into())
 }
 
 /// Attempt to encode a frame into `buf`.
@@ -237,10 +239,12 @@ pub fn encode_bytes(
   int_as_bulkstring: bool,
 ) -> Result<usize, RedisProtocolError> {
   encode_checks!(buf, 0, frame.encode_len(int_as_bulkstring));
-  gen_bytes_frame(buf, 0, frame, int_as_bulkstring).map_err(|e| e.into())
+  gen_bytes_frame((buf, 0), frame, int_as_bulkstring)
+    .map(|(_, l)| l)
+    .map_err(|e| e.into())
 }
 
-/// Attempt to encode a frame at the end of `buf`, extending the buffer before encoding.
+/// Attempt to encode a frame at the end of `buf`, which grows as needed.
 ///
 /// Returns the number of bytes encoded.
 #[cfg(feature = "bytes")]
@@ -250,14 +254,19 @@ pub fn extend_encode(
   frame: &BytesFrame,
   int_as_bulkstring: bool,
 ) -> Result<usize, RedisProtocolError> {
-  let amt = frame.encode_len(int_as_bulkstring);
-  let offset = buf.len();
-  utils::zero_extend(buf, amt);
-
-  gen_bytes_frame(buf, offset, frame, int_as_bulkstring).map_err(|e| e.into())
+  // the buffer grows as needed, which benchmarks showed is faster than computing `encode_len` first
+  let amt = utils::extend_with(buf, 0, |buf| gen_bytes_frame(buf, frame, int_as_bulkstring).map(|_| ()))?;
+  // every test that encodes a frame also checks `encode_len`, which the slice-based functions rely on
+  #[cfg(test)]
+  assert_eq!(
+    amt,
+    frame.encode_len(int_as_bulkstring),
+    "encoded length doesn't match encode_len"
+  );
+  Ok(amt)
 }
 
-/// Attempt to encode a borrowed frame at the end of `buf`, extending the buffer before encoding.
+/// Attempt to encode a borrowed frame at the end of `buf`, which grows as needed.
 ///
 /// Returns the number of bytes encoded.
 #[cfg(feature = "bytes")]
@@ -267,11 +276,61 @@ pub fn extend_encode_borrowed(
   frame: &BorrowedFrame,
   int_as_bulkstring: bool,
 ) -> Result<usize, RedisProtocolError> {
-  let amt = frame.encode_len(int_as_bulkstring);
-  let offset = buf.len();
-  utils::zero_extend(buf, amt);
+  // the buffer grows as needed, which benchmarks showed is faster than computing `encode_len` first
+  let amt = utils::extend_with(buf, 0, |buf| {
+    gen_borrowed_frame(buf, frame, int_as_bulkstring).map(|_| ())
+  })?;
+  // every test that encodes a frame also checks `encode_len`, which the slice-based functions rely on
+  #[cfg(test)]
+  assert_eq!(
+    amt,
+    frame.encode_len(int_as_bulkstring),
+    "encoded length doesn't match encode_len"
+  );
+  Ok(amt)
+}
 
-  gen_borrowed_frame(buf, offset, frame, int_as_bulkstring).map_err(|e| e.into())
+/// Other ways `extend_encode` could reserve space, kept so `benches/reserve.rs` can compare them with the current
+/// approach. This is compiled only with `--cfg redis_protocol_bench` and isn't part of the public interface.
+#[cfg(all(feature = "bytes", redis_protocol_bench))]
+#[doc(hidden)]
+pub mod reserve_strategies {
+  use super::*;
+
+  /// Reserve the exact encoded length before encoding. This was the behavior before 7.0.
+  pub fn extend_encode_exact(
+    buf: &mut BytesMut,
+    frame: &BytesFrame,
+    flag: bool,
+  ) -> Result<usize, RedisProtocolError> {
+    utils::extend_with(buf, frame.encode_len(flag), |buf| {
+      gen_bytes_frame(buf, frame, flag).map(|_| ())
+    })
+  }
+
+  /// Reserve a cheap over-estimate before encoding.
+  pub fn extend_encode_estimate(
+    buf: &mut BytesMut,
+    frame: &BytesFrame,
+    flag: bool,
+  ) -> Result<usize, RedisProtocolError> {
+    utils::extend_with(buf, estimate(frame), |buf| {
+      gen_bytes_frame(buf, frame, flag).map(|_| ())
+    })
+  }
+
+  /// Estimate the encoded length without counting digits. Every length prefix and integer is assumed to need 20
+  /// digits.
+  fn estimate(frame: &BytesFrame) -> usize {
+    match frame {
+      BytesFrame::BulkString(data) => data.len() + 25,
+      BytesFrame::SimpleString(data) => data.len() + 3,
+      BytesFrame::Error(data) => data.len() + 3,
+      BytesFrame::Integer(_) => 30,
+      BytesFrame::Null | BytesFrame::NullArray => 5,
+      BytesFrame::Array(frames) => 23 + frames.iter().map(estimate).sum::<usize>(),
+    }
+  }
 }
 
 // Regression tests duplicated for each frame type.
@@ -482,7 +541,7 @@ mod bytes_tests {
     let padded = [PADDING, expected].join("");
 
     assert_eq!(buf, padded.as_bytes(), "padded buf contents match");
-    assert_eq!(len, padded.as_bytes().len(), "padded expected len is correct");
+    assert_eq!(len, expected.as_bytes().len(), "padded expected len is correct");
   }
 
   fn encode_buf_and_verify_empty(input: &BytesFrame, expected: &str) {
@@ -631,6 +690,20 @@ mod bytes_tests {
   }
 
   #[test]
+  fn should_reject_crlf_in_simple_strings_and_errors() {
+    for frame in [
+      BytesFrame::SimpleString("OK\r\n:1".into()),
+      BytesFrame::Error("ERR a\nb".into()),
+      BytesFrame::Array(vec![BytesFrame::Integer(1), BytesFrame::SimpleString("a\rb".into())]),
+    ] {
+      let mut buf = BytesMut::from("foo");
+      assert!(extend_encode(&mut buf, &frame, false).is_err(), "{frame:?}");
+      // a partially encoded frame is removed
+      assert_eq!(buf, "foo");
+    }
+  }
+
+  #[test]
   fn should_encode_error() {
     let expected = "-WRONGTYPE Operation against a key holding the wrong kind of value\r\n";
     let input = BytesFrame::Error("WRONGTYPE Operation against a key holding the wrong kind of value".into());
@@ -695,5 +768,39 @@ mod bytes_tests {
     let len = extend_encode(&mut buf, &i2_input, true).unwrap();
     assert_eq!(buf, i2_expected.as_bytes(), "empty buf contents match");
     assert_eq!(len, i2_expected.as_bytes().len(), "empty expected len is correct");
+  }
+}
+
+#[cfg(test)]
+mod null_array_tests {
+  use super::*;
+  use alloc::vec;
+
+  #[test]
+  fn should_encode_null_array() {
+    let mut buf = vec![0; NULL_ARRAY.len()];
+    let len = encode(&mut buf, &OwnedFrame::NullArray, false).unwrap();
+    assert_eq!(&buf[.. len], b"*-1\r\n");
+    assert_eq!(OwnedFrame::NullArray.encode_len(false), NULL_ARRAY.len());
+
+    let mut buf = vec![0; NULL_ARRAY.len()];
+    let len = encode_borrowed(&mut buf, &BorrowedFrame::NullArray, false).unwrap();
+    assert_eq!(&buf[.. len], b"*-1\r\n");
+  }
+
+  #[test]
+  fn should_encode_null_array_inside_array() {
+    let frame = OwnedFrame::Array(vec![OwnedFrame::NullArray, OwnedFrame::Null]);
+    let mut buf = vec![0; frame.encode_len(false)];
+    let len = encode(&mut buf, &frame, false).unwrap();
+    assert_eq!(&buf[.. len], b"*2\r\n*-1\r\n$-1\r\n");
+  }
+
+  #[test]
+  #[cfg(feature = "bytes")]
+  fn should_encode_bytes_null_array() {
+    let mut buf = BytesMut::new();
+    extend_encode(&mut buf, &BytesFrame::NullArray, false).unwrap();
+    assert_eq!(&buf[..], b"*-1\r\n");
   }
 }
