@@ -23,6 +23,14 @@ pub fn digits_in_i64(d: i64) -> usize {
 #[cfg(any(feature = "resp2", feature = "resp3"))]
 #[inline]
 pub(crate) fn find_crlf(buf: &[u8]) -> Result<(&[u8], &[u8]), nom::Err<RedisParseError<&[u8]>>> {
+  // most lines are short, such as length prefixes, where memchr's setup costs more than a loop
+  let short = buf.len().min(16);
+  if let Some(pos) = buf[.. short].iter().position(|b| *b == b'\r') {
+    if buf.get(pos + 1) == Some(&b'\n') {
+      return Ok((&buf[.. pos], &buf[pos + 2 ..]));
+    }
+  }
+
   let mut offset = 0;
   while let Some(idx) = memchr::memchr(b'\r', &buf[offset ..]) {
     let pos = offset + idx;
@@ -482,6 +490,17 @@ mod tests {
     assert_eq!(find_crlf(b"\r\n").unwrap(), (&b""[..], &b""[..]));
     assert_eq!(find_crlf(b"a\rb\r\n").unwrap(), (&b"a\rb"[..], &b""[..]));
     assert_eq!(find_crlf(b"a\r\r\nb").unwrap(), (&b"a\r"[..], &b"b"[..]));
+    // around the end of the short scan before memchr
+    for len in 12 .. 20 {
+      let mut buf = vec![b'x'; len];
+      buf.extend_from_slice(b"\r\nrest");
+      assert_eq!(find_crlf(&buf).unwrap(), (&buf[.. len], &b"rest"[..]), "{len}");
+
+      let mut buf = vec![b'x'; len];
+      buf[len / 2] = b'\r';
+      buf.extend_from_slice(b"\r\n");
+      assert_eq!(find_crlf(&buf).unwrap(), (&buf[.. len], &b""[..]), "{len}");
+    }
   }
 
   #[test]
