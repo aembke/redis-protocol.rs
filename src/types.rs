@@ -21,6 +21,7 @@ pub(crate) const MAX_INITIAL_CAPACITY_BYTES: usize = 65536;
 /// [resp3](crate::resp3::decode::FrameScanner) decoding modules.
 #[cfg(any(feature = "resp2", feature = "resp3"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum Scan {
   /// The buffer does not contain a complete frame yet. Decoding it now would return `Ok(None)`.
   Incomplete,
@@ -28,6 +29,8 @@ pub enum Scan {
   Complete(usize),
   /// The buffer does not start with a valid frame. Decoding it now would return an error.
   Invalid,
+  /// The next frame is larger than the scanner's maximum frame size, or would be once it's complete.
+  TooLarge,
 }
 
 /// Terminating bytes between frames.

@@ -7,6 +7,7 @@ mod resp3 {
       encode::complete::{extend_encode as resp3_encode, extend_encode_borrowed as resp3_encode_borrowed},
       types::{BorrowedFrame, BytesFrame as Resp3Frame, FrameKind, StreamedFrame},
     },
+    utils,
   };
   use bytes::BytesMut;
   use tokio_util::codec::{Decoder, Encoder};
@@ -57,6 +58,8 @@ mod resp3 {
   #[derive(Clone, Debug, Default)]
   pub struct Resp3 {
     streaming:         Option<StreamedFrame<Resp3Frame>>,
+    /// The number of bytes in the current streamed frame.
+    streamed_len:      usize,
     scanner:           FrameScanner,
     int_as_blobstring: bool,
   }
@@ -68,8 +71,18 @@ mod resp3 {
       Resp3 {
         int_as_blobstring,
         streaming: None,
+        streamed_len: 0,
         scanner: FrameScanner::new(),
       }
+    }
+
+    /// Return a decoding error for frames larger than `max` bytes, rather than buffering them.
+    ///
+    /// There's no limit by default. The limit includes any nested frames, and applies to the total size of a streamed
+    /// frame.
+    pub fn with_max_frame_size(mut self, max: usize) -> Resp3 {
+      self.scanner.set_max_frame_size(Some(max));
+      self
     }
   }
 
@@ -99,6 +112,7 @@ mod resp3 {
         let result = self.decode_next(src).inspect_err(|_| {
           // the frame that caused the error may be partially consumed, so start over with the next frame
           self.streaming = None;
+          self.streamed_len = 0;
           self.scanner.reset();
         });
         match result? {
@@ -122,8 +136,8 @@ mod resp3 {
       let type_byte = src[0];
       // a decoding attempt parses the buffer from the start, so the scanner avoids repeated attempts on partial
       // frames
-      let parsed = match self.scanner.decode_with(src, resp3_decode)? {
-        Some((f, _, _)) => f,
+      let (parsed, amt) = match self.scanner.decode_with(src, resp3_decode)? {
+        Some((f, amt, _)) => (f, amt),
         None => return Ok(None),
       };
 
@@ -138,6 +152,12 @@ mod resp3 {
         // we started receiving streamed data earlier
         let frame = parsed.into_complete_frame()?;
         check_streamed_frame(state.kind, type_byte, &frame)?;
+        self.streamed_len = self.streamed_len.saturating_add(amt);
+        if let Some(max) = self.scanner.max_frame_size() {
+          if self.streamed_len > max {
+            return Err(utils::frame_too_large(max));
+          }
+        }
         state.add_frame(frame);
 
         if state.is_finished() {
@@ -149,6 +169,7 @@ mod resp3 {
         }
       } else if parsed.is_streaming() {
         self.streaming = Some(parsed.into_streaming_frame()?);
+        self.streamed_len = amt;
         Ok(None)
       } else {
         match parsed.into_complete_frame()? {
@@ -232,6 +253,24 @@ mod resp3 {
         assert!(buf.is_empty(), "chunk size {chunk_size}");
         assert_eq!(frames, expected, "chunk size {chunk_size}");
       }
+    }
+
+    #[test]
+    fn should_reject_frames_larger_than_the_limit() {
+      let mut codec = Resp3::default().with_max_frame_size(17);
+      let mut buf = BytesMut::from(&b"$10\r\n0123456789\r\n"[..]);
+      assert!(codec.decode(&mut buf).unwrap().is_some());
+      let mut buf = BytesMut::from(&b"$11\r\n01234567890\r\n"[..]);
+      assert!(codec.decode(&mut buf).is_err());
+
+      // the limit applies to the whole streamed frame, not each chunk
+      let mut codec = Resp3::default().with_max_frame_size(32);
+      let mut buf = BytesMut::from(&b"$?\r\n;4\r\nabcd\r\n;4\r\nefgh\r\n;0\r\n"[..]);
+      assert!(codec.decode(&mut buf).unwrap().is_some());
+      let mut buf = BytesMut::from(&b"$?\r\n;4\r\nabcd\r\n;4\r\nefgh\r\n;4\r\nijkl\r\n;0\r\n"[..]);
+      assert!(codec.decode(&mut buf).is_err());
+      let mut buf = BytesMut::from(&b"$?\r\n;4\r\nabcd\r\n;4\r\nefgh\r\n;0\r\n"[..]);
+      assert!(codec.decode(&mut buf).unwrap().is_some());
     }
 
     #[test]
@@ -335,6 +374,14 @@ mod resp2 {
         scanner: FrameScanner::new(),
       }
     }
+
+    /// Return a decoding error for frames larger than `max` bytes, rather than buffering them.
+    ///
+    /// There's no limit by default. The limit includes any nested frames.
+    pub fn with_max_frame_size(mut self, max: usize) -> Resp2 {
+      self.scanner.set_max_frame_size(Some(max));
+      self
+    }
   }
 
   impl Encoder<Resp2Frame> for Resp2 {
@@ -369,6 +416,23 @@ mod resp2 {
       };
 
       Ok(Some(parsed))
+    }
+  }
+  #[cfg(test)]
+  mod tests {
+    use super::*;
+
+    #[test]
+    fn should_reject_frames_larger_than_the_limit() {
+      let mut codec = Resp2::default().with_max_frame_size(17);
+      let mut buf = BytesMut::from(&b"$10\r\n0123456789\r\n"[..]);
+      assert!(codec.decode(&mut buf).unwrap().is_some());
+
+      // a partial frame is rejected once more than the limit is buffered
+      let mut buf = BytesMut::from(&b"$100\r\n0123"[..]);
+      assert_eq!(codec.decode(&mut buf).unwrap(), None);
+      buf.extend_from_slice(b"456789012345");
+      assert!(codec.decode(&mut buf).is_err());
     }
   }
 }

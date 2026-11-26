@@ -172,6 +172,17 @@ where
   }
 }
 
+/// The error returned when a frame is larger than a scanner's maximum frame size.
+#[cfg(any(feature = "resp2", feature = "resp3"))]
+pub(crate) fn frame_too_large(max: usize) -> RedisProtocolError {
+  use alloc::format;
+
+  RedisProtocolError::new(
+    RedisProtocolErrorKind::DecodeError,
+    format!("Frame is larger than the maximum size of {max} bytes."),
+  )
+}
+
 /// Whether an error payload is a `MOVED` or `ASK` redirection.
 pub(crate) fn is_redirection(payload: &str) -> bool {
   if payload.starts_with("MOVED") || payload.starts_with("ASK") {

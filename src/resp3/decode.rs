@@ -736,6 +736,8 @@ struct OpenAggregate {
 /// replaced in any other way.
 #[derive(Clone, Debug, Default)]
 pub struct FrameScanner {
+  /// The maximum size of a frame, in bytes.
+  max_frame_size:  Option<usize>,
   /// The offset of the next frame header to read.
   pos:             usize,
   /// The buffer length at the end of the last search for the CRLF that ends the next header.
@@ -750,6 +752,32 @@ impl FrameScanner {
   /// Create a new scanner.
   pub fn new() -> Self {
     Self::default()
+  }
+
+  /// Create a new scanner that rejects frames larger than `max` bytes.
+  ///
+  /// See [set_max_frame_size](Self::set_max_frame_size).
+  pub fn with_max_frame_size(max: usize) -> Self {
+    FrameScanner {
+      max_frame_size: Some(max),
+      ..Self::default()
+    }
+  }
+
+  /// Set the maximum size of a frame, in bytes, or `None` for no limit. There's no limit by default.
+  ///
+  /// [scan](Self::scan) returns [Scan::TooLarge] once the next frame is larger than the limit, even if it's
+  /// incomplete, so a peer can't make the caller buffer an unbounded amount of data. [decode_with](Self::decode_with)
+  /// returns an error instead.
+  ///
+  /// The limit applies to the whole frame, including any nested frames and attributes.
+  pub fn set_max_frame_size(&mut self, max: Option<usize>) {
+    self.max_frame_size = max;
+  }
+
+  /// Read the maximum size of a frame, in bytes.
+  pub fn max_frame_size(&self) -> Option<usize> {
+    self.max_frame_size
   }
 
   /// Reset the scanner so that the next call to [scan](Self::scan) starts from the beginning of the buffer.
@@ -797,17 +825,24 @@ impl FrameScanner {
   where
     B: AsRef<[u8]> + ?Sized,
     F: FnOnce(&mut B) -> Result<Option<T>, E>,
+    E: From<RedisProtocolError>,
   {
-    if self.is_idle() {
+    // a frame can't be larger than the buffer, so the size only needs to be checked when the buffer is larger than
+    // the limit
+    let within_limit = self.max_frame_size.is_none_or(|max| buf.as_ref().len() <= max);
+
+    if self.is_idle() && within_limit {
       let result = decode(buf);
       if let Ok(None) = result {
         let _ = self.scan(buf.as_ref());
       }
       result
-    } else if self.scan(buf.as_ref()) == Scan::Incomplete {
-      Ok(None)
     } else {
-      decode(buf)
+      match self.scan(buf.as_ref()) {
+        Scan::Incomplete => Ok(None),
+        Scan::TooLarge => Err(utils::frame_too_large(self.max_frame_size.unwrap_or_default()).into()),
+        _ => decode(buf),
+      }
     }
   }
 
@@ -837,6 +872,16 @@ impl FrameScanner {
 
   /// Continue scanning `buf`, which must contain the same bytes as the previous call, plus any newly received bytes.
   pub fn scan(&mut self, buf: &[u8]) -> Scan {
+    let result = self.scan_frame(buf);
+    match (self.max_frame_size, result) {
+      (Some(max), Scan::Complete(amt)) if amt > max => Scan::TooLarge,
+      // every buffered byte is part of the incomplete frame
+      (Some(max), Scan::Incomplete) if buf.len() > max => self.finish(Scan::TooLarge),
+      _ => result,
+    }
+  }
+
+  fn scan_frame(&mut self, buf: &[u8]) -> Scan {
     if buf.len() < self.pos.max(self.searched) {
       // the buffer was changed without calling `reset`. start over rather than read the wrong offsets.
       self.reset();
@@ -979,6 +1024,24 @@ pub mod owned_tests {
   use super::*;
   use crate::resp3::decode::{complete::decode, streaming::decode as stream_decode};
   use std::str;
+
+  #[test]
+  fn should_reject_frames_larger_than_the_limit() {
+    let frame = b"|1\r\n+a\r\n:1\r\n%1\r\n$3\r\nfoo\r\n~1\r\n#t\r\n";
+    let len = frame.len();
+    assert_eq!(FrameScanner::with_max_frame_size(len).scan(frame), Scan::Complete(len));
+    assert_eq!(FrameScanner::with_max_frame_size(len - 1).scan(frame), Scan::TooLarge);
+
+    let mut scanner = FrameScanner::with_max_frame_size(10);
+    assert_eq!(scanner.scan(b"$100\r\nfoo"), Scan::Incomplete);
+    assert_eq!(scanner.scan(b"$100\r\nfoobar"), Scan::TooLarge);
+    assert_eq!(scanner.scan(b"+OK\r\n"), Scan::Complete(5));
+
+    let mut buf = frame.to_vec();
+    assert!(scanner.decode_with(&mut buf, |buf| decode(buf)).is_err());
+    scanner.set_max_frame_size(None);
+    assert!(scanner.decode_with(&mut buf, |buf| decode(buf)).unwrap().is_some());
+  }
 
   pub const PADDING: &str = "FOOBARBAZ";
 
