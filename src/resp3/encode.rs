@@ -290,7 +290,7 @@ fn gen_bytes_array<'b, W: GenOut, A: Into<BorrowedAttrs<'b>>>(
 
 fn gen_owned_map<'b, W: GenOut, A: Into<BorrowedAttrs<'b>>>(
   mut x: W,
-  data: &FrameMap<OwnedFrame, OwnedFrame>,
+  data: &[(OwnedFrame, OwnedFrame)],
   attributes: Option<A>,
   int_as_blobstring: bool,
 ) -> Result<W, GenError> {
@@ -312,7 +312,7 @@ fn gen_owned_map<'b, W: GenOut, A: Into<BorrowedAttrs<'b>>>(
 
 fn gen_borrowed_map<'b, W: GenOut, A: Into<BorrowedAttrs<'b>>>(
   mut x: W,
-  data: &FrameMap<BorrowedFrame, BorrowedFrame>,
+  data: &[(BorrowedFrame, BorrowedFrame)],
   attributes: Option<A>,
   int_as_blobstring: bool,
 ) -> Result<W, GenError> {
@@ -335,7 +335,7 @@ fn gen_borrowed_map<'b, W: GenOut, A: Into<BorrowedAttrs<'b>>>(
 #[cfg(feature = "bytes")]
 fn gen_bytes_map<'b, W: GenOut, A: Into<BorrowedAttrs<'b>>>(
   mut x: W,
-  data: &FrameMap<BytesFrame, BytesFrame>,
+  data: &[(BytesFrame, BytesFrame)],
   attributes: Option<A>,
   int_as_blobstring: bool,
 ) -> Result<W, GenError> {
@@ -357,7 +357,7 @@ fn gen_bytes_map<'b, W: GenOut, A: Into<BorrowedAttrs<'b>>>(
 
 fn gen_owned_set<'b, W: GenOut, A: Into<BorrowedAttrs<'b>>>(
   mut x: W,
-  data: &FrameSet<OwnedFrame>,
+  data: &[OwnedFrame],
   attributes: Option<A>,
   int_as_blobstring: bool,
 ) -> Result<W, GenError> {
@@ -378,7 +378,7 @@ fn gen_owned_set<'b, W: GenOut, A: Into<BorrowedAttrs<'b>>>(
 
 fn gen_borrowed_set<'b, W: GenOut, A: Into<BorrowedAttrs<'b>>>(
   mut x: W,
-  data: &FrameSet<BorrowedFrame>,
+  data: &[BorrowedFrame],
   attributes: Option<A>,
   int_as_blobstring: bool,
 ) -> Result<W, GenError> {
@@ -400,7 +400,7 @@ fn gen_borrowed_set<'b, W: GenOut, A: Into<BorrowedAttrs<'b>>>(
 #[cfg(feature = "bytes")]
 fn gen_bytes_set<'b, W: GenOut, A: Into<BorrowedAttrs<'b>>>(
   mut x: W,
-  data: &FrameSet<BytesFrame>,
+  data: &[BytesFrame],
   attributes: Option<A>,
   int_as_blobstring: bool,
 ) -> Result<W, GenError> {
@@ -1394,7 +1394,7 @@ mod owned_tests {
       data:       42,
       attributes: None,
     };
-    out.insert(key, value);
+    out.push((key, value));
     let encoded = "|1\r\n+foo\r\n:42\r\n".to_owned().into_bytes();
 
     (out, encoded)
@@ -1840,18 +1840,18 @@ mod owned_tests {
   fn should_encode_simple_set() {
     let expected_start = "~5\r\n";
     let expected_middle = ["+orange\r\n", "+apple\r\n", "#t\r\n", ":100\r\n", ":999\r\n"];
-    let mut inner = resp3_utils::new_set(0);
+    let mut inner = Vec::new();
     let v1: OwnedFrame = (FrameKind::SimpleString, "orange").try_into().unwrap();
     let v2: OwnedFrame = (FrameKind::SimpleString, "apple").try_into().unwrap();
     let v3: OwnedFrame = true.into();
     let v4: OwnedFrame = 100.into();
     let v5: OwnedFrame = 999.into();
 
-    inner.insert(v1);
-    inner.insert(v2);
-    inner.insert(v3);
-    inner.insert(v4);
-    inner.insert(v5);
+    inner.push(v1);
+    inner.push(v2);
+    inner.push(v3);
+    inner.push(v4);
+    inner.push(v5);
     let input = OwnedFrame::Set {
       data:       inner,
       attributes: None,
@@ -1871,8 +1871,8 @@ mod owned_tests {
     let k2: OwnedFrame = (FrameKind::SimpleString, "second").try_into().unwrap();
     let v2: OwnedFrame = 2.into();
 
-    inner.insert(k1, v1);
-    inner.insert(k2, v2);
+    inner.push((k1, v1));
+    inner.push((k2, v2));
     let input = OwnedFrame::Map {
       data:       inner,
       attributes: None,
@@ -1894,14 +1894,14 @@ mod owned_tests {
     let v3: OwnedFrame = 3.into();
 
     let mut v2_inner = resp3_utils::new_map(0);
-    v2_inner.insert(k3, v3);
+    v2_inner.push((k3, v3));
     let v2 = OwnedFrame::Map {
       data:       v2_inner,
       attributes: None,
     };
 
-    inner.insert(k1, v1);
-    inner.insert(k2, v2);
+    inner.push((k1, v1));
+    inner.push((k2, v2));
     let input = OwnedFrame::Map {
       data:       inner,
       attributes: None,
@@ -2171,7 +2171,7 @@ mod bytes_tests {
       data:       42,
       attributes: None,
     };
-    out.insert(key, value);
+    out.push((key, value));
     let encoded = "|1\r\n+foo\r\n:42\r\n".to_owned().into_bytes();
 
     (out, encoded)
@@ -2187,7 +2187,7 @@ mod bytes_tests {
       data:       42,
       attributes: None,
     };
-    out.insert(key, value);
+    out.push((key, value));
     let encoded = "|1\r\n+foo\r\n$2\r\n42\r\n".to_owned().into_bytes();
 
     (out, encoded)
@@ -2890,18 +2890,18 @@ mod bytes_tests {
   fn should_encode_simple_set() {
     let expected_start = "~5\r\n";
     let expected_middle = ["+orange\r\n", "+apple\r\n", "#t\r\n", ":100\r\n", ":999\r\n"];
-    let mut inner = resp3_utils::new_set(0);
+    let mut inner = Vec::new();
     let v1: BytesFrame = (FrameKind::SimpleString, "orange").try_into().unwrap();
     let v2: BytesFrame = (FrameKind::SimpleString, "apple").try_into().unwrap();
     let v3: BytesFrame = true.into();
     let v4: BytesFrame = 100.into();
     let v5: BytesFrame = 999.into();
 
-    inner.insert(v1);
-    inner.insert(v2);
-    inner.insert(v3);
-    inner.insert(v4);
-    inner.insert(v5);
+    inner.push(v1);
+    inner.push(v2);
+    inner.push(v3);
+    inner.push(v4);
+    inner.push(v5);
     let input = BytesFrame::Set {
       data:       inner,
       attributes: None,
@@ -2923,8 +2923,8 @@ mod bytes_tests {
     let k2: BytesFrame = (FrameKind::SimpleString, "second").try_into().unwrap();
     let v2: BytesFrame = 2.into();
 
-    inner.insert(k1, v1);
-    inner.insert(k2, v2);
+    inner.push((k1, v1));
+    inner.push((k2, v2));
     let input = BytesFrame::Map {
       data:       inner,
       attributes: None,
@@ -2948,14 +2948,14 @@ mod bytes_tests {
     let v3: BytesFrame = 3.into();
 
     let mut v2_inner = resp3_utils::new_map(0);
-    v2_inner.insert(k3, v3);
+    v2_inner.push((k3, v3));
     let v2 = BytesFrame::Map {
       data:       v2_inner,
       attributes: None,
     };
 
-    inner.insert(k1, v1);
-    inner.insert(k2, v2);
+    inner.push((k1, v1));
+    inner.push((k2, v2));
     let input = BytesFrame::Map {
       data:       inner,
       attributes: None,

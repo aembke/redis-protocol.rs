@@ -76,30 +76,17 @@ fn to_bool<T>(s: &[u8]) -> Result<bool, RedisParseError<T>> {
 
 fn to_map<T>(data: Vec<RangeFrame>) -> Result<Vec<(RangeFrame, RangeFrame)>, RedisParseError<T>> {
   if data.len() % 2 != 0 {
-    return Err(RedisParseError::new_custom("to_map", "Invalid hashmap frame length."));
+    return Err(RedisParseError::new_custom("to_map", "Invalid map frame length."));
   }
 
-  // pairs stay in wire order. hashing the ranges wouldn't deduplicate anything, so that happens when building the
-  // final frame.
+  // pairs stay in wire order
   let mut out = Vec::with_capacity(data.len() / 2);
   let mut data = data.into_iter();
   while let (Some(key), Some(value)) = (data.next(), data.next()) {
-    if key.kind().can_hash() {
-      out.push((key, value));
-    } else {
-      return Err(RedisParseError::new_custom("to_map", "Invalid map key."));
-    }
+    out.push((key, value));
   }
 
   Ok(out)
-}
-
-fn to_set<T>(data: Vec<RangeFrame>) -> Result<Vec<RangeFrame>, RedisParseError<T>> {
-  if data.iter().all(|value| value.kind().can_hash()) {
-    Ok(data)
-  } else {
-    Err(RedisParseError::new_custom("to_set", "Invalid hash key."))
-  }
 }
 
 fn attach_attributes<T>(
@@ -418,10 +405,7 @@ fn d_parse_aggregate(input: (&[u8], usize), kind: FrameKind, depth: usize) -> DR
   let frame = match kind {
     FrameKind::Array => RangeFrame::Array { data, attributes: None },
     FrameKind::Push => RangeFrame::Push { data, attributes: None },
-    FrameKind::Set => RangeFrame::Set {
-      data:       etry!(to_set(data)),
-      attributes: None,
-    },
+    FrameKind::Set => RangeFrame::Set { data, attributes: None },
     FrameKind::Map => RangeFrame::Map {
       data:       etry!(to_map(data)),
       attributes: None,
@@ -696,8 +680,6 @@ struct OpenAggregate {
   kind:      FrameKind,
   /// The number of inner frames still expected. Maps and attributes count keys and values separately.
   remaining: usize,
-  /// Whether a key that cannot be hashed was found, which the decoder rejects once the aggregate ends.
-  bad_key:   bool,
 }
 
 /// An incremental scanner that finds the end of the next frame in a buffer that is filled over several reads.
@@ -853,23 +835,6 @@ impl FrameScanner {
     self.after_attribute = false;
   }
 
-  /// Record the kind of the next inner frame in the innermost aggregate, which is a map or set key if the aggregate
-  /// requires one.
-  fn check_key(&mut self, kind: FrameKind) {
-    if let Some(parent) = self.stack.last_mut() {
-      let is_key = match parent.kind {
-        FrameKind::Set => true,
-        // the first of each pair. maps and attributes count down from an even number.
-        FrameKind::Map | FrameKind::Attribute => parent.remaining % 2 == 0,
-        _ => false,
-      };
-
-      if is_key && !kind.can_hash() {
-        parent.bad_key = true;
-      }
-    }
-  }
-
   /// Continue scanning `buf`, which must contain the same bytes as the previous call, plus any newly received bytes.
   pub fn scan(&mut self, buf: &[u8]) -> Scan {
     let result = self.scan_frame(buf);
@@ -915,7 +880,6 @@ impl FrameScanner {
               self.stack.push(OpenAggregate {
                 kind:      FrameKind::Attribute,
                 remaining: len.saturating_mul(2),
-                bad_key:   false,
               });
             } else {
               // the annotated frame comes next. otherwise it follows the attribute's key/value pairs.
@@ -945,14 +909,8 @@ impl FrameScanner {
           PrefixLen::Streamed => return self.finish(Scan::Invalid),
           // decoded as a null frame, which can't have attributes
           PrefixLen::Null if after_attribute => return self.finish(Scan::Invalid),
-          PrefixLen::Null => {
-            self.check_key(FrameKind::Null);
-            0
-          },
-          PrefixLen::Len(len) => {
-            self.check_key(kind);
-            len
-          },
+          PrefixLen::Null => 0,
+          PrefixLen::Len(len) => len,
         };
         self.advance(next);
         let len = if kind == FrameKind::Map {
@@ -961,11 +919,7 @@ impl FrameScanner {
           len
         };
         if len > 0 {
-          self.stack.push(OpenAggregate {
-            kind,
-            remaining: len,
-            bad_key: false,
-          });
+          self.stack.push(OpenAggregate { kind, remaining: len });
           continue;
         }
       } else {
@@ -986,7 +940,7 @@ impl FrameScanner {
           DecodedRangeFrame::Complete(RangeFrame::ChunkedString(_)) if depth > 0 => {
             return self.finish(Scan::Invalid)
           },
-          DecodedRangeFrame::Complete(frame) => self.check_key(frame.kind()),
+          DecodedRangeFrame::Complete(_) => {},
         }
         self.advance(next);
       }
@@ -1006,9 +960,6 @@ impl FrameScanner {
           break;
         }
         let closed = self.stack.pop().unwrap();
-        if closed.bad_key {
-          return self.finish(Scan::Invalid);
-        }
         if closed.kind == FrameKind::Attribute {
           // the frame that the attribute annotates comes next, in the same position
           self.after_attribute = true;
@@ -1046,10 +997,9 @@ pub mod owned_tests {
   pub const PADDING: &str = "FOOBARBAZ";
 
   #[test]
-  #[cfg(feature = "index-map")]
   fn should_keep_map_and_attribute_order() {
     let keys = |map: &FrameMap<OwnedFrame, OwnedFrame>| -> Vec<String> {
-      map.keys().map(|k| k.as_str().unwrap().to_owned()).collect()
+      map.iter().map(|(k, _)| k.as_str().unwrap().to_owned()).collect()
     };
 
     let buf = b"|3\r\n+x\r\n:1\r\n+y\r\n:2\r\n+z\r\n:3\r\n%3\r\n+a\r\n:1\r\n+b\r\n:2\r\n+c\r\n:3\r\n";
@@ -1067,41 +1017,43 @@ pub mod owned_tests {
   }
 
   #[test]
-  fn should_resolve_duplicate_keys_when_building_frames() {
-    let map = b"%3\r\n+a\r\n:1\r\n+b\r\n:2\r\n+a\r\n:3\r\n";
-    let set = b"~3\r\n+x\r\n+y\r\n+x\r\n";
-
-    // the range frames keep every pair and value as received
-    let (range, _) = complete::decode_range(map).unwrap().unwrap();
-    match range {
-      RangeFrame::Map { ref data, .. } => assert_eq!(data.len(), 3),
-      _ => panic!("expected a map: {range:?}"),
-    }
-    let (range, _) = complete::decode_range(set).unwrap().unwrap();
-    match range {
-      RangeFrame::Set { ref data, .. } => assert_eq!(data.len(), 3),
-      _ => panic!("expected a set: {range:?}"),
-    }
-
-    // the last value wins for a duplicate map key, and duplicate set values are removed
-    let (frame, _) = complete::decode(map).unwrap().unwrap();
-    let data = match frame {
-      OwnedFrame::Map { data, .. } => data,
-      _ => panic!("expected a map: {frame:?}"),
+  fn should_keep_duplicate_keys_and_aggregate_keys() {
+    let decode = |bytes: &[u8]| complete::decode(bytes).unwrap().unwrap().0;
+    let simple = |data: &str| OwnedFrame::SimpleString {
+      data:       data.as_bytes().to_vec(),
+      attributes: None,
     };
-    assert_eq!(data.len(), 2);
-    assert_eq!(
-      data.get(&OwnedFrame::SimpleString {
-        data:       b"a".to_vec(),
-        attributes: None,
-      }),
-      Some(&OwnedFrame::Number {
-        data:       3,
-        attributes: None,
-      })
-    );
-    let (frame, _) = complete::decode(set).unwrap().unwrap();
-    assert_eq!(frame.len(), 2);
+    let number = |data| OwnedFrame::Number { data, attributes: None };
+
+    assert_eq!(decode(b"%3\r\n+a\r\n:1\r\n+b\r\n:2\r\n+a\r\n:3\r\n"), OwnedFrame::Map {
+      data:       vec![
+        (simple("a"), number(1)),
+        (simple("b"), number(2)),
+        (simple("a"), number(3))
+      ],
+      attributes: None,
+    });
+    assert_eq!(decode(b"~3\r\n+x\r\n+y\r\n+x\r\n"), OwnedFrame::Set {
+      data:       vec![simple("x"), simple("y"), simple("x")],
+      attributes: None,
+    });
+
+    // the spec allows any frame as a map key or set member
+    let array = OwnedFrame::Array {
+      data:       vec![number(1)],
+      attributes: None,
+    };
+    for bytes in [&b"%1\r\n*1\r\n:1\r\n:2\r\n"[..], b"~1\r\n*1\r\n:1\r\n"] {
+      assert_eq!(FrameScanner::new().scan(bytes), Scan::Complete(bytes.len()));
+    }
+    assert_eq!(decode(b"%1\r\n*1\r\n:1\r\n:2\r\n"), OwnedFrame::Map {
+      data:       vec![(array.clone(), number(2))],
+      attributes: None,
+    });
+    assert_eq!(decode(b"~1\r\n*1\r\n:1\r\n"), OwnedFrame::Set {
+      data:       vec![array],
+      attributes: None,
+    });
   }
 
   #[test]
@@ -1218,13 +1170,13 @@ pub mod owned_tests {
       attributes: None,
     };
 
-    assert!(build(FrameKind::Map, vec![array(), number(1)]).is_err());
     assert!(build(FrameKind::Map, vec![number(1), number(2), number(3)]).is_err());
-    assert!(build(FrameKind::Set, vec![number(1), array()]).is_err());
     assert!(build(FrameKind::Array, vec![OwnedFrame::ChunkedString(b"foo".to_vec())]).is_err());
 
-    // values can be aggregates
+    // keys and values can be aggregates
+    assert!(build(FrameKind::Map, vec![array(), number(1)]).is_ok());
     assert!(build(FrameKind::Map, vec![number(1), array()]).is_ok());
+    assert!(build(FrameKind::Set, vec![number(1), array()]).is_ok());
     assert!(build(FrameKind::Array, vec![array(), number(1)]).is_ok());
   }
 
@@ -1708,8 +1660,8 @@ pub mod owned_tests {
     };
 
     let mut expected_map = resp3_utils::new_map(0);
-    expected_map.insert(k1, v1);
-    expected_map.insert(k2, v2);
+    expected_map.push((k1, v1));
+    expected_map.push((k2, v2));
     let expected = (
       Some(OwnedFrame::Map {
         data:       expected_map,
@@ -1748,9 +1700,9 @@ pub mod owned_tests {
     };
 
     let mut expected_map = resp3_utils::new_map(0);
-    expected_map.insert(k1, v1);
-    expected_map.insert(k2, v2);
-    expected_map.insert(k3, v3);
+    expected_map.push((k1, v1));
+    expected_map.push((k2, v2));
+    expected_map.push((k3, v3));
     let expected = (
       Some(OwnedFrame::Map {
         data:       expected_map,
@@ -1766,20 +1718,20 @@ pub mod owned_tests {
 
   #[test]
   fn should_decode_set_no_nulls() {
-    let mut expected_set = resp3_utils::new_set(0);
-    expected_set.insert(OwnedFrame::Number {
+    let mut expected_set = Vec::new();
+    expected_set.push(OwnedFrame::Number {
       data:       1,
       attributes: None,
     });
-    expected_set.insert(OwnedFrame::SimpleString {
+    expected_set.push(OwnedFrame::SimpleString {
       data:       "2".into(),
       attributes: None,
     });
-    expected_set.insert(OwnedFrame::BlobString {
+    expected_set.push(OwnedFrame::BlobString {
       data:       "foobar".into(),
       attributes: None,
     });
-    expected_set.insert(OwnedFrame::Double {
+    expected_set.push(OwnedFrame::Double {
       data:       4.2,
       attributes: None,
     });
@@ -1798,17 +1750,17 @@ pub mod owned_tests {
 
   #[test]
   fn should_decode_set_with_nulls() {
-    let mut expected_set = resp3_utils::new_set(0);
-    expected_set.insert(OwnedFrame::Number {
+    let mut expected_set = Vec::new();
+    expected_set.push(OwnedFrame::Number {
       data:       1,
       attributes: None,
     });
-    expected_set.insert(OwnedFrame::SimpleString {
+    expected_set.push(OwnedFrame::SimpleString {
       data:       "2".into(),
       attributes: None,
     });
-    expected_set.insert(OwnedFrame::Null);
-    expected_set.insert(OwnedFrame::Double {
+    expected_set.push(OwnedFrame::Null);
+    expected_set.push(OwnedFrame::Double {
       data:       4.2,
       attributes: None,
     });
@@ -1941,7 +1893,7 @@ pub mod owned_tests {
   #[test]
   fn should_parse_outer_attributes() {
     let mut expected_inner_attrs = resp3_utils::new_map(0);
-    expected_inner_attrs.insert(
+    expected_inner_attrs.push((
       OwnedFrame::BlobString {
         data:       "a".into(),
         attributes: None,
@@ -1950,8 +1902,8 @@ pub mod owned_tests {
         data:       0.1923,
         attributes: None,
       },
-    );
-    expected_inner_attrs.insert(
+    ));
+    expected_inner_attrs.push((
       OwnedFrame::BlobString {
         data:       "b".into(),
         attributes: None,
@@ -1960,20 +1912,20 @@ pub mod owned_tests {
         data:       0.0012,
         attributes: None,
       },
-    );
+    ));
     let expected_inner_attrs = OwnedFrame::Map {
       data:       expected_inner_attrs,
       attributes: None,
     };
 
     let mut expected_attrs = resp3_utils::new_map(0);
-    expected_attrs.insert(
+    expected_attrs.push((
       OwnedFrame::SimpleString {
         data:       "key-popularity".into(),
         attributes: None,
       },
       expected_inner_attrs,
-    );
+    ));
 
     let expected = (
       Some(OwnedFrame::Array {
@@ -2003,7 +1955,7 @@ pub mod owned_tests {
   #[test]
   fn should_parse_inner_attributes() {
     let mut expected_attrs = resp3_utils::new_map(0);
-    expected_attrs.insert(
+    expected_attrs.push((
       OwnedFrame::SimpleString {
         data:       "ttl".into(),
         attributes: None,
@@ -2012,7 +1964,7 @@ pub mod owned_tests {
         data:       3600,
         attributes: None,
       },
-    );
+    ));
 
     let expected = (
       Some(OwnedFrame::Array {
@@ -2209,16 +2161,16 @@ pub mod owned_tests {
 
     assert!(streamed.is_finished());
     let actual = streamed.take().unwrap();
-    let mut expected_result = resp3_utils::new_set(0);
-    expected_result.insert(OwnedFrame::Number {
+    let mut expected_result = Vec::new();
+    expected_result.push(OwnedFrame::Number {
       data:       1,
       attributes: None,
     });
-    expected_result.insert(OwnedFrame::Number {
+    expected_result.push(OwnedFrame::Number {
       data:       2,
       attributes: None,
     });
-    expected_result.insert(OwnedFrame::Number {
+    expected_result.push(OwnedFrame::Number {
       data:       3,
       attributes: None,
     });
@@ -2297,7 +2249,7 @@ pub mod owned_tests {
     assert!(streamed.is_finished());
     let actual = streamed.take().unwrap();
     let mut expected_result = resp3_utils::new_map(0);
-    expected_result.insert(
+    expected_result.push((
       OwnedFrame::SimpleString {
         data:       "a".into(),
         attributes: None,
@@ -2306,8 +2258,8 @@ pub mod owned_tests {
         data:       1,
         attributes: None,
       },
-    );
-    expected_result.insert(
+    ));
+    expected_result.push((
       OwnedFrame::SimpleString {
         data:       "b".into(),
         attributes: None,
@@ -2316,7 +2268,7 @@ pub mod owned_tests {
         data:       2,
         attributes: None,
       },
-    );
+    ));
     let expected = OwnedFrame::Map {
       data:       expected_result,
       attributes: None,
@@ -2882,8 +2834,8 @@ pub mod bytes_tests {
     };
 
     let mut expected_map = resp3_utils::new_map(0);
-    expected_map.insert(k1, v1);
-    expected_map.insert(k2, v2);
+    expected_map.push((k1, v1));
+    expected_map.push((k2, v2));
     let expected = (
       Some(BytesFrame::Map {
         data:       expected_map,
@@ -2922,9 +2874,9 @@ pub mod bytes_tests {
     };
 
     let mut expected_map = resp3_utils::new_map(0);
-    expected_map.insert(k1, v1);
-    expected_map.insert(k2, v2);
-    expected_map.insert(k3, v3);
+    expected_map.push((k1, v1));
+    expected_map.push((k2, v2));
+    expected_map.push((k3, v3));
     let expected = (
       Some(BytesFrame::Map {
         data:       expected_map,
@@ -2940,20 +2892,20 @@ pub mod bytes_tests {
 
   #[test]
   fn should_decode_set_no_nulls() {
-    let mut expected_set = resp3_utils::new_set(0);
-    expected_set.insert(BytesFrame::Number {
+    let mut expected_set = Vec::new();
+    expected_set.push(BytesFrame::Number {
       data:       1,
       attributes: None,
     });
-    expected_set.insert(BytesFrame::SimpleString {
+    expected_set.push(BytesFrame::SimpleString {
       data:       "2".into(),
       attributes: None,
     });
-    expected_set.insert(BytesFrame::BlobString {
+    expected_set.push(BytesFrame::BlobString {
       data:       "foobar".into(),
       attributes: None,
     });
-    expected_set.insert(BytesFrame::Double {
+    expected_set.push(BytesFrame::Double {
       data:       4.2,
       attributes: None,
     });
@@ -2972,17 +2924,17 @@ pub mod bytes_tests {
 
   #[test]
   fn should_decode_set_with_nulls() {
-    let mut expected_set = resp3_utils::new_set(0);
-    expected_set.insert(BytesFrame::Number {
+    let mut expected_set = Vec::new();
+    expected_set.push(BytesFrame::Number {
       data:       1,
       attributes: None,
     });
-    expected_set.insert(BytesFrame::SimpleString {
+    expected_set.push(BytesFrame::SimpleString {
       data:       "2".into(),
       attributes: None,
     });
-    expected_set.insert(BytesFrame::Null);
-    expected_set.insert(BytesFrame::Double {
+    expected_set.push(BytesFrame::Null);
+    expected_set.push(BytesFrame::Double {
       data:       4.2,
       attributes: None,
     });
@@ -3115,7 +3067,7 @@ pub mod bytes_tests {
   #[test]
   fn should_parse_outer_attributes() {
     let mut expected_inner_attrs = resp3_utils::new_map(0);
-    expected_inner_attrs.insert(
+    expected_inner_attrs.push((
       BytesFrame::BlobString {
         data:       "a".into(),
         attributes: None,
@@ -3124,8 +3076,8 @@ pub mod bytes_tests {
         data:       0.1923,
         attributes: None,
       },
-    );
-    expected_inner_attrs.insert(
+    ));
+    expected_inner_attrs.push((
       BytesFrame::BlobString {
         data:       "b".into(),
         attributes: None,
@@ -3134,20 +3086,20 @@ pub mod bytes_tests {
         data:       0.0012,
         attributes: None,
       },
-    );
+    ));
     let expected_inner_attrs = BytesFrame::Map {
       data:       expected_inner_attrs,
       attributes: None,
     };
 
     let mut expected_attrs = resp3_utils::new_map(0);
-    expected_attrs.insert(
+    expected_attrs.push((
       BytesFrame::SimpleString {
         data:       "key-popularity".into(),
         attributes: None,
       },
       expected_inner_attrs,
-    );
+    ));
 
     let expected = (
       Some(BytesFrame::Array {
@@ -3177,7 +3129,7 @@ pub mod bytes_tests {
   #[test]
   fn should_parse_inner_attributes() {
     let mut expected_attrs = resp3_utils::new_map(0);
-    expected_attrs.insert(
+    expected_attrs.push((
       BytesFrame::SimpleString {
         data:       "ttl".into(),
         attributes: None,
@@ -3186,7 +3138,7 @@ pub mod bytes_tests {
         data:       3600,
         attributes: None,
       },
-    );
+    ));
 
     let expected = (
       Some(BytesFrame::Array {
@@ -3383,16 +3335,16 @@ pub mod bytes_tests {
 
     assert!(streamed.is_finished());
     let actual = streamed.take().unwrap();
-    let mut expected_result = resp3_utils::new_set(0);
-    expected_result.insert(BytesFrame::Number {
+    let mut expected_result = Vec::new();
+    expected_result.push(BytesFrame::Number {
       data:       1,
       attributes: None,
     });
-    expected_result.insert(BytesFrame::Number {
+    expected_result.push(BytesFrame::Number {
       data:       2,
       attributes: None,
     });
-    expected_result.insert(BytesFrame::Number {
+    expected_result.push(BytesFrame::Number {
       data:       3,
       attributes: None,
     });
@@ -3471,7 +3423,7 @@ pub mod bytes_tests {
     assert!(streamed.is_finished());
     let actual = streamed.take().unwrap();
     let mut expected_result = resp3_utils::new_map(0);
-    expected_result.insert(
+    expected_result.push((
       BytesFrame::SimpleString {
         data:       "a".into(),
         attributes: None,
@@ -3480,8 +3432,8 @@ pub mod bytes_tests {
         data:       1,
         attributes: None,
       },
-    );
-    expected_result.insert(
+    ));
+    expected_result.push((
       BytesFrame::SimpleString {
         data:       "b".into(),
         attributes: None,
@@ -3490,7 +3442,7 @@ pub mod bytes_tests {
         data:       2,
         attributes: None,
       },
-    );
+    ));
     let expected = BytesFrame::Map {
       data:       expected_result,
       attributes: None,
@@ -3711,7 +3663,7 @@ mod scan_tests {
         out.extend_from_slice(format!("%{len}\r\n").as_bytes());
         for _ in 0 .. len {
           if rng.one_in(10) {
-            // an aggregate key, which the decoder rejects once the map ends
+            // an aggregate key
             frame(rng, depth - 1, out);
           } else {
             key(rng, out);

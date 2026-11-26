@@ -647,8 +647,7 @@ where
   }
 }
 
-// Implemented for each enabled hash map implementation so that the `std` and `hashbrown` features are additive.
-#[cfg(any(feature = "std", feature = "hashbrown"))]
+#[cfg(feature = "std")]
 macro_rules! impl_from_resp3_collections {
   () => {
     impl<K, V, S> FromResp3<OwnedFrame> for HashMap<K, V, S>
@@ -781,14 +780,6 @@ mod std_collections {
   impl_from_resp3_collections!();
 }
 
-#[cfg(feature = "hashbrown")]
-mod hashbrown_collections {
-  use super::*;
-  use hashbrown::{HashMap, HashSet};
-
-  impl_from_resp3_collections!();
-}
-
 macro_rules! impl_from_resp3_tuple {
   () => ();
   ($($name:ident,)+) => (
@@ -910,7 +901,7 @@ impl_from_resp3_tuple! { T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, }
 #[cfg(test)]
 mod owned_tests {
   use super::*;
-  use crate::{error::RedisProtocolErrorKind, resp3::utils::new_map};
+  use crate::error::RedisProtocolErrorKind;
   use std::collections::{HashMap, HashSet};
 
   #[test]
@@ -1494,9 +1485,10 @@ mod owned_tests {
   }
 
   fn map(pairs: Vec<(OwnedFrame, OwnedFrame)>) -> OwnedFrame {
-    let mut data = new_map(pairs.len());
-    data.extend(pairs);
-    OwnedFrame::Map { data, attributes: None }
+    OwnedFrame::Map {
+      data:       pairs,
+      attributes: None,
+    }
   }
 
   #[test]
@@ -1631,7 +1623,7 @@ mod owned_tests {
 #[cfg(feature = "bytes")]
 mod bytes_tests {
   use super::*;
-  use crate::{error::RedisProtocolErrorKind, resp3::utils::new_map};
+  use crate::error::RedisProtocolErrorKind;
   use std::collections::{HashMap, HashSet};
 
   #[test]
@@ -2237,9 +2229,10 @@ mod bytes_tests {
   }
 
   fn map(pairs: Vec<(BytesFrame, BytesFrame)>) -> BytesFrame {
-    let mut data = new_map(pairs.len());
-    data.extend(pairs);
-    BytesFrame::Map { data, attributes: None }
+    BytesFrame::Map {
+      data:       pairs,
+      attributes: None,
+    }
   }
 
   #[test]

@@ -281,11 +281,8 @@ mod resp3 {
       };
 
       for bytes in [
-        // an aggregate as a set member or map key
-        &b"~?\r\n*0\r\n.\r\n"[..],
-        b"%?\r\n*1\r\n:1\r\n:2\r\n.\r\n",
         // a map with a key and no value
-        b"%?\r\n+a\r\n.\r\n",
+        &b"%?\r\n+a\r\n.\r\n"[..],
         // a frame other than a chunk in a streamed string
         b"$?\r\n:1\r\n;0\r\n",
         // a streamed frame with the wrong terminator

@@ -25,13 +25,6 @@ use bytes::{Bytes, BytesMut};
 #[cfg(feature = "bytes")]
 use bytes_utils::Str;
 
-#[cfg(all(feature = "hashbrown", not(feature = "index-map")))]
-use hashbrown::{HashMap, HashSet};
-#[cfg(feature = "index-map")]
-use indexmap::{IndexMap, IndexSet};
-#[cfg(all(feature = "std", not(feature = "hashbrown"), not(feature = "index-map")))]
-use std::collections::{HashMap, HashSet};
-
 /// Byte prefix before a simple string type.
 pub const SIMPLE_STRING_BYTE: u8 = b'+';
 /// Byte prefix before a simple error type.
@@ -99,30 +92,14 @@ pub const AUTH: &str = "AUTH";
 /// Byte representation of `SETNAME`.
 pub const SETNAME: &str = "SETNAME";
 
-/// The map type used by frames.
+/// The type of map frames' contents: key-value pairs in the order they were received.
 ///
-/// This is `indexmap::IndexMap` if the `index-map` feature is enabled, otherwise `hashbrown::HashMap` if the
-/// `hashbrown` feature is enabled, otherwise `std::collections::HashMap`.
-#[cfg(not(feature = "index-map"))]
-pub type FrameMap<K, V> = HashMap<K, V>;
-/// The set type used by frames.
+/// Duplicate keys are kept. Converting a frame to a map type, such as `HashMap`, keeps the last value for each key.
+pub type FrameMap<K, V> = Vec<(K, V)>;
+/// The type of set frames' contents: the members in the order they were received.
 ///
-/// This is `indexmap::IndexSet` if the `index-map` feature is enabled, otherwise `hashbrown::HashSet` if the
-/// `hashbrown` feature is enabled, otherwise `std::collections::HashSet`.
-#[cfg(not(feature = "index-map"))]
-pub type FrameSet<T> = HashSet<T>;
-/// The map type used by frames.
-///
-/// This is `indexmap::IndexMap` if the `index-map` feature is enabled, otherwise `hashbrown::HashMap` if the
-/// `hashbrown` feature is enabled, otherwise `std::collections::HashMap`.
-#[cfg(feature = "index-map")]
-pub type FrameMap<K, V> = IndexMap<K, V>;
-/// The set type used by frames.
-///
-/// This is `indexmap::IndexSet` if the `index-map` feature is enabled, otherwise `hashbrown::HashSet` if the
-/// `hashbrown` feature is enabled, otherwise `std::collections::HashSet`.
-#[cfg(feature = "index-map")]
-pub type FrameSet<T> = IndexSet<T>;
+/// Duplicate members are kept.
+pub type FrameSet<T> = Vec<T>;
 
 /// Additional information returned alongside a [BytesFrame].
 #[cfg(feature = "bytes")]
@@ -131,9 +108,6 @@ pub type BytesAttributes = FrameMap<BytesFrame, BytesFrame>;
 /// Additional information returned alongside an [OwnedFrame].
 pub type OwnedAttributes = FrameMap<OwnedFrame, OwnedFrame>;
 /// Additional information returned alongside a [RangeFrame], as key-value pairs in the order they were received.
-///
-/// Duplicate keys are kept here and resolved when building a [BytesFrame] or [OwnedFrame], where the last value
-/// wins.
 pub type RangeAttributes = Vec<(RangeFrame, RangeFrame)>;
 
 /// The RESP version used in the `HELLO` request.
@@ -240,28 +214,6 @@ impl FrameKind {
     matches!(
       self,
       FrameKind::Array | FrameKind::Set | FrameKind::Map | FrameKind::BlobString
-    )
-  }
-
-  /// Whether the frame can be used as a key in a `HashMap` or `HashSet`.
-  ///
-  /// Not all frame types can be hashed, and trying to do so can panic. This function can be used to handle this
-  /// gracefully.
-  pub fn can_hash(&self) -> bool {
-    matches!(
-      self,
-      FrameKind::BlobString
-        | FrameKind::BlobError
-        | FrameKind::SimpleString
-        | FrameKind::SimpleError
-        | FrameKind::Number
-        | FrameKind::Double
-        | FrameKind::Boolean
-        | FrameKind::Null
-        | FrameKind::ChunkedString
-        | FrameKind::EndStream
-        | FrameKind::VerbatimString
-        | FrameKind::BigNumber
     )
   }
 
@@ -610,14 +562,14 @@ pub enum BorrowedFrame<'a> {
     data:       &'a [BorrowedFrame<'a>],
     attributes: Option<BorrowedAttrs<'a>>,
   },
-  /// An unordered map of key-value pairs.
+  /// A map of key-value pairs, in the order they're encoded.
   Map {
-    data:       &'a FrameMap<BorrowedFrame<'a>, BorrowedFrame<'a>>,
+    data:       &'a [(BorrowedFrame<'a>, BorrowedFrame<'a>)],
     attributes: Option<BorrowedAttrs<'a>>,
   },
-  /// An unordered collection of other frames with a uniqueness constraint.
+  /// A collection of frames, in the order they're encoded.
   Set {
-    data:       &'a FrameSet<BorrowedFrame<'a>>,
+    data:       &'a [BorrowedFrame<'a>],
     attributes: Option<BorrowedAttrs<'a>>,
   },
   /// Out-of-band data.
@@ -735,7 +687,13 @@ impl Hash for BorrowedFrame<'_> {
       },
       ChunkedString(data) => data.hash(state),
       BigNumber { data, .. } => data.hash(state),
-      _ => panic!("Invalid RESP3 data type to use as hash key."),
+      Array { data, .. } | Push { data, .. } | Set { data, .. } => data.hash(state),
+      Map { data, .. } => data.hash(state),
+      Hello { version, auth, setname } => {
+        version.hash(state);
+        auth.hash(state);
+        setname.hash(state);
+      },
     };
   }
 }
@@ -834,16 +792,11 @@ pub enum RangeFrame {
     attributes: Option<Box<RangeAttributes>>,
   },
   /// A map of key-value pairs, in the order they were received.
-  ///
-  /// Duplicate keys are kept here and resolved when building a [BytesFrame] or [OwnedFrame], where the last value
-  /// wins.
   Map {
     data:       Vec<(RangeFrame, RangeFrame)>,
     attributes: Option<Box<RangeAttributes>>,
   },
   /// A collection of frames, in the order they were received.
-  ///
-  /// Duplicate values are kept here and removed when building a [BytesFrame] or [OwnedFrame].
   Set {
     data:       Vec<RangeFrame>,
     attributes: Option<Box<RangeAttributes>>,
@@ -1006,7 +959,13 @@ impl Hash for RangeFrame {
       },
       ChunkedString(data) => resp3_utils::hash_tuple(state, data),
       BigNumber { data, .. } => resp3_utils::hash_tuple(state, data),
-      _ => panic!("Invalid RESP3 data type to use as hash key."),
+      Array { data, .. } | Push { data, .. } | Set { data, .. } => data.hash(state),
+      Map { data, .. } => data.hash(state),
+      Hello { version, auth, setname } => {
+        version.hash(state);
+        auth.hash(state);
+        setname.hash(state);
+      },
     };
   }
 }
@@ -1078,20 +1037,8 @@ fn check_streamed_aggregate<T: Resp3Frame>(target: FrameKind, data: &[T]) -> Res
   {
     return error("Unexpected chunked string in streamed aggregate.");
   }
-  let is_key = |idx: usize| match target {
-    FrameKind::Map => idx % 2 == 0,
-    FrameKind::Set => true,
-    _ => false,
-  };
-
   if target == FrameKind::Map && data.len() % 2 != 0 {
     error("Streamed map has an odd number of elements.")
-  } else if data
-    .iter()
-    .enumerate()
-    .any(|(idx, frame)| is_key(idx) && !frame.kind().can_hash())
-  {
-    error("Invalid map key or set member in streamed frame.")
   } else {
     Ok(())
   }
@@ -1271,16 +1218,16 @@ pub enum OwnedFrame {
     data:       Vec<OwnedFrame>,
     attributes: Option<Box<OwnedAttributes>>,
   },
-  /// An unordered map of key-value pairs.
+  /// A map of key-value pairs, in the order they were received.
   ///
-  /// According to the spec keys can be any other RESP3 data type. However, it doesn't make sense to implement `Hash`
-  /// for certain aggregate types. The [can_hash](crate::resp3::types::FrameKind::can_hash) function can be used to
-  /// detect this.
+  /// Keys can be any frame type, and duplicate keys are kept. See [FrameMap].
   Map {
     data:       FrameMap<OwnedFrame, OwnedFrame>,
     attributes: Option<Box<OwnedAttributes>>,
   },
-  /// An unordered collection of other frames with a uniqueness constraint.
+  /// A collection of frames, in the order they were received.
+  ///
+  /// Members can be any frame type, and duplicates are kept. See [FrameSet].
   Set {
     data:       FrameSet<OwnedFrame>,
     attributes: Option<Box<OwnedAttributes>>,
@@ -1328,7 +1275,13 @@ impl Hash for OwnedFrame {
       },
       ChunkedString(data) => data.hash(state),
       BigNumber { data, .. } => data.hash(state),
-      _ => panic!("Invalid RESP3 data type to use as hash key."),
+      Array { data, .. } | Push { data, .. } | Set { data, .. } => data.hash(state),
+      Map { data, .. } => data.hash(state),
+      Hello { version, auth, setname } => {
+        version.hash(state);
+        auth.hash(state);
+        setname.hash(state);
+      },
     };
   }
 }
@@ -1850,16 +1803,16 @@ pub enum BytesFrame {
     data:       Vec<BytesFrame>,
     attributes: Option<Box<BytesAttributes>>,
   },
-  /// An unordered map of key-value pairs.
+  /// A map of key-value pairs, in the order they were received.
   ///
-  /// According to the spec keys can be any other RESP3 data type. However, it doesn't make sense to implement `Hash`
-  /// for certain aggregate types. The [can_hash](crate::resp3::types::FrameKind::can_hash) function can be used to
-  /// detect this.
+  /// Keys can be any frame type, and duplicate keys are kept. See [FrameMap].
   Map {
     data:       FrameMap<BytesFrame, BytesFrame>,
     attributes: Option<Box<BytesAttributes>>,
   },
-  /// An unordered collection of other frames with a uniqueness constraint.
+  /// A collection of frames, in the order they were received.
+  ///
+  /// Members can be any frame type, and duplicates are kept. See [FrameSet].
   Set {
     data:       FrameSet<BytesFrame>,
     attributes: Option<Box<BytesAttributes>>,
@@ -1973,7 +1926,13 @@ impl Hash for BytesFrame {
       },
       ChunkedString(data) => data.hash(state),
       BigNumber { data, .. } => data.hash(state),
-      _ => panic!("Invalid RESP3 data type to use as hash key."),
+      Array { data, .. } | Push { data, .. } | Set { data, .. } => data.hash(state),
+      Map { data, .. } => data.hash(state),
+      Hello { version, auth, setname } => {
+        version.hash(state);
+        auth.hash(state);
+        setname.hash(state);
+      },
     };
   }
 }
@@ -2528,7 +2487,7 @@ impl<T: Resp3Frame> StreamedFrame<T> {
 #[cfg(feature = "bytes")]
 mod tests {
   use super::*;
-  use crate::resp3::utils::{new_map, new_set};
+  use crate::resp3::utils::new_map;
   use std::{collections::hash_map::RandomState, hash::BuildHasher};
 
   #[test]
@@ -2557,11 +2516,7 @@ mod tests {
     let state = RandomState::new();
     assert_eq!(state.hash_one(owned(-0.0)), state.hash_one(owned(0.0)));
     assert_eq!(state.hash_one(bytes(f64::NAN)), state.hash_one(bytes(f64::NAN)));
-    let mut set = new_set(0);
-    set.insert(owned(f64::NAN));
-    set.insert(owned(f64::NAN));
-    set.insert(owned(0.0));
-    set.insert(owned(-0.0));
+    let set: std::collections::HashSet<_> = [owned(f64::NAN), owned(f64::NAN), owned(0.0), owned(-0.0)].into();
     assert_eq!(set.len(), 2);
 
     // nested doubles use the same rules
@@ -2588,7 +2543,7 @@ mod tests {
     assert_eq!(OwnedFrame::Null, OwnedFrame::Null);
 
     let mut attributes = new_map(0);
-    attributes.insert(blob("a"), blob("b"));
+    attributes.push((blob("a"), blob("b")));
     let with_attrs = OwnedFrame::BlobString {
       data:       "a".into(),
       attributes: Some(Box::new(attributes)),
@@ -2651,9 +2606,9 @@ mod tests {
   #[test]
   fn should_convert_basic_streaming_buffer_to_frame_with_attributes() {
     let mut attributes = new_map(0);
-    attributes.insert((FrameKind::SimpleString, "a").try_into().unwrap(), 1.into());
-    attributes.insert((FrameKind::SimpleString, "b").try_into().unwrap(), 2.into());
-    attributes.insert((FrameKind::SimpleString, "c").try_into().unwrap(), 3.into());
+    attributes.push(((FrameKind::SimpleString, "a").try_into().unwrap(), 1.into()));
+    attributes.push(((FrameKind::SimpleString, "b").try_into().unwrap(), 2.into()));
+    attributes.push(((FrameKind::SimpleString, "c").try_into().unwrap(), 3.into()));
 
     let mut streaming_buf = StreamedFrame::new(FrameKind::BlobString);
     streaming_buf.add_attributes(attributes.clone()).unwrap();

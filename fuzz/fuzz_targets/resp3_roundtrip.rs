@@ -64,8 +64,7 @@ fuzz_target!(|data: &[u8]| {
       "extend_encode buffer length doesn't match encode_len"
     );
 
-    // the slice and `BytesMut` interfaces should write the same bytes. this has to use the same frame since map and
-    // set iteration order can differ between two otherwise equal frames.
+    // the slice and `BytesMut` interfaces should write the same bytes
     let mut sliced = vec![0; encode_len];
     let amt = encode_bytes(&mut sliced, &frame, int_as_blobstring).expect("failed to encode into slice");
     assert_eq!(amt, encode_len, "encode_bytes length doesn't match encode_len");

@@ -54,12 +54,9 @@ fn main() {
 | `decode-logs` |         | Enable extra debugging TRACE logs during the frame decoding process.                                                                         |
 | `codec`       |         | Enable a RESP2 and RESP3 [Tokio codec](https://docs.rs/tokio-util/latest/tokio_util/codec/index.html) interface. Implies `std` and `bytes`.  |
 | `convert`     |         | Enable the `FromResp2` and `FromResp3` trait interfaces.                                                                                     |
-| `index-map`   |         | Use [IndexMap](https://crates.io/crates/indexmap) types, which keep wire order, instead of `HashMap`. Implies `std`.                         |
-| `hashbrown`   |         | Use [hashbrown](https://crates.io/crates/hashbrown) types instead of `std::collections` types. Works with `no_std`.                          |
 
-The `resp3` feature requires one of `std`, `hashbrown`, or `index-map` to provide the map and set types used by RESP3
-frames (`FrameMap` and `FrameSet`). If more than one is enabled, `index-map` takes precedence over `hashbrown`, which takes
-precedence over `std::collections`.
+RESP3 maps and sets (`FrameMap` and `FrameSet`) are `Vec`s that keep the order of the elements on the wire, along with any
+duplicates. Convert them to the map or set type that suits the application, such as `HashMap` or `IndexMap`.
 
 ## Untrusted Input
 
@@ -69,12 +66,11 @@ deep, returning an error rather than risking a stack overflow.
 
 ## no_std
 
-`no_std` builds are supported by disabling the `std` feature. The crate still requires `alloc`. RESP3 frames require a
-map implementation, so the `hashbrown` feature should be enabled as a substitute for `std::collections`. The `codec` and
-`index-map` features require `std`.
+`no_std` builds are supported by disabling the `std` feature. The crate still requires `alloc`. The `codec` feature
+requires `std`.
 
 ```TOML
-redis-protocol = { version = "X.X.X", default-features = false, features = ["resp2", "resp3", "hashbrown"] }
+redis-protocol = { version = "X.X.X", default-features = false, features = ["resp2", "resp3"] }
 ```
 
 ## Decoding

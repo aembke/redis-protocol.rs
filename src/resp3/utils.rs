@@ -1,5 +1,5 @@
 use crate::{
-  error::{RedisProtocolError, RedisProtocolErrorKind},
+  error::RedisProtocolError,
   resp3::types::*,
   utils::{digits_in_i64, digits_in_usize},
 };
@@ -19,13 +19,6 @@ use bytes::{Bytes, BytesMut};
 #[cfg(feature = "bytes")]
 use bytes_utils::Str;
 
-#[cfg(all(feature = "hashbrown", not(feature = "index-map")))]
-use hashbrown::{HashMap, HashSet};
-#[cfg(feature = "index-map")]
-use indexmap::{IndexMap, IndexSet};
-#[cfg(all(feature = "std", not(feature = "hashbrown"), not(feature = "index-map")))]
-use std::collections::{HashMap, HashSet};
-
 pub const BOOLEAN_ENCODE_LEN: usize = 4;
 
 pub fn hash_tuple<H: Hasher>(state: &mut H, range: &(usize, usize)) {
@@ -33,26 +26,9 @@ pub fn hash_tuple<H: Hasher>(state: &mut H, range: &(usize, usize)) {
   range.1.hash(state);
 }
 
-#[cfg(not(feature = "index-map"))]
-#[allow(dead_code)]
-pub fn new_set<K: Hash + Eq>(capacity: usize) -> HashSet<K> {
-  HashSet::with_capacity(capacity)
-}
-
-#[cfg(feature = "index-map")]
-#[allow(dead_code)]
-pub fn new_set<K: Hash + Eq>(capacity: usize) -> IndexSet<K> {
-  IndexSet::with_capacity(capacity)
-}
-
-#[cfg(not(feature = "index-map"))]
-pub fn new_map<K: Hash + Eq, V>(capacity: usize) -> HashMap<K, V> {
-  HashMap::with_capacity(capacity)
-}
-
-#[cfg(feature = "index-map")]
-pub fn new_map<K: Hash + Eq, V>(capacity: usize) -> IndexMap<K, V> {
-  IndexMap::with_capacity(capacity)
+/// Create an empty [FrameMap] with room for `capacity` pairs.
+pub fn new_map<K, V>(capacity: usize) -> FrameMap<K, V> {
+  Vec::with_capacity(capacity)
 }
 
 /// Read the number of bytes needed to encode the length prefix on any aggregate type frame.
@@ -140,39 +116,39 @@ pub fn borrowed_array_or_push_encode_len(frames: &[BorrowedFrame], int_as_blobst
   })
 }
 
-pub fn owned_map_encode_len(map: &FrameMap<OwnedFrame, OwnedFrame>, int_as_blobstring: bool) -> usize {
+pub fn owned_map_encode_len(map: &[(OwnedFrame, OwnedFrame)], int_as_blobstring: bool) -> usize {
   map.iter().fold(length_prefix_encode_len(map.len()), |m, (k, v)| {
     m + owned_encode_len(k, int_as_blobstring) + owned_encode_len(v, int_as_blobstring)
   })
 }
 
-pub fn borrowed_map_encode_len(map: &FrameMap<BorrowedFrame, BorrowedFrame>, int_as_blobstring: bool) -> usize {
+pub fn borrowed_map_encode_len(map: &[(BorrowedFrame, BorrowedFrame)], int_as_blobstring: bool) -> usize {
   map.iter().fold(length_prefix_encode_len(map.len()), |m, (k, v)| {
     m + borrowed_encode_len(k, int_as_blobstring) + borrowed_encode_len(v, int_as_blobstring)
   })
 }
 
 #[cfg(feature = "bytes")]
-pub fn bytes_map_encode_len(map: &FrameMap<BytesFrame, BytesFrame>, int_as_blobstring: bool) -> usize {
+pub fn bytes_map_encode_len(map: &[(BytesFrame, BytesFrame)], int_as_blobstring: bool) -> usize {
   map.iter().fold(length_prefix_encode_len(map.len()), |m, (k, v)| {
     m + bytes_encode_len(k, int_as_blobstring) + bytes_encode_len(v, int_as_blobstring)
   })
 }
 
-pub fn owned_set_encode_len(set: &FrameSet<OwnedFrame>, int_as_blobstring: bool) -> usize {
+pub fn owned_set_encode_len(set: &[OwnedFrame], int_as_blobstring: bool) -> usize {
   set.iter().fold(length_prefix_encode_len(set.len()), |m, f| {
     m + owned_encode_len(f, int_as_blobstring)
   })
 }
 
-pub fn borrowed_set_encode_len(set: &FrameSet<BorrowedFrame>, int_as_blobstring: bool) -> usize {
+pub fn borrowed_set_encode_len(set: &[BorrowedFrame], int_as_blobstring: bool) -> usize {
   set.iter().fold(length_prefix_encode_len(set.len()), |m, f| {
     m + borrowed_encode_len(f, int_as_blobstring)
   })
 }
 
 #[cfg(feature = "bytes")]
-pub fn bytes_set_encode_len(set: &FrameSet<BytesFrame>, int_as_blobstring: bool) -> usize {
+pub fn bytes_set_encode_len(set: &[BytesFrame], int_as_blobstring: bool) -> usize {
   set.iter().fold(length_prefix_encode_len(set.len()), |m, f| {
     m + bytes_encode_len(f, int_as_blobstring)
   })
@@ -652,7 +628,7 @@ fn build_owned_attributes_slow(
   for (key, value) in attributes {
     let key = build_owned_frame(buf, key)?;
     let value = build_owned_frame(buf, value)?;
-    out.insert(key, value);
+    out.push((key, value));
   }
 
   Ok(Box::new(out))
@@ -681,7 +657,7 @@ fn build_bytes_attributes_slow(
   for (key, value) in attributes {
     let key = build_bytes_frame(buf, key)?;
     let value = build_bytes_frame(buf, value)?;
-    out.insert(key, value);
+    out.push((key, value));
   }
 
   Ok(Box::new(out))
@@ -765,38 +741,15 @@ pub fn build_owned_frame(buf: &[u8], frame: &RangeFrame) -> Result<OwnedFrame, R
     RangeFrame::Set { data, attributes } => OwnedFrame::Set {
       data:       data
         .iter()
-        .map(|f| {
-          let value = build_owned_frame(buf, f)?;
-
-          if !value.kind().can_hash() {
-            Err(RedisProtocolError::new(
-              RedisProtocolErrorKind::DecodeError,
-              "Invalid hash key.",
-            ))
-          } else {
-            Ok(value)
-          }
-        })
-        .collect::<Result<FrameSet<OwnedFrame>, RedisProtocolError>>()?,
+        .map(|f| build_owned_frame(buf, f))
+        .collect::<Result<FrameSet<_>, RedisProtocolError>>()?,
       attributes: build_owned_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::Map { data, attributes } => OwnedFrame::Map {
       data:       data
         .iter()
-        .map(|(k, v)| {
-          let key = build_owned_frame(buf, k)?;
-          let value = build_owned_frame(buf, v)?;
-
-          if !key.kind().can_hash() {
-            Err(RedisProtocolError::new(
-              RedisProtocolErrorKind::DecodeError,
-              "Invalid hash key.",
-            ))
-          } else {
-            Ok((key, value))
-          }
-        })
-        .collect::<Result<FrameMap<OwnedFrame, OwnedFrame>, RedisProtocolError>>()?,
+        .map(|(k, v)| Ok((build_owned_frame(buf, k)?, build_owned_frame(buf, v)?)))
+        .collect::<Result<FrameMap<_, _>, RedisProtocolError>>()?,
       attributes: build_owned_attributes(buf, attributes.as_deref())?,
     },
   })
@@ -881,37 +834,14 @@ pub fn build_bytes_frame(buf: &Bytes, frame: &RangeFrame) -> Result<BytesFrame, 
     RangeFrame::Set { data, attributes } => BytesFrame::Set {
       data:       data
         .iter()
-        .map(|f| {
-          let value = build_bytes_frame(buf, f)?;
-
-          if !value.kind().can_hash() {
-            Err(RedisProtocolError::new(
-              RedisProtocolErrorKind::DecodeError,
-              "Invalid hash key.",
-            ))
-          } else {
-            Ok(value)
-          }
-        })
+        .map(|f| build_bytes_frame(buf, f))
         .collect::<Result<FrameSet<_>, RedisProtocolError>>()?,
       attributes: build_bytes_attributes(buf, attributes.as_deref())?,
     },
     RangeFrame::Map { data, attributes } => BytesFrame::Map {
       data:       data
         .iter()
-        .map(|(k, v)| {
-          let key = build_bytes_frame(buf, k)?;
-          let value = build_bytes_frame(buf, v)?;
-
-          if !key.kind().can_hash() {
-            Err(RedisProtocolError::new(
-              RedisProtocolErrorKind::DecodeError,
-              "Invalid hash key.",
-            ))
-          } else {
-            Ok((key, value))
-          }
-        })
+        .map(|(k, v)| Ok((build_bytes_frame(buf, k)?, build_bytes_frame(buf, v)?)))
         .collect::<Result<FrameMap<_, _>, RedisProtocolError>>()?,
       attributes: build_bytes_attributes(buf, attributes.as_deref())?,
     },
@@ -1040,7 +970,7 @@ mod f64_tests {
 mod tests {
   use crate::resp3::{
     types::*,
-    utils::{bytes_encode_len, new_map, new_set},
+    utils::{bytes_encode_len, new_map},
   };
   use alloc::vec;
 
@@ -1054,7 +984,7 @@ mod tests {
       data:       42,
       attributes: None,
     };
-    out.insert(key, value);
+    out.push((key, value));
 
     (out, 1 + 1 + 2 + 6 + 5)
   }
@@ -1070,7 +1000,7 @@ mod tests {
       data:       42,
       attributes: None,
     };
-    out.insert(key, value);
+    out.push((key, value));
 
     (out, 4 + 6 + 8)
   }
@@ -1199,8 +1129,8 @@ mod tests {
     streamed_frame.add_frame(v2.clone());
 
     let mut expected = new_map(0);
-    expected.insert(k1.clone(), v1.clone());
-    expected.insert(k2.clone(), v2.clone());
+    expected.push((k1.clone(), v1.clone()));
+    expected.push((k2.clone(), v2.clone()));
     let expected = BytesFrame::Map {
       data:       expected,
       attributes: None,
@@ -1218,8 +1148,8 @@ mod tests {
     streamed_frame.add_attributes(attributes.clone()).unwrap();
 
     let mut expected = new_map(0);
-    expected.insert(k1.clone(), v1.clone());
-    expected.insert(k2.clone(), v2.clone());
+    expected.push((k1.clone(), v1.clone()));
+    expected.push((k2.clone(), v2.clone()));
     let expected = BytesFrame::Map {
       data:       expected,
       attributes: Some(Box::new(attributes)),
@@ -1252,11 +1182,11 @@ mod tests {
     streamed_frame.add_frame(v3.clone());
     streamed_frame.add_frame(v4.clone());
 
-    let mut expected = new_set(0);
-    expected.insert(v1.clone());
-    expected.insert(v2.clone());
-    expected.insert(v3.clone());
-    expected.insert(v4.clone());
+    let mut expected = Vec::new();
+    expected.push(v1.clone());
+    expected.push(v2.clone());
+    expected.push(v3.clone());
+    expected.push(v4.clone());
     let expected = BytesFrame::Set {
       data:       expected,
       attributes: None,
@@ -1273,11 +1203,11 @@ mod tests {
     streamed_frame.add_frame(v4.clone());
     streamed_frame.add_attributes(attributes.clone()).unwrap();
 
-    let mut expected = new_set(0);
-    expected.insert(v1);
-    expected.insert(v2);
-    expected.insert(v3);
-    expected.insert(v4);
+    let mut expected = Vec::new();
+    expected.push(v1);
+    expected.push(v2);
+    expected.push(v3);
+    expected.push(v4);
     let expected = BytesFrame::Set {
       data:       expected,
       attributes: Some(Box::new(attributes)),
@@ -1419,7 +1349,7 @@ mod tests {
       attributes: None,
     };
     let mut inner_map = new_map(0);
-    inner_map.insert(inner_k1.clone(), inner_v1.clone());
+    inner_map.push((inner_k1.clone(), inner_v1.clone()));
     let v2 = BytesFrame::Map {
       data:       inner_map,
       attributes: None,
@@ -1432,8 +1362,8 @@ mod tests {
     streamed_frame.add_frame(v2.clone());
 
     let mut expected = new_map(0);
-    expected.insert(k1.clone(), v1.clone());
-    expected.insert(k2.clone(), v2.clone());
+    expected.push((k1.clone(), v1.clone()));
+    expected.push((k2.clone(), v2.clone()));
     let expected = BytesFrame::Map {
       data:       expected,
       attributes: None,
@@ -1444,7 +1374,7 @@ mod tests {
     v1.add_attributes(attributes.clone()).unwrap();
     inner_v1.add_attributes(attributes.clone()).unwrap();
     let mut inner_map = new_map(0);
-    inner_map.insert(inner_k1, inner_v1);
+    inner_map.push((inner_k1, inner_v1));
     let v2 = BytesFrame::Map {
       data:       inner_map,
       attributes: None,
@@ -1458,8 +1388,8 @@ mod tests {
     streamed_frame.add_attributes(attributes.clone()).unwrap();
 
     let mut expected = new_map(0);
-    expected.insert(k1.clone(), v1.clone());
-    expected.insert(k2.clone(), v2.clone());
+    expected.push((k1.clone(), v1.clone()));
+    expected.push((k2.clone(), v2.clone()));
     let expected = BytesFrame::Map {
       data:       expected,
       attributes: Some(Box::new(attributes)),

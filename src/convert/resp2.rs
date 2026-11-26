@@ -480,8 +480,7 @@ where
   }
 }
 
-// Implemented for each enabled hash map implementation so that the `std` and `hashbrown` features are additive.
-#[cfg(any(feature = "std", feature = "hashbrown"))]
+#[cfg(feature = "std")]
 macro_rules! impl_from_resp2_collections {
   () => {
     impl<K, V, S> FromResp2<OwnedFrame> for HashMap<K, V, S>
@@ -596,14 +595,6 @@ macro_rules! impl_from_resp2_collections {
 mod std_collections {
   use super::*;
   use std::collections::{HashMap, HashSet};
-
-  impl_from_resp2_collections!();
-}
-
-#[cfg(feature = "hashbrown")]
-mod hashbrown_collections {
-  use super::*;
-  use hashbrown::{HashMap, HashSet};
 
   impl_from_resp2_collections!();
 }

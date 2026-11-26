@@ -28,12 +28,6 @@
 extern crate alloc;
 extern crate core;
 
-#[cfg(all(
-  feature = "resp3",
-  not(any(feature = "std", feature = "hashbrown", feature = "index-map"))
-))]
-compile_error!("The `resp3` feature requires one of the `std`, `hashbrown`, or `index-map` features.");
-
 #[cfg(feature = "bytes")]
 #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
 pub extern crate bytes;

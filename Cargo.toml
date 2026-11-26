@@ -27,10 +27,8 @@ bytes = { version = "1.1", default-features = false, optional = true }
 bytes-utils = { version = "0.1", default-features = false, optional = true }
 crc16 = { version = "0.4" }
 memchr = { version = "2", default-features = false }
-indexmap = { version = "2.2", default-features = false, optional = true }
 log = { version = "0.4", optional = true }
 nom = { version = "8.0", default-features = false }
-hashbrown = { version = "0.17", optional = true }
 tokio-util = { version = "0.7", features = ["codec"], optional = true }
 
 [dev-dependencies]
@@ -46,9 +44,6 @@ criterion = { version = "0.8", features = ["html_reports"] }
 default = ["std", "resp2", "resp3"]
 resp2 = []
 resp3 = []
-# `IndexMap` only has a default hasher with `indexmap/std`, so this requires `std`.
-index-map = ["dep:indexmap", "indexmap/std", "std"]
-hashbrown = ["dep:hashbrown"]
 bytes = ["dep:bytes", "dep:bytes-utils"]
 decode-logs = ["dep:log"]
 std = ["nom/std", "memchr/std"]

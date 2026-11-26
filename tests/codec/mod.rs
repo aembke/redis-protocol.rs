@@ -291,7 +291,7 @@ async fn should_use_resp3_codec_hgetall() {
   assert_eq!(response.as_str().unwrap(), "OK");
 
   let mut expected = FrameMap::new();
-  expected.insert(
+  expected.push((
     Resp3BytesFrame::BlobString {
       data:       "a".into(),
       attributes: None,
@@ -300,8 +300,8 @@ async fn should_use_resp3_codec_hgetall() {
       data:       "b".into(),
       attributes: None,
     },
-  );
-  expected.insert(
+  ));
+  expected.push((
     Resp3BytesFrame::BlobString {
       data:       "c".into(),
       attributes: None,
@@ -310,7 +310,7 @@ async fn should_use_resp3_codec_hgetall() {
       data:       "d".into(),
       attributes: None,
     },
-  );
+  ));
   let expected = Resp3BytesFrame::Map {
     data:       expected,
     attributes: None,

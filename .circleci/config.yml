@@ -40,14 +40,14 @@ jobs:
       - run:
           name: Run tests without bytes or bytes_utils
           command: cargo test --release --features "resp2 resp3 convert" --lib
-  tests-indexmap:
+  tests-no-std:
     docker:
       - image: cimg/rust:1.88
     steps:
       - checkout
       - run:
-          name: Run tests with indexmap features
-          command: cargo test --release --features "index-map resp2 resp3 convert" --lib
+          name: Run tests without std
+          command: cargo test --release --no-default-features --features "resp2 resp3 bytes" --lib
   clippy-lint:
     docker:
       - image: cimg/rust:1.88
@@ -62,11 +62,8 @@ jobs:
           name: Clippy with all features
           command: cargo clippy --all-features --lib --tests --benches -- -Dwarnings
       - run:
-          name: Clippy with index-map
-          command: cargo clippy --no-default-features --features "index-map resp2 resp3 convert" --lib --tests -- -Dwarnings
-      - run:
           name: Clippy without std
-          command: cargo clippy --no-default-features --features "hashbrown resp2 resp3 convert bytes" --lib -- -Dwarnings
+          command: cargo clippy --no-default-features --features "resp2 resp3 convert bytes" --lib -- -Dwarnings
   build-no-std:
     docker:
       - image: cimg/rust:1.88
@@ -77,7 +74,7 @@ jobs:
           command: rustup target add thumbv7m-none-eabi
       - run:
           name: Verifies successful build for no_std target
-          command: cargo build --release --no-default-features --features resp2,resp3,convert,hashbrown,bytes --target=thumbv7m-none-eabi
+          command: cargo build --release --no-default-features --features resp2,resp3,convert,bytes --target=thumbv7m-none-eabi
   tests-doc:
     docker:
       - image: cimg/rust:1.88
@@ -95,12 +92,8 @@ jobs:
           name: Install cargo-hack
           command: curl -LsSf https://github.com/taiki-e/cargo-hack/releases/latest/download/cargo-hack-x86_64-unknown-linux-gnu.tar.gz | tar xzf - -C ~/.cargo/bin
       - run:
-          name: Check feature combinations that include a RESP3 map type
-          # `resp3` without one of `std`, `hashbrown`, or `index-map` is an intentional `compile_error!`
-          command: cargo hack check --feature-powerset --no-dev-deps --exclude-features default --at-least-one-of resp2,resp3 --at-least-one-of std,hashbrown,index-map
-      - run:
-          name: Check RESP2 feature combinations without std or a map type
-          command: cargo hack check --feature-powerset --no-dev-deps --include-features bytes,convert,decode-logs --features resp2
+          name: Check feature combinations
+          command: cargo hack check --feature-powerset --no-dev-deps --exclude-features default --at-least-one-of resp2,resp3
   check-fuzz:
     docker:
       - image: cimg/rust:1.88
@@ -117,7 +110,7 @@ workflows:
       - tests-bytes
       - tests-no-bytes
       - tests-codec
-      - tests-indexmap
+      - tests-no-std
       - build-no-std
       - clippy-lint
       - build-docs
