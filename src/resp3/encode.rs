@@ -908,7 +908,7 @@ pub mod complete {
 /// Stream an array of frames via a Tokio unbounded channel.
 ///
 /// ```rust no_run
-/// # use redis_protocol::{zero_extend, resp3::{encode::streaming::*, types::{BytesFrame, FrameKind, Resp3Frame}}, error::RedisProtocolError};
+/// # use redis_protocol::{resp3::{encode::streaming::*, types::{BytesFrame, FrameKind, Resp3Frame}}, error::RedisProtocolError};
 /// # use bytes::BytesMut;
 /// # use std::{future::Future, time::Duration};
 /// # use tokio::{net::TcpStream, time::sleep, io::{AsyncWrite, AsyncWriteExt}};
@@ -928,18 +928,15 @@ pub mod complete {
 ///   let mut buf = BytesMut::new();
 ///   let mut written = 0;
 ///
-///   zero_extend(&mut buf, START_STREAM_ENCODE_LEN);
-///   encode_start_aggregate_type(&mut buf, 0, FrameKind::Array).unwrap();
+///   extend_encode_start_aggregate_type(&mut buf, FrameKind::Array).unwrap();
 ///   written += write_all(socket, &mut buf).await;
 ///
 ///   while let Some(frame) = rx.recv().await {
-///     zero_extend(&mut buf, frame.encode_len(false));
-///     encode_bytes_aggregate_type_inner_value(&mut buf, 0, &frame, false).unwrap();
+///     extend_encode_aggregate_type_inner_value(&mut buf, &frame, false).unwrap();
 ///     written += write_all(socket, &mut buf).await;
 ///   }
 ///
-///   zero_extend(&mut buf, END_STREAM_AGGREGATE_TYPE_ENCODE_LEN);
-///   encode_end_aggregate_type(&mut buf, 0).unwrap();
+///   extend_encode_end_aggregate_type(&mut buf).unwrap();
 ///   written += write_all(socket, &mut buf).await;
 ///
 ///   println!("Streamed {} bytes to the socket.", written);
@@ -1242,6 +1239,139 @@ pub mod streaming {
     gen_end_streaming_aggregate_type((buf, offset))
       .map(|(_, l)| l)
       .map_err(|e| e.into())
+  }
+
+  /// Encode the starting bytes in a streaming blob string at the end of `buf`, which grows as needed.
+  ///
+  /// Returns the number of bytes encoded.
+  #[cfg(feature = "bytes")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
+  pub fn extend_encode_start_string(buf: &mut BytesMut) -> Result<usize, RedisProtocolError> {
+    utils::extend_with(buf, START_STREAM_ENCODE_LEN, |buf| {
+      gen_start_streaming_string(buf).map(|_| ())
+    })
+  }
+
+  /// Encode one chunk of a streaming blob string at the end of `buf`, which grows as needed.
+  ///
+  /// If `data` is empty this does the same thing as [extend_encode_end_string] to signal that the streamed string is
+  /// finished.
+  ///
+  /// Returns the number of bytes encoded.
+  #[cfg(feature = "bytes")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
+  pub fn extend_encode_string_chunk(buf: &mut BytesMut, data: &[u8]) -> Result<usize, RedisProtocolError> {
+    utils::extend_with(buf, 0, |buf| gen_chunked_string(buf, data).map(|_| ()))
+  }
+
+  /// Encode the terminating bytes at the end of a streaming blob string at the end of `buf`, which grows as needed.
+  ///
+  /// Returns the number of bytes encoded.
+  #[cfg(feature = "bytes")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
+  pub fn extend_encode_end_string(buf: &mut BytesMut) -> Result<usize, RedisProtocolError> {
+    utils::extend_with(buf, END_STREAM_STRING_ENCODE_LEN, |buf| {
+      gen_end_streaming_string(buf).map(|_| ())
+    })
+  }
+
+  /// Encode the starting bytes for a streaming aggregate type (array, set, or map) at the end of `buf`, which grows
+  /// as needed.
+  ///
+  /// Returns the number of bytes encoded.
+  #[cfg(feature = "bytes")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
+  pub fn extend_encode_start_aggregate_type(
+    buf: &mut BytesMut,
+    kind: FrameKind,
+  ) -> Result<usize, RedisProtocolError> {
+    if !kind.is_aggregate_type() {
+      return Err(GenError::CustomError(3).into());
+    }
+
+    utils::extend_with(buf, START_STREAM_ENCODE_LEN, |buf| {
+      gen_start_streaming_aggregate_type(buf, kind).map(|_| ())
+    })
+  }
+
+  /// Encode the inner frame inside a streamed array or set at the end of `buf`, which grows as needed.
+  ///
+  /// Use [extend_encode_aggregate_type_inner_kv_pair] to encode a key-value pair inside a streaming map.
+  ///
+  /// Returns the number of bytes encoded.
+  #[cfg(feature = "bytes")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
+  pub fn extend_encode_aggregate_type_inner_value(
+    buf: &mut BytesMut,
+    data: &BytesFrame,
+    int_as_blobstring: bool,
+  ) -> Result<usize, RedisProtocolError> {
+    utils::extend_with(buf, 0, |buf| {
+      gen_bytes_streaming_inner_value_frame(buf, data, int_as_blobstring).map(|_| ())
+    })
+  }
+
+  /// Encode the inner borrowed frame inside a streamed array or set at the end of `buf`, which grows as needed.
+  ///
+  /// Use [extend_encode_borrowed_aggregate_type_inner_kv_pair] to encode a key-value pair inside a streaming map.
+  ///
+  /// Returns the number of bytes encoded.
+  #[cfg(feature = "bytes")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
+  pub fn extend_encode_borrowed_aggregate_type_inner_value(
+    buf: &mut BytesMut,
+    data: &BorrowedFrame,
+    int_as_blobstring: bool,
+  ) -> Result<usize, RedisProtocolError> {
+    utils::extend_with(buf, 0, |buf| {
+      gen_borrowed_streaming_inner_value_frame(buf, data, int_as_blobstring).map(|_| ())
+    })
+  }
+
+  /// Encode the inner frames that make up a key-value pair in a streamed map at the end of `buf`, which grows as
+  /// needed.
+  ///
+  /// Returns the number of bytes encoded.
+  #[cfg(feature = "bytes")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
+  pub fn extend_encode_aggregate_type_inner_kv_pair(
+    buf: &mut BytesMut,
+    key: &BytesFrame,
+    value: &BytesFrame,
+    int_as_blobstring: bool,
+  ) -> Result<usize, RedisProtocolError> {
+    utils::extend_with(buf, 0, |buf| {
+      gen_bytes_streaming_inner_kv_pair_frames(buf, key, value, int_as_blobstring).map(|_| ())
+    })
+  }
+
+  /// Encode the inner borrowed frames that make up a key-value pair in a streamed map at the end of `buf`, which
+  /// grows as needed.
+  ///
+  /// Returns the number of bytes encoded.
+  #[cfg(feature = "bytes")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
+  pub fn extend_encode_borrowed_aggregate_type_inner_kv_pair(
+    buf: &mut BytesMut,
+    key: &BorrowedFrame,
+    value: &BorrowedFrame,
+    int_as_blobstring: bool,
+  ) -> Result<usize, RedisProtocolError> {
+    utils::extend_with(buf, 0, |buf| {
+      gen_borrowed_streaming_inner_kv_pair_frames(buf, key, value, int_as_blobstring).map(|_| ())
+    })
+  }
+
+  /// Encode the terminating bytes at the end of a streaming aggregate type (array, set, or map) at the end of `buf`,
+  /// which grows as needed.
+  ///
+  /// Returns the number of bytes encoded.
+  #[cfg(feature = "bytes")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
+  pub fn extend_encode_end_aggregate_type(buf: &mut BytesMut) -> Result<usize, RedisProtocolError> {
+    utils::extend_with(buf, END_STREAM_AGGREGATE_TYPE_ENCODE_LEN, |buf| {
+      gen_end_streaming_aggregate_type(buf).map(|_| ())
+    })
   }
 }
 
@@ -1974,6 +2104,58 @@ mod owned_tests {
 #[cfg(feature = "bytes")]
 mod bytes_tests {
   use super::*;
+
+  #[test]
+  fn should_extend_encode_streamed_frames() {
+    let key = BytesFrame::SimpleString {
+      data:       "foo".into(),
+      attributes: None,
+    };
+    let value = BytesFrame::Number {
+      data:       42,
+      attributes: None,
+    };
+    let borrowed_key = BorrowedFrame::SimpleString {
+      data:       b"foo",
+      attributes: None,
+    };
+    let borrowed_value = BorrowedFrame::Number {
+      data:       42,
+      attributes: None,
+    };
+    let expected = "$?\r\n;3\r\nfoo\r\n;0\r\n$?\r\n;3\r\nbar\r\n;0\r\n%?\r\n+foo\r\n$2\r\n42\r\n+foo\r\n:42\r\n.\r\n*?\r\n+foo\r\n:42\r\n.\r\n";
+
+    let mut buf = BytesMut::from(&b"x"[..]);
+    let mut amt = 0;
+    amt += streaming::extend_encode_start_string(&mut buf).unwrap();
+    amt += streaming::extend_encode_string_chunk(&mut buf, b"foo").unwrap();
+    amt += streaming::extend_encode_string_chunk(&mut buf, b"").unwrap();
+    amt += streaming::extend_encode_start_string(&mut buf).unwrap();
+    amt += streaming::extend_encode_string_chunk(&mut buf, b"bar").unwrap();
+    amt += streaming::extend_encode_end_string(&mut buf).unwrap();
+    amt += streaming::extend_encode_start_aggregate_type(&mut buf, FrameKind::Map).unwrap();
+    amt += streaming::extend_encode_aggregate_type_inner_kv_pair(&mut buf, &key, &value, true).unwrap();
+    amt +=
+      streaming::extend_encode_borrowed_aggregate_type_inner_kv_pair(&mut buf, &borrowed_key, &borrowed_value, false)
+        .unwrap();
+    amt += streaming::extend_encode_end_aggregate_type(&mut buf).unwrap();
+    amt += streaming::extend_encode_start_aggregate_type(&mut buf, FrameKind::Array).unwrap();
+    amt += streaming::extend_encode_aggregate_type_inner_value(&mut buf, &key, false).unwrap();
+    amt += streaming::extend_encode_borrowed_aggregate_type_inner_value(&mut buf, &borrowed_value, false).unwrap();
+    amt += streaming::extend_encode_end_aggregate_type(&mut buf).unwrap();
+
+    assert_eq!(amt, expected.len());
+    assert_eq!(&buf[1 ..], expected.as_bytes());
+
+    // the buffer is unchanged after an error
+    assert!(streaming::extend_encode_start_aggregate_type(&mut buf, FrameKind::BlobString).is_err());
+    let invalid = BytesFrame::SimpleString {
+      data:       "a\r\nb".into(),
+      attributes: None,
+    };
+    assert!(streaming::extend_encode_aggregate_type_inner_value(&mut buf, &invalid, false).is_err());
+    assert_eq!(buf.len(), expected.len() + 1);
+  }
   use itertools::Itertools;
   use std::{convert::TryInto, str};
 
