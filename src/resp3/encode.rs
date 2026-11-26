@@ -3,6 +3,7 @@
 //! <https://github.com/antirez/RESP3/blob/master/spec.md>
 
 use crate::{
+  command::{gen_command_arg, gen_command_header},
   error::RedisProtocolError,
   gen::{check_line, GenError, GenOut},
   int2dec,
@@ -513,19 +514,6 @@ fn gen_bytes_push<'b, W: GenOut, A: Into<BorrowedAttrs<'b>>>(
   Ok(x)
 }
 
-/// Write one argument of a command as a blob string.
-fn gen_command_arg<W: GenOut>(x: W, data: &[u8]) -> Result<W, GenError> {
-  let (len, padding) = int2dec::u64_to_digits(data.len() as u64);
-  do_gen!(
-    x,
-    gen_be_u8!(BLOB_STRING_BYTE)
-      >> gen_slice!(&len[padding ..])
-      >> gen_slice!(CRLF.as_bytes())
-      >> gen_slice!(data)
-      >> gen_slice!(CRLF.as_bytes())
-  )
-}
-
 /// Write a `HELLO` command as an array of blob strings, like any other command.
 ///
 /// Every server version that supports `HELLO` (6.0 and later) accepts this, and unlike an inline command it works
@@ -538,10 +526,7 @@ fn gen_hello<W: GenOut>(
   setname: Option<&str>,
 ) -> Result<W, GenError> {
   let args = 2 + if auth.is_some() { 3 } else { 0 } + if setname.is_some() { 2 } else { 0 };
-  let mut x = do_gen!(
-    x,
-    gen_be_u8!(ARRAY_BYTE) >> gen_slice!(&[b'0' + args]) >> gen_slice!(CRLF.as_bytes())
-  )?;
+  let mut x = gen_command_header(x, args)?;
   x = gen_command_arg(x, HELLO.as_bytes())?;
   x = gen_command_arg(x, &[version.to_byte()])?;
   if let Some((username, password)) = auth {
@@ -821,6 +806,11 @@ pub mod reserve_strategies {
 /// ```
 pub mod complete {
   use super::*;
+
+  #[cfg(feature = "bytes")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
+  pub use crate::command::extend_encode_command;
+  pub use crate::command::{command_encode_len, encode_command};
 
   /// Attempt to encode a frame into `buf`.
   ///

@@ -64,5 +64,53 @@ fn resp3_encode(c: &mut Criterion) {
   group.finish();
 }
 
-criterion_group!(benches, resp2_encode, resp3_encode);
+/// Compare encoding a command directly from its arguments with building frames first.
+#[cfg(feature = "bytes")]
+fn command_encode(c: &mut Criterion) {
+  use bytes::Bytes;
+  use redis_protocol::resp2::types::BytesFrame;
+
+  let mut group = c.benchmark_group("command_encode");
+  let commands: Vec<(&str, Vec<Bytes>)> = vec![
+    ("get", vec!["GET".into(), "foo".into()]),
+    ("set_1kb", vec![
+      "SET".into(),
+      "foo".into(),
+      Bytes::from(vec![b'a'; 1024]),
+    ]),
+    (
+      "mset_100",
+      std::iter::once(Bytes::from("MSET"))
+        .chain((0 .. 100).map(|i| Bytes::from(format!("key:{i}"))))
+        .collect(),
+    ),
+  ];
+
+  for (name, args) in commands {
+    let len = resp2::command_encode_len(&args);
+    group.throughput(Throughput::Bytes(len as u64));
+    let mut buf = BytesMut::with_capacity(len);
+
+    group.bench_function(format!("frames/{name}"), |b| {
+      b.iter(|| {
+        buf.clear();
+        let frame = BytesFrame::Array(black_box(&args).iter().cloned().map(BytesFrame::BulkString).collect());
+        resp2::extend_encode(&mut buf, &frame, false).unwrap()
+      })
+    });
+    group.bench_function(format!("args/{name}"), |b| {
+      b.iter(|| {
+        buf.clear();
+        resp2::extend_encode_command(&mut buf, black_box(&args)).unwrap()
+      })
+    });
+  }
+
+  group.finish();
+}
+
+#[cfg(not(feature = "bytes"))]
+fn command_encode(_: &mut Criterion) {}
+
+criterion_group!(benches, resp2_encode, resp3_encode, command_encode);
 criterion_main!(benches);

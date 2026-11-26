@@ -19,6 +19,8 @@ pub(crate) enum GenError {
 
 /// The `CustomError` code for a simple string, simple error, or big number that contains a CR or LF byte.
 pub(crate) const INVALID_LINE: u32 = 4;
+/// The `CustomError` code for a command whose arguments don't match the length reported by their iterator.
+pub(crate) const COMMAND_LENGTH: u32 = 5;
 
 #[cfg(feature = "bytes")]
 const _: () = assert!(core::mem::size_of::<Result<&mut BytesMut, GenError>>() == 2 * core::mem::size_of::<usize>());

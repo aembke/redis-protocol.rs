@@ -130,6 +130,10 @@ impl From<GenError> for RedisProtocolError {
           RedisProtocolErrorKind::EncodeError,
           "Simple strings, simple errors, and big numbers cannot contain CR or LF.",
         ),
+        crate::gen::COMMAND_LENGTH => RedisProtocolError::new(
+          RedisProtocolErrorKind::EncodeError,
+          "The number of command arguments doesn't match the iterator's length.",
+        ),
         _ => RedisProtocolError::new_empty(),
       },
       GenError::BufferTooSmall(b) => RedisProtocolError::buffer_too_small(b),

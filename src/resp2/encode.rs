@@ -16,6 +16,11 @@ use crate::utils;
 #[cfg(feature = "bytes")]
 use bytes::BytesMut;
 
+#[cfg(feature = "bytes")]
+#[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
+pub use crate::command::extend_encode_command;
+pub use crate::command::{command_encode_len, encode_command};
+
 fn gen_simplestring<W: GenOut>(x: W, data: &[u8]) -> Result<W, GenError> {
   check_line(data)?;
   do_gen!(

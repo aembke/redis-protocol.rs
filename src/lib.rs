@@ -46,6 +46,8 @@ pub extern crate tokio_util;
 
 #[macro_use]
 mod macros;
+#[cfg(any(feature = "resp2", feature = "resp3"))]
+mod command;
 /// Error types.
 pub mod error;
 #[cfg(any(feature = "resp2", feature = "resp3"))]
