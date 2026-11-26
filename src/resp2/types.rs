@@ -109,6 +109,7 @@ impl FrameKind {
 
 /// A borrowed frame variant, typically used for encoding use cases.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum BorrowedFrame<'a> {
   /// A RESP2 simple string.
   SimpleString(&'a [u8]),
@@ -177,6 +178,7 @@ impl BorrowedFrame<'_> {
 /// A reference-free frame type representing ranges into an associated buffer, typically used to implement zero-copy
 /// parsing.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum RangeFrame {
   /// A RESP2 simple string.
   SimpleString(_Range),
@@ -289,6 +291,7 @@ pub trait Resp2Frame: Debug + Hash + Eq {
 
 /// A RESP2 frame.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum OwnedFrame {
   /// A RESP2 simple string.
   SimpleString(Vec<u8>),
@@ -521,6 +524,7 @@ impl Resp2Frame for OwnedFrame {
 #[cfg(feature = "bytes")]
 #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum BytesFrame {
   /// A RESP2 simple string.
   SimpleString(Bytes),

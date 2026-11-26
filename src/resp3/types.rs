@@ -533,6 +533,7 @@ macro_rules! impl_frame_eq {
 
 /// A borrowed frame variant, typically used for encoding use cases.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum BorrowedFrame<'a> {
   /// A blob of bytes.
   BlobString {
@@ -755,6 +756,7 @@ impl BorrowedFrame<'_> {
 /// A reference-free frame type representing ranges into an associated buffer, typically used to implement zero-copy
 /// parsing.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub enum RangeFrame {
   /// A blob of bytes.
   BlobString {
@@ -1187,6 +1189,7 @@ pub trait Resp3Frame: Debug + Hash + Eq + Sized {
 ///
 /// <https://github.com/antirez/RESP3/blob/master/spec.md>
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub enum OwnedFrame {
   /// A blob of bytes.
   BlobString {
@@ -1765,6 +1768,7 @@ impl From<f64> for OwnedFrame {
 #[cfg(feature = "bytes")]
 #[cfg_attr(docsrs, doc(cfg(feature = "bytes")))]
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub enum BytesFrame {
   /// A blob of bytes.
   BlobString {
