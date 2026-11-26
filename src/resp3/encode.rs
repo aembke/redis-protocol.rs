@@ -216,7 +216,7 @@ fn gen_verbatimstring<'b, W: GenOut, A: Into<BorrowedAttrs<'b>>>(
     gen_be_u8!(FrameKind::VerbatimString.to_byte())
       >> gen_slice!(&len[padding ..])
       >> gen_slice!(CRLF.as_bytes())
-      >> gen_slice!(format.to_str().as_bytes())
+      >> gen_slice!(format.as_bytes())
       >> gen_be_u8!(VERBATIM_FORMAT_BYTE)
       >> gen_slice!(data)
       >> gen_slice!(CRLF.as_bytes())
@@ -1659,6 +1659,19 @@ mod owned_tests {
     let expected = "=15\r\nmkd:Some string\r\n";
     let input = OwnedFrame::VerbatimString {
       format:     VerbatimStringFormat::Markdown,
+      data:       "Some string".as_bytes().into(),
+      attributes: None,
+    };
+
+    encode_and_verify_empty(&input, expected);
+    encode_and_verify_empty_with_attributes(&input, expected);
+  }
+
+  #[test]
+  fn should_encode_verbatimstring_other_format() {
+    let expected = "=15\r\nhtm:Some string\r\n";
+    let input = OwnedFrame::VerbatimString {
+      format:     VerbatimStringFormat::Other(*b"htm"),
       data:       "Some string".as_bytes().into(),
       attributes: None,
     };

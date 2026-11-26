@@ -154,27 +154,49 @@ impl RespVersion {
 }
 
 /// The format of a verbatim string frame.
+///
+/// The format is any 3 bytes. Redis uses `txt` and `mkd`, which decode as `Text` and `Markdown`, and anything else
+/// decodes as `Other`. Use [from_bytes](Self::from_bytes) to build a format from bytes, so that `txt` and `mkd`
+/// always use the named variants and compare equal to decoded frames.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 #[non_exhaustive]
 pub enum VerbatimStringFormat {
+  /// `txt`
   Text,
+  /// `mkd`
   Markdown,
+  /// Any other format.
+  Other([u8; 3]),
 }
 
 impl VerbatimStringFormat {
-  pub(crate) fn to_str(self) -> &'static str {
+  /// Create a format from its 3 byte encoding, using `Text` or `Markdown` for `txt` or `mkd`.
+  pub const fn from_bytes(bytes: [u8; 3]) -> Self {
+    match &bytes {
+      b"txt" => VerbatimStringFormat::Text,
+      b"mkd" => VerbatimStringFormat::Markdown,
+      _ => VerbatimStringFormat::Other(bytes),
+    }
+  }
+
+  /// Read the 3 byte encoding of the format.
+  pub const fn as_bytes(&self) -> &[u8; 3] {
     match self {
-      VerbatimStringFormat::Text => "txt",
-      VerbatimStringFormat::Markdown => "mkd",
+      VerbatimStringFormat::Text => b"txt",
+      VerbatimStringFormat::Markdown => b"mkd",
+      VerbatimStringFormat::Other(bytes) => bytes,
     }
   }
 
   pub(crate) fn encode_len(&self) -> usize {
-    match *self {
-      // the trailing colon is included here
-      VerbatimStringFormat::Text => 4,
-      VerbatimStringFormat::Markdown => 4,
-    }
+    // the format and the trailing colon
+    4
+  }
+}
+
+impl From<[u8; 3]> for VerbatimStringFormat {
+  fn from(bytes: [u8; 3]) -> Self {
+    VerbatimStringFormat::from_bytes(bytes)
   }
 }
 

@@ -74,17 +74,6 @@ fn to_bool<T>(s: &[u8]) -> Result<bool, RedisParseError<T>> {
   }
 }
 
-fn to_verbatimstring_format<T>(s: &[u8]) -> Result<VerbatimStringFormat, RedisParseError<T>> {
-  match str::from_utf8(s)? {
-    "txt" => Ok(VerbatimStringFormat::Text),
-    "mkd" => Ok(VerbatimStringFormat::Markdown),
-    _ => Err(RedisParseError::new_custom(
-      "to_verbatimstring_format",
-      "Invalid format.",
-    )),
-  }
-}
-
 fn to_map<T>(data: Vec<RangeFrame>) -> Result<Vec<(RangeFrame, RangeFrame)>, RedisParseError<T>> {
   if data.len() % 2 != 0 {
     return Err(RedisParseError::new_custom("to_map", "Invalid hashmap frame length."));
@@ -261,7 +250,7 @@ fn d_parse_verbatimstring(input: (&[u8], usize)) -> DResult<'_, RangeFrame> {
     (input, prefix_offset.saturating_add(len).saturating_add(2)),
     RangeFrame::VerbatimString {
       data:       (prefix_offset + 4, prefix_offset.saturating_add(len)),
-      format:     etry!(to_verbatimstring_format(format_bytes)),
+      format:     VerbatimStringFormat::from_bytes([format_bytes[0], format_bytes[1], format_bytes[2]]),
       attributes: None,
     },
   ))
@@ -1110,6 +1099,30 @@ pub mod owned_tests {
       assert_eq!(FrameScanner::new().scan(bytes), Scan::Invalid, "{bytes:?}");
     }
     assert!(complete::decode(b"=4\r\ntxt:\r\n").unwrap().is_some());
+  }
+
+  #[test]
+  fn should_decode_any_verbatim_string_format() {
+    let decode = |bytes: &[u8]| complete::decode(bytes).unwrap().unwrap().0;
+    let verbatim = |format: VerbatimStringFormat| OwnedFrame::VerbatimString {
+      data: b"foo".to_vec(),
+      format,
+      attributes: None,
+    };
+
+    assert_eq!(decode(b"=7\r\ntxt:foo\r\n"), verbatim(VerbatimStringFormat::Text));
+    assert_eq!(decode(b"=7\r\nmkd:foo\r\n"), verbatim(VerbatimStringFormat::Markdown));
+    assert_eq!(
+      decode(b"=7\r\nhtm:foo\r\n"),
+      verbatim(VerbatimStringFormat::Other(*b"htm"))
+    );
+    assert_eq!(
+      decode(b"=7\r\n\xff\x00::foo\r\n"),
+      verbatim(VerbatimStringFormat::Other([0xff, 0, b':']))
+    );
+    assert_eq!(VerbatimStringFormat::from_bytes(*b"txt"), VerbatimStringFormat::Text);
+    assert_eq!(VerbatimStringFormat::from(*b"mkd"), VerbatimStringFormat::Markdown);
+    assert_eq!(VerbatimStringFormat::Other(*b"htm").as_bytes(), b"htm");
   }
 
   #[test]
